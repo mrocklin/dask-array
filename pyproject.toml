@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dask-array"
+version = "0.1.0"
+description = "Parallel arrays with task graphs"
+readme = "README.md"
+license = "BSD-3-Clause"
+requires-python = ">=3.10"
+dependencies = [
+    "dask>=2024.1.0",
+    "numpy>=2.0.0",
+    "toolz>=0.8.2",
+]
+
+[project.optional-dependencies]
+complete = [
+    "zarr>=2.0",
+    "scipy",
+    "sparse",
+]
+test = [
+    "pytest",
+    "pytest-cov",
+    "pytest-xdist",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["dask_array"]
+
+[tool.pytest.ini_options]
+testpaths = ["dask_array/tests"]
+addopts = "-v"
+
+[tool.ruff]
+line-length = 120
