@@ -11,7 +11,7 @@ from dask_array._collection import (
     concatenate,
     ravel,
 )
-from dask.array.utils import validate_axis
+from dask_array._utils import validate_axis
 from dask.utils import derived_from
 
 

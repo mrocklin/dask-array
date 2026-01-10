@@ -12,9 +12,9 @@ from dask.utils import deepmap, derived_from
 
 import builtins
 
-from dask.array.core import _concatenate2
-from dask.array.dispatch import divide_lookup, numel_lookup, nannumel_lookup
-from dask.array.utils import array_safe, asarray_safe, meta_from_array
+from dask_array._core_utils import _concatenate2
+from dask_array._dispatch import divide_lookup, numel_lookup, nannumel_lookup
+from dask_array._utils import array_safe, asarray_safe, meta_from_array
 from dask_array import _chunk as chunk
 from dask_array.reductions._reduction import reduction
 from dask_array.reductions._arg_reduction import arg_reduction
@@ -212,7 +212,7 @@ def _nanmax_skip(x_chunk, axis, keepdims):
 @derived_from(np)
 def nanmin(a, axis=None, keepdims=False, split_every=None, out=None):
     if np.isnan(a.size):
-        from dask.array.core import unknown_chunk_message
+        from dask_array._core_utils import unknown_chunk_message
         raise ValueError(f"Arrays chunk sizes are unknown. {unknown_chunk_message}")
     if a.size == 0:
         raise ValueError(
@@ -233,7 +233,7 @@ def nanmin(a, axis=None, keepdims=False, split_every=None, out=None):
 @derived_from(np)
 def nanmax(a, axis=None, keepdims=False, split_every=None, out=None):
     if np.isnan(a.size):
-        from dask.array.core import unknown_chunk_message
+        from dask_array._core_utils import unknown_chunk_message
         raise ValueError(f"Arrays chunk sizes are unknown. {unknown_chunk_message}")
     if a.size == 0:
         raise ValueError(
@@ -824,7 +824,7 @@ from collections.abc import Iterable
 from functools import reduce
 from operator import mul
 
-from dask.array.core import handle_out
+from dask_array._core_utils import handle_out
 
 try:
     import numbagg

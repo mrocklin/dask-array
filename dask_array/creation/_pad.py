@@ -3,14 +3,15 @@ from __future__ import annotations
 import numpy as np
 
 from dask_array._collection import asarray, concatenate
-from dask.array.creation import (
+from dask_array._utils import meta_from_array
+from dask.utils import derived_from
+
+from ._utils import (
     expand_pad_value,
     get_pad_shapes_chunks,
     linear_ramp_chunk,
     wrapped_pad_func,
 )
-from dask.array.utils import meta_from_array
-from dask.utils import derived_from
 
 
 def _pad_reuse_expr(array, pad_width, mode, **kwargs):
@@ -175,7 +176,7 @@ def _pad_edge_expr(array, pad_width, mode, **kwargs):
     Handles the cases where the only the values on the edge are needed.
     """
     from dask_array._collection import broadcast_to
-    from dask.array.utils import asarray_safe
+    from dask_array._utils import asarray_safe
 
     from ._ones_zeros import empty_like
 

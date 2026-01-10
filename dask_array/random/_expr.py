@@ -9,8 +9,8 @@ from dask._task_spec import Dict as TaskDict
 from dask._task_spec import Task, TaskRef
 from dask._task_spec import Tuple as TaskTuple
 from dask_array.io import IO
-from dask.array.backends import array_creation_dispatch
-from dask.array.core import broadcast_shapes, normalize_chunks
+from dask_array._core_utils import broadcast_shapes, normalize_chunks
+from dask_array._backends_array import array_creation_dispatch
 from dask.tokenize import tokenize
 from dask.utils import cached_property, random_state_data, typename
 

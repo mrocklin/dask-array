@@ -21,7 +21,7 @@ _cached_states_lock = Lock()
 
 def _make_api(attr):
     def wrapper(*args, **kwargs):
-        from dask.array.backends import array_creation_dispatch
+        from dask_array._backends_array import array_creation_dispatch
 
         key = array_creation_dispatch.backend
         with _cached_states_lock:

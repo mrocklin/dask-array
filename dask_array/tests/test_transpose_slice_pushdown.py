@@ -3,7 +3,7 @@
 import pytest
 
 import dask_array as da
-from dask.array.utils import assert_eq
+from dask_array._test_utils import assert_eq
 
 def test_transpose_integer_slice_2d():
     """x.T[0] should optimize to x[:, 0] (transpose eliminated)."""

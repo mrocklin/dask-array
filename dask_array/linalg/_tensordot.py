@@ -7,7 +7,7 @@ from numbers import Integral
 
 import numpy as np
 
-from dask.array.core import is_scalar_for_elemwise, tensordot_lookup
+from dask_array._core_utils import is_scalar_for_elemwise, tensordot_lookup
 from dask.utils import derived_from
 
 

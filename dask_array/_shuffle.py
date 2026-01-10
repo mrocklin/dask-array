@@ -2,16 +2,89 @@ from __future__ import annotations
 
 import copy
 import functools
+import math
+from functools import reduce
 from itertools import count, product
+from operator import mul
 from typing import Literal
 
 import numpy as np
 
+from dask import config
 from dask._task_spec import DataNode, List, Task, TaskRef
 from dask_array._expr import ArrayExpr
-from dask.array.chunk import getitem
-from dask.array.dispatch import concatenate_lookup, take_lookup
+from dask_array._chunk import getitem
+from dask_array._dispatch import concatenate_lookup, take_lookup
 from dask.base import tokenize
+
+
+def _calculate_new_chunksizes(
+    input_chunks, new_chunks, changeable_dimensions: set, maximum_chunk: int
+):
+    chunksize_tolerance = config.get("array.chunk-size-tolerance")
+    maximum_chunk = max(maximum_chunk, 1)
+
+    # iterate until we distributed the increase in chunksize across all dimensions
+    # or every non-shuffle dimension is all 1
+    while changeable_dimensions:
+        n_changeable_dimensions = len(changeable_dimensions)
+        chunksize_inc_factor = reduce(mul, map(max, new_chunks)) / maximum_chunk
+        if chunksize_inc_factor <= 1:
+            break
+
+        for i in list(changeable_dimensions):
+            new_chunksizes = []
+            # calculate what the max chunk size in this dimension is and split every
+            # chunk that is larger than that. We split the increase factor evenly
+            # between all dimensions that are not shuffled.
+            up_chunksize_limit_for_dim = max(new_chunks[i]) / (
+                chunksize_inc_factor ** (1 / n_changeable_dimensions)
+            )
+            for c in input_chunks[i]:
+                if c > chunksize_tolerance * up_chunksize_limit_for_dim:
+                    factor = math.ceil(c / up_chunksize_limit_for_dim)
+
+                    # Ensure that we end up at least with chunksize 1
+                    factor = min(factor, c)
+
+                    chunksize, remainder = divmod(c, factor)
+                    nc = [chunksize] * factor
+                    for ii in range(remainder):
+                        # Add remainder parts to the first few chunks
+                        nc[ii] += 1
+                    new_chunksizes.extend(nc)
+
+                else:
+                    new_chunksizes.append(c)
+
+            if tuple(new_chunksizes) == new_chunks[i] or max(new_chunksizes) == 1:
+                changeable_dimensions.remove(i)
+
+            new_chunks[i] = tuple(new_chunksizes)
+    return new_chunks
+
+
+def _rechunk_other_dimensions(x, longest_group: int, axis: int, chunks: Literal["auto"]):
+    """Rechunk other dimensions when shuffle groups are too large."""
+    assert chunks == "auto", "Only auto is supported for now"
+    chunksize_tolerance = config.get("array.chunk-size-tolerance")
+
+    if longest_group <= max(x.chunks[axis]) * chunksize_tolerance:
+        # We are staying below our threshold, so don't rechunk
+        return x
+
+    changeable_dimensions = set(range(len(x.chunks))) - {axis}
+    new_chunks = list(x.chunks)
+    new_chunks[axis] = (longest_group,)
+
+    # How large is the largest chunk in the input
+    maximum_chunk = reduce(mul, map(max, x.chunks))
+
+    new_chunks = _calculate_new_chunksizes(
+        x.chunks, new_chunks, changeable_dimensions, maximum_chunk
+    )
+    new_chunks[axis] = x.chunks[axis]
+    return x.rechunk(tuple(new_chunks))
 
 
 def _validate_indexer(chunks, indexer, axis):
@@ -84,10 +157,9 @@ def shuffle(x, indexer: list[list[int]], axis: int, chunks: Literal["auto"] = "a
            [15, 14, 11, 13, 10, 12,  9, 16]])
     """
     from dask._collections import new_collection
-    from dask.array._shuffle import _rechunk_other_dimensions
 
     if np.isnan(x.shape).any():
-        from dask.array.core import unknown_chunk_message
+        from dask_array._core_utils import unknown_chunk_message
 
         raise ValueError(
             f"Shuffling only allowed with known chunk sizes. {unknown_chunk_message}"

@@ -6,7 +6,7 @@ import numpy as np
 
 from dask._collections import new_collection
 from dask_array._collection import Array
-from dask.array.core import normalize_chunks
+from dask_array._core_utils import normalize_chunks
 from dask.utils import typename
 
 

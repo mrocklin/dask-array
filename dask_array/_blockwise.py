@@ -11,7 +11,7 @@ from dask import is_dask_collection
 from dask._task_spec import Task, TaskRef
 from dask_array._expr import ArrayExpr, unify_chunks_expr
 from dask_array._utils import compute_meta
-from dask.array.core import (
+from dask_array._core_utils import (
     _elemwise_handle_where,
     _enforce_dtype,
     apply_infer_dtype,
@@ -19,7 +19,7 @@ from dask.array.core import (
     is_scalar_for_elemwise,
     normalize_arg,
 )
-from dask.array.utils import meta_from_array
+from dask_array._utils import meta_from_array
 from dask.blockwise import blockwise as core_blockwise
 from dask.delayed import unpack_collections
 from dask.layers import ArrayBlockwiseDep

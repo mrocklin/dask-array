@@ -9,9 +9,9 @@ from dask._task_spec import TaskRef
 from dask_array._collection import Array
 from dask_array.core._conversion import asarray
 from dask_array.io import IO
-from dask.array.backends import array_creation_dispatch
-from dask.array.core import normalize_chunks
-from dask.array.utils import asarray_safe
+from dask_array._core_utils import normalize_chunks
+from dask_array._utils import asarray_safe
+from dask_array._backends_array import array_creation_dispatch
 from dask.utils import cached_property, random_state_data
 
 from ._expr import _spawn_bitgens

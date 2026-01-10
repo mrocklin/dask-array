@@ -7,8 +7,8 @@ import numpy as np
 from toolz import concat
 
 from dask_array._collection import Array, blockwise
-from dask.array.core import _pass_extra_kwargs, apply_and_enforce, apply_infer_dtype
-from dask.array.utils import compute_meta
+from dask_array._core_utils import _pass_extra_kwargs, apply_and_enforce, apply_infer_dtype
+from dask_array._utils import compute_meta
 from dask.layers import ArrayBlockIdDep, ArrayBlockwiseDep, ArrayValuesDep
 from dask.utils import cached_cumsum, funcname, has_keyword
 

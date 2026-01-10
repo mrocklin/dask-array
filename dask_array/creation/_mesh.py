@@ -11,7 +11,7 @@ from dask.utils import derived_from
 @derived_from(np)
 def meshgrid(*xi, sparse=False, indexing="xy", **kwargs):
     from dask_array._routines import broadcast_arrays
-    from dask.array.numpy_compat import NUMPY_GE_200
+    from dask_array._numpy_compat import NUMPY_GE_200
 
     sparse = bool(sparse)
 
@@ -84,7 +84,7 @@ def indices(dimensions, dtype=int, chunks="auto"):
     import numpy as np
 
     from dask_array._collection import stack
-    from dask.array.core import normalize_chunks
+    from dask_array._core_utils import normalize_chunks
 
     from ._arange import arange
     from ._ones_zeros import empty
@@ -116,7 +116,7 @@ def indices(dimensions, dtype=int, chunks="auto"):
 def fromfunction(func, chunks="auto", shape=None, dtype=None, **kwargs):
 
     from dask_array._collection import blockwise
-    from dask.array.core import normalize_chunks
+    from dask_array._core_utils import normalize_chunks
 
     from ._arange import arange
 

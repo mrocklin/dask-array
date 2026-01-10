@@ -6,8 +6,8 @@ import numbers
 import numpy as np
 
 from dask._collections import new_collection
-from dask.array.backends import array_creation_dispatch
-from dask.array.creation import arange
+from dask_array.creation import arange
+from dask_array._backends_array import array_creation_dispatch
 from dask.utils import derived_from, typename
 
 from ._utils import _wrap_func
@@ -288,7 +288,7 @@ class Generator:
 
     @derived_from(np.random.Generator, skipblocks=1)
     def permutation(self, x):
-        from dask.array.slicing import shuffle_slice
+        from dask_array.slicing._utils import shuffle_slice
 
         from ._utils import _shuffle
 

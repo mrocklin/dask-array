@@ -23,7 +23,7 @@ from dask_array.linalg._utils import (
     _make_slice,
     _nanmin,
 )
-from dask.array.utils import meta_from_array
+from dask_array._utils import meta_from_array
 from dask.utils import derived_from
 
 

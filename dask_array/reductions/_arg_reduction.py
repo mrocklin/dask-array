@@ -8,7 +8,7 @@ import numpy as np
 from tlz import accumulate, pluck
 
 from dask_array._expr import ArrayExpr
-from dask.array.utils import is_arraylike, validate_axis
+from dask_array._utils import is_arraylike, validate_axis
 from dask.tokenize import _tokenize_deterministic
 from dask.utils import cached_property
 
@@ -32,7 +32,7 @@ class ArgChunk(ArrayExpr):
     def _meta(self):
         # The chunk function returns a structured array or dict with 'vals' and 'arg'
         # fields. The dtype comes from argmin on the meta.
-        from dask.array.utils import asarray_safe, meta_from_array
+        from dask_array._utils import asarray_safe, meta_from_array
 
         dtype = np.argmin(asarray_safe([1], like=meta_from_array(self.array)))
         if is_arraylike(dtype):
@@ -91,7 +91,7 @@ def arg_reduction(
     split_every : int or dict, optional
     """
     from dask_array.core._blockwise_funcs import _handle_out
-    from dask.array.utils import asarray_safe, meta_from_array
+    from dask_array._utils import asarray_safe, meta_from_array
 
     if axis is None:
         axis = tuple(range(x.ndim))

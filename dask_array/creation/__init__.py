@@ -29,6 +29,7 @@ from ._pad import pad
 from ._repeat import repeat
 from ._tile import tile
 from ._tri import tri
+from ._utils import to_backend
 
 __all__ = [
     # Classes
@@ -61,6 +62,7 @@ __all__ = [
     "pad",
     "repeat",
     "tile",
+    "to_backend",
     "tri",
     "wrap",
     "wrap_func_shape_as_first_arg",

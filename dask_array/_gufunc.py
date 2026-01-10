@@ -9,9 +9,9 @@ from tlz import concat, merge, unique
 from dask._collections import new_collection
 from dask_array._collection import asarray, blockwise
 from dask_array._expr import ArrayExpr
-from dask.array.chunk import getitem
-from dask.array.core import apply_infer_dtype, normalize_chunks
-from dask.array.utils import meta_from_array
+from dask_array._chunk import getitem
+from dask_array._core_utils import apply_infer_dtype, normalize_chunks
+from dask_array._utils import meta_from_array
 from dask.core import flatten
 
 # Modified version of `numpy.lib.function_base._parse_gufunc_signature`

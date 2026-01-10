@@ -7,7 +7,7 @@ import pytest
 
 import dask_array as da
 from dask import is_dask_collection
-from dask.array.utils import assert_eq
+from dask_array._test_utils import assert_eq
 from dask_array._collection import Array
 from dask_array._rechunk import Rechunk
 

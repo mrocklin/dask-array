@@ -28,7 +28,7 @@ class SolveTriangular(ArrayExpr):
 
     @functools.cached_property
     def _meta(self):
-        from dask.array.utils import array_safe, meta_from_array
+        from dask_array._utils import array_safe, meta_from_array
 
         a_meta = meta_from_array(self.a._meta)
         b_meta = meta_from_array(self.b._meta)

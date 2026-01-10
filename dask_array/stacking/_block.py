@@ -17,7 +17,7 @@ def block(arrays, allow_unknown_chunksizes=False):
     """
     # Import here to avoid circular imports
     from dask_array._collection import asanyarray, concatenate
-    from dask.array.numpy_compat import _Recurser
+    from dask_array._numpy_compat import _Recurser
 
     def atleast_nd(x, ndim):
         x = asanyarray(x)

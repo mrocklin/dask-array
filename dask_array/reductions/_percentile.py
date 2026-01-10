@@ -9,7 +9,7 @@ from numbers import Number
 import numpy as np
 from tlz import merge
 
-from dask.array.dispatch import empty_lookup, percentile_lookup
+from dask_array._dispatch import empty_lookup, percentile_lookup
 from dask.base import tokenize
 from dask.highlevelgraph import HighLevelGraph
 from dask.utils import derived_from
@@ -70,7 +70,7 @@ def _percentiles_from_tdigest(qs, digests):
 
 def merge_percentiles(finalq, qs, vals, method="lower", Ns=None, raise_on_nan=True):
     """Combine several percentile calculations of different data."""
-    from dask.array.utils import array_safe
+    from dask_array._utils import array_safe
 
     if isinstance(finalq, Iterator):
         finalq = list(finalq)
@@ -169,7 +169,7 @@ def percentile(a, q, method="linear", internal_method="default", **kwargs):
         What internal method to use. By default will use dask's internal custom
         algorithm (``'dask'``).
     """
-    from dask.array.utils import array_safe, meta_from_array
+    from dask_array._utils import array_safe, meta_from_array
     from dask_array.reductions import quantile
 
     if a.ndim == 1:

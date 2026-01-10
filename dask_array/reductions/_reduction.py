@@ -14,9 +14,9 @@ from dask import config
 from dask._collections import new_collection
 from dask_array._expr import ArrayExpr
 from dask_array._utils import compute_meta
-from dask.array.core import _concatenate2
-from dask.array.numpy_compat import ComplexWarning
-from dask.array.utils import is_arraylike, validate_axis
+from dask_array._core_utils import _concatenate2
+from dask_array._numpy_compat import ComplexWarning
+from dask_array._utils import is_arraylike, validate_axis
 from dask.blockwise import lol_tuples
 from dask.tokenize import _tokenize_deterministic
 from dask.utils import cached_property, funcname, getargspec, is_series_like

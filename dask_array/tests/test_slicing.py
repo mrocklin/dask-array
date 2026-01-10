@@ -25,7 +25,7 @@ from dask.array.slicing import (
     slice_array,
     take,
 )
-from dask.array.utils import assert_eq, same_keys
+from dask_array._test_utils import assert_eq, same_keys
 
 
 def test_slice_1d():

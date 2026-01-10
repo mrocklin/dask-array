@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from dask_array._collection import Array, asarray, elemwise
-from dask.array.utils import validate_axis
+from dask_array._utils import validate_axis
 from dask.utils import derived_from
 
 
@@ -55,7 +55,7 @@ def compress(condition, a, axis=None):
         A copy of a without the slices along axis for which condition
         is false.
     """
-    from dask.array.utils import is_arraylike
+    from dask_array._utils import is_arraylike
 
     if not is_arraylike(condition):
         condition = np.asarray(condition)

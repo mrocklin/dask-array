@@ -13,8 +13,9 @@ from packaging.version import Version
 
 import dask_array as da
 from dask.array.linalg import qr, sfqr, svd, svd_compressed, tsqr
-from dask.array.numpy_compat import _np_version
-from dask.array.utils import assert_eq, same_keys, svd_flip
+from dask_array._numpy_compat import _np_version
+from dask_array._test_utils import assert_eq, same_keys
+from dask_array._utils import svd_flip
 
 
 @pytest.mark.parametrize(

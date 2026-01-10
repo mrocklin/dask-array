@@ -8,7 +8,7 @@ from dask.utils import derived_from
 @derived_from(np)
 def tri(N, M=None, k=0, dtype=float, chunks="auto", *, like=None):
     from dask_array._ufunc import greater_equal
-    from dask.array.core import normalize_chunks
+    from dask_array._core_utils import normalize_chunks
 
     from ._arange import arange
 

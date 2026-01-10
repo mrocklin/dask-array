@@ -15,8 +15,8 @@ from dask.delayed import delayed
 np = pytest.importorskip("numpy")
 
 import dask_array as da
-from dask.array.numpy_compat import NUMPY_GE_200, NUMPY_GE_220, AxisError
-from dask.array.utils import allclose, assert_eq, same_keys
+from dask_array._numpy_compat import NUMPY_GE_200, NUMPY_GE_220, AxisError
+from dask_array._test_utils import allclose, assert_eq, same_keys
 
 
 def test_array():

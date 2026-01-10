@@ -14,7 +14,7 @@ from dask_array.linalg._utils import (
     _solve_triangular_lower,
     _transpose,
 )
-from dask.array.utils import meta_from_array
+from dask_array._utils import meta_from_array
 
 
 def _scipy_lu(a):

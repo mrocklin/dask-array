@@ -7,7 +7,7 @@ import numpy as np
 
 from dask._task_spec import Task, TaskRef
 from dask_array._expr import ArrayExpr
-from dask.array.utils import meta_from_array
+from dask_array._utils import meta_from_array
 
 
 class Squeeze(ArrayExpr):
@@ -88,7 +88,7 @@ def squeeze(a, axis=None):
     squeezed : Array
     """
     from dask._collections import new_collection
-    from dask.array.utils import validate_axis
+    from dask_array._utils import validate_axis
 
     if axis is None:
         axis = tuple(i for i, d in enumerate(a.shape) if d == 1)

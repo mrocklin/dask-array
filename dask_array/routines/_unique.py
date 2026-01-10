@@ -14,7 +14,7 @@ from dask_array._collection import (
     ravel,
 )
 from dask_array._expr import ArrayExpr
-from dask.array.utils import meta_from_array
+from dask_array._utils import meta_from_array
 from dask.utils import derived_from
 
 
@@ -177,7 +177,7 @@ def unique_no_structured_arr(
 def unique(ar, return_index=False, return_inverse=False, return_counts=False):
     """Find the unique elements of an array."""
     from dask_array.creation import arange, ones
-    from dask.array.numpy_compat import NUMPY_GE_200
+    from dask_array._numpy_compat import NUMPY_GE_200
 
     try:
         meta = meta_from_array(ar)

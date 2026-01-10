@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 import dask_array as da
-from dask.array.utils import assert_eq
+from dask_array._test_utils import assert_eq
 
 # =============================================================================
 # Case 1: Standard Blockwise (reduction chunk step)

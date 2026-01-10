@@ -2,13 +2,20 @@ from __future__ import annotations
 
 from collections.abc import Collection
 from threading import Lock
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
+
+import numpy as np
 
 if TYPE_CHECKING:
+    from numpy.typing import ArrayLike
+
     from dask.delayed import Delayed
 
 from dask.base import named_schedulers
 from dask.utils import SerializableLock
+
+from dask_array._utils import is_arraylike
+from dask_array.slicing._utils import fuse_slice
 
 
 def get_scheduler_lock(collection, scheduler):
@@ -20,6 +27,96 @@ def get_scheduler_lock(collection, scheduler):
     if actual_get is named_schedulers.get("synchronous", None):
         return False
     return SerializableLock()
+
+
+def load_store_chunk(
+    x: Any,
+    out: Any,
+    index: slice | None,
+    region: slice | None,
+    lock: Any,
+    return_stored: bool,
+    load_stored: bool,
+) -> Any:
+    """
+    A function inserted in a Dask graph for storing a chunk.
+
+    Parameters
+    ----------
+    x: array-like
+        An array (potentially a NumPy one)
+    out: array-like
+        Where to store results.
+    index: slice-like
+        Where to store result from ``x`` in ``out``.
+    lock: Lock-like or False
+        Lock to use before writing to ``out``.
+    return_stored: bool
+        Whether to return ``out``.
+    load_stored: bool
+        Whether to return the array stored in ``out``.
+        Ignored if ``return_stored`` is not ``True``.
+
+    Returns
+    -------
+
+    If return_stored=True and load_stored=False
+        out
+    If return_stored=True and load_stored=True
+        out[index]
+    If return_stored=False and compute=False
+        None
+
+    Examples
+    --------
+
+    >>> a = np.ones((5, 6))
+    >>> b = np.empty(a.shape)
+    >>> load_store_chunk(a, b, (slice(None), slice(None)), None, False, False, False)
+    """
+    if region:
+        # Equivalent to `out[region][index]`
+        if index:
+            index = fuse_slice(region, index)
+        else:
+            index = region
+    if lock:
+        lock.acquire()
+    try:
+        if x is not None and x.size != 0:
+            if is_arraylike(x):
+                out[index] = x
+            else:
+                out[index] = np.asanyarray(x)
+
+        if return_stored and load_stored:
+            return out[index]
+        elif return_stored and not load_stored:
+            return out
+        else:
+            return None
+    finally:
+        if lock:
+            lock.release()
+
+
+A = TypeVar("A", bound="ArrayLike")
+
+
+def load_chunk(out: A, index: slice, lock: Any, region: slice | None) -> A:
+    """Load a chunk from an array-like object.
+
+    This is used for loading stored chunks back into dask arrays.
+    """
+    return load_store_chunk(
+        None,
+        out=out,
+        region=region,
+        index=index,
+        lock=lock,
+        return_stored=True,
+        load_stored=True,
+    )
 
 
 def store(
@@ -99,11 +196,11 @@ def store(
 
     >>> store([x, y, z], [dset1, dset2, dset3])  # doctest: +SKIP
     """
-    from dask_array._collection import Array
-    from dask_array._map_blocks import map_blocks
-    from dask.array.core import ArrayLike, load_chunk, load_store_chunk
     from dask.base import persist
     from dask.layers import ArraySliceDep
+
+    from dask_array._collection import Array
+    from dask_array._map_blocks import map_blocks
 
     if isinstance(sources, Array):
         sources = [sources]
@@ -178,3 +275,64 @@ def store(
     if len(arrays) == 1:
         return arrays[0]
     return tuple(arrays)
+
+
+def to_hdf5(filename, *args, chunks=True, **kwargs):
+    """Store arrays in HDF5 file
+
+    This saves several dask arrays into several datapaths in an HDF5 file.
+    It creates the necessary datasets and handles clean file opening/closing.
+
+    Parameters
+    ----------
+    chunks: tuple or ``True``
+        Chunk shape, or ``True`` to pass the chunks from the dask array.
+        Defaults to ``True``.
+
+    Examples
+    --------
+
+    >>> da.to_hdf5('myfile.hdf5', '/x', x)  # doctest: +SKIP
+
+    or
+
+    >>> da.to_hdf5('myfile.hdf5', {'/x': x, '/y': y})  # doctest: +SKIP
+
+    Optionally provide arguments as though to ``h5py.File.create_dataset``
+
+    >>> da.to_hdf5('myfile.hdf5', '/x', x, compression='lzf', shuffle=True)  # doctest: +SKIP
+
+    >>> da.to_hdf5('myfile.hdf5', '/x', x, chunks=(10,20,30))  # doctest: +SKIP
+
+    This can also be used as a method on a single Array
+
+    >>> x.to_hdf5('myfile.hdf5', '/x')  # doctest: +SKIP
+
+    See Also
+    --------
+    da.store
+    h5py.File.create_dataset
+    """
+    from dask_array._collection import Array
+
+    if len(args) == 1 and isinstance(args[0], dict):
+        data = args[0]
+    elif len(args) == 2 and isinstance(args[0], str) and isinstance(args[1], Array):
+        data = {args[0]: args[1]}
+    else:
+        raise ValueError("Please provide {'/data/path': array} dictionary")
+
+    import h5py
+
+    with h5py.File(filename, mode="a") as f:
+        dsets = [
+            f.require_dataset(
+                dp,
+                shape=x.shape,
+                dtype=x.dtype,
+                chunks=tuple(c[0] for c in x.chunks) if chunks is True else chunks,
+                **kwargs,
+            )
+            for dp, x in data.items()
+        ]
+        store(list(data.values()), dsets)

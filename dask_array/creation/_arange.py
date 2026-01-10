@@ -8,9 +8,9 @@ import numpy as np
 from dask._collections import new_collection
 from dask._task_spec import Task
 from dask_array._expr import ArrayExpr
-from dask.array.chunk import arange as _arange
-from dask.array.core import normalize_chunks
-from dask.array.utils import meta_from_array
+from dask_array._chunk import arange as _arange
+from dask_array._core_utils import normalize_chunks
+from dask_array._utils import meta_from_array
 
 
 class Arange(ArrayExpr):

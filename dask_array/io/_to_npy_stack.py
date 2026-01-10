@@ -6,7 +6,7 @@ import uuid
 
 import numpy as np
 
-from dask import core
+from dask import core as dask_core
 from dask.base import compute_as_if_collection
 from dask.highlevelgraph import HighLevelGraph
 
@@ -57,7 +57,7 @@ def to_npy_stack(dirname, x, axis=0):
     name = f"to-npy-stack-{uuid.uuid1()}"
     dsk = {
         (name, i): (np.save, os.path.join(dirname, f"{i}.npy"), key)
-        for i, key in enumerate(core.flatten(xx.__dask_keys__()))
+        for i, key in enumerate(dask_core.flatten(xx.__dask_keys__()))
     }
 
     graph = HighLevelGraph.from_collections(name, dsk, dependencies=[xx])

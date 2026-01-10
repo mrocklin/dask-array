@@ -8,7 +8,7 @@ from dask._collections import new_collection
 from dask._task_spec import Task, TaskRef
 from dask_array._collection import asarray
 from dask_array._expr import ArrayExpr
-from dask.array.utils import meta_from_array
+from dask_array._utils import meta_from_array
 from dask.utils import derived_from
 
 

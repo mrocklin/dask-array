@@ -48,8 +48,8 @@ def where(condition, x=None, y=None):
     # Optimization: for scalar conditions, avoid elemwise overhead
     if np.isscalar(condition):
         from dask_array._broadcast import broadcast_to
-        from dask.array.core import broadcast_shapes
-        from dask.array.routines import result_type
+        from dask_array._core_utils import broadcast_shapes
+        from dask_array.routines._misc import result_type
 
         dtype = result_type(x, y)
         x = asarray(x)

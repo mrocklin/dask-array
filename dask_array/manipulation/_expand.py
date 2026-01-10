@@ -9,7 +9,7 @@ import numpy as np
 from dask._collections import new_collection
 from dask._task_spec import Task, TaskRef
 from dask_array._expr import ArrayExpr
-from dask.array.chunk import getitem
+from dask_array._chunk import getitem
 
 
 class ExpandDims(ArrayExpr):
@@ -190,7 +190,7 @@ def expand_dims(a, axis):
     --------
     numpy.expand_dims
     """
-    from dask.array.utils import validate_axis
+    from dask_array._utils import validate_axis
 
     if axis is None:
         raise TypeError("axis must be an integer, not None")
@@ -224,7 +224,7 @@ def atleast_1d(*arys):
     numpy.atleast_1d
     """
     from dask_array.core import asanyarray
-    from dask.array.numpy_compat import NUMPY_GE_200
+    from dask_array._numpy_compat import NUMPY_GE_200
 
     new_arys = []
     for x in arys:
@@ -261,7 +261,7 @@ def atleast_2d(*arys):
     numpy.atleast_2d
     """
     from dask_array.core import asanyarray
-    from dask.array.numpy_compat import NUMPY_GE_200
+    from dask_array._numpy_compat import NUMPY_GE_200
 
     new_arys = []
     for x in arys:
@@ -300,7 +300,7 @@ def atleast_3d(*arys):
     numpy.atleast_3d
     """
     from dask_array.core import asanyarray
-    from dask.array.numpy_compat import NUMPY_GE_200
+    from dask_array._numpy_compat import NUMPY_GE_200
 
     new_arys = []
     for x in arys:

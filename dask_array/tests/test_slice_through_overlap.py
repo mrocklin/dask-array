@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 import dask_array as da
-from dask.array.utils import assert_eq
+from dask_array._test_utils import assert_eq
 
 def add_neighbors(x):
     """Add neighboring values along axis 0. Uses overlap data."""

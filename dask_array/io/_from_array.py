@@ -6,14 +6,14 @@ from itertools import product
 import numpy as np
 
 from dask_array.io._base import IO
-from dask.array.core import (
+from dask_array._core_utils import (
     getter,
     getter_nofancy,
     graph_from_arraylike,
     normalize_chunks,
     slices_from_chunks,
 )
-from dask.array.utils import meta_from_array
+from dask_array._utils import meta_from_array
 from dask.utils import SerializableLock
 
 

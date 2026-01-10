@@ -11,14 +11,14 @@ from tlz import concat, get, partial
 from tlz.curried import map
 
 from dask._collections import new_collection
-from dask.array import chunk
+from dask_array import _chunk as chunk
 from dask_array._collection import Array, concatenate
 from dask_array._expr import ArrayExpr, unify_chunks_expr
 from dask_array._map_blocks import map_blocks
 from dask_array.creation import empty_like, full_like, repeat
-from dask.array._shuffle import _calculate_new_chunksizes
-from dask.array.numpy_compat import normalize_axis_tuple
-from dask.array.utils import compute_meta, meta_from_array
+from dask_array._shuffle import _calculate_new_chunksizes
+from dask_array._numpy_compat import normalize_axis_tuple
+from dask_array._utils import compute_meta, meta_from_array
 from dask.layers import ArrayOverlapLayer
 from dask.utils import derived_from, ensure_dict
 

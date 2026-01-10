@@ -14,9 +14,9 @@ from toolz import concat
 from dask._collections import new_collection
 from dask._task_spec import Alias, List, Task, TaskRef
 from dask_array._expr import ArrayExpr, unify_chunks_expr
-from dask.array.core import concatenate3
-from dask.array.dispatch import concatenate_lookup
-from dask.array.utils import meta_from_array
+from dask_array._core_utils import concatenate3
+from dask_array._dispatch import concatenate_lookup
+from dask_array._utils import meta_from_array
 
 
 class Concatenate(ArrayExpr):

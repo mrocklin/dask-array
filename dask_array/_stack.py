@@ -11,8 +11,8 @@ from toolz import concat, first
 from dask._collections import new_collection
 from dask._task_spec import Task, TaskRef
 from dask_array._expr import ArrayExpr, unify_chunks_expr
-from dask.array.chunk import getitem
-from dask.array.utils import meta_from_array
+from dask_array._chunk import getitem
+from dask_array._utils import meta_from_array
 
 
 class Stack(ArrayExpr):
@@ -123,7 +123,7 @@ class Stack(ArrayExpr):
         from numbers import Integral
 
         from dask._collections import new_collection
-        from dask.array.utils import meta_from_array
+        from dask_array._utils import meta_from_array
 
         axis = self.axis
         arrays = self.args

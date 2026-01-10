@@ -12,7 +12,7 @@ from dask.utils import derived_from
 def tril(m, k=0):
     from dask_array.creation import tri
     from dask_array.routines._where import where
-    from dask.array.utils import meta_from_array
+    from dask_array._utils import meta_from_array
 
     m = asarray(m)
     mask = tri(
@@ -30,7 +30,7 @@ def tril(m, k=0):
 def triu(m, k=0):
     from dask_array.creation import tri
     from dask_array.routines._where import where
-    from dask.array.utils import meta_from_array
+    from dask_array._utils import meta_from_array
 
     m = asarray(m)
     mask = tri(

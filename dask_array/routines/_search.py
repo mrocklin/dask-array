@@ -53,7 +53,7 @@ def searchsorted(a, v, side="left", sorter=None):
     """
     from dask_array._collection import blockwise
     from dask_array.routines._where import where
-    from dask.array.utils import array_safe, meta_from_array
+    from dask_array._utils import array_safe, meta_from_array
 
     if a.ndim != 1:
         raise ValueError("Input array a must be one dimensional")

@@ -7,7 +7,7 @@ import toolz
 
 from dask._collections import new_collection
 from dask_array._blockwise import Blockwise, Elemwise
-from dask.array.core import is_scalar_for_elemwise
+from dask_array._core_utils import is_scalar_for_elemwise
 
 
 def blockwise(

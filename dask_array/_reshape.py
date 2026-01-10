@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import math
 from functools import reduce
 from itertools import product
 from operator import mul
@@ -9,10 +10,266 @@ import numpy as np
 
 from dask._task_spec import Task, TaskRef
 from dask_array._expr import ArrayExpr
-from dask.array.reshape import reshape_rechunk
-from dask.array.slicing import sanitize_index
-from dask.array.utils import meta_from_array
+from dask_array.slicing._utils import sanitize_index
+from dask_array._utils import meta_from_array
 from dask.utils import M
+
+
+# --------------------------------------------------------------------------
+# reshape_rechunk and helper functions (copied from dask.array.reshape)
+# --------------------------------------------------------------------------
+
+_not_implemented_message = """
+Dask's reshape only supports operations that merge or split existing dimensions
+evenly. For example:
+
+>>> x = da.ones((6, 5, 4), chunks=(3, 2, 2))
+>>> x.reshape((3, 2, 5, 4))  # supported, splits 6 into 3 & 2
+>>> x.reshape((30, 4))       # supported, merges 6 & 5 into 30
+>>> x.reshape((4, 5, 6))     # unsupported, existing dimensions split unevenly
+
+To work around this you may call reshape in multiple passes, or (if your data
+is small enough) call ``compute`` first and handle reshaping in ``numpy``
+directly.
+"""
+
+
+def reshape_rechunk(inshape, outshape, inchunks, disallow_dimension_expansion=False):
+    assert all(isinstance(c, tuple) for c in inchunks)
+    ii = len(inshape) - 1
+    oi = len(outshape) - 1
+    result_inchunks = [None for i in range(len(inshape))]
+    result_outchunks = [None for i in range(len(outshape))]
+    mapper_in, one_dimensions = {}, []
+
+    while ii >= 0 or oi >= 0:
+        if inshape[ii] == outshape[oi]:
+            result_inchunks[ii] = inchunks[ii]
+            result_outchunks[oi] = inchunks[ii]
+            mapper_in[ii] = oi
+            ii -= 1
+            oi -= 1
+            continue
+        din = inshape[ii]
+        dout = outshape[oi]
+        if din == 1:
+            result_inchunks[ii] = (1,)
+            ii -= 1
+        elif dout == 1:
+            result_outchunks[oi] = (1,)
+            one_dimensions.append(oi)
+            oi -= 1
+        elif din < dout:  # (4, 4, 4) -> (64,)
+            ileft = ii - 1
+            mapper_in[ii] = oi
+            while (
+                ileft >= 0 and reduce(mul, inshape[ileft : ii + 1]) < dout
+            ):  # 4 < 64, 4*4 < 64, 4*4*4 == 64
+                mapper_in[ileft] = oi
+                ileft -= 1
+
+            mapper_in[ileft] = oi
+            if reduce(mul, inshape[ileft : ii + 1]) != dout:
+                raise NotImplementedError(_not_implemented_message)
+            # Special case to avoid intermediate rechunking:
+            # When all the lower axis are completely chunked (chunksize=1) then
+            # we're simply moving around blocks.
+            if all(len(inchunks[i]) == inshape[i] for i in range(ii)):
+                for i in range(ii + 1):
+                    result_inchunks[i] = inchunks[i]
+                result_outchunks[oi] = inchunks[ii] * math.prod(
+                    map(len, inchunks[ileft:ii])
+                )
+            else:
+                for i in range(ileft + 1, ii + 1):  # need single-shape dimensions
+                    result_inchunks[i] = (inshape[i],)  # chunks[i] = (4,)
+
+                chunk_reduction = reduce(mul, map(len, inchunks[ileft + 1 : ii + 1]))
+                result_inchunks[ileft] = expand_tuple(inchunks[ileft], chunk_reduction)
+
+                max_in_chunk = _cal_max_chunk_size(inchunks, ileft, ii)
+                result_inchunks = _smooth_chunks(
+                    ileft, ii, max_in_chunk, result_inchunks
+                )
+                # Build cross product of result_inchunks[ileft:ii+1]
+                result_outchunks[oi] = _calc_lower_dimension_chunks(
+                    result_inchunks, ileft, ii
+                )
+
+            oi -= 1
+            ii = ileft - 1
+        elif din > dout:  # (64,) -> (4, 4, 4)
+            if disallow_dimension_expansion:
+                raise NotImplementedError(
+                    "reshape_blockwise not implemented for expanding dimensions without passing chunk hints."
+                )
+            oleft = oi - 1
+            while oleft >= 0 and reduce(mul, outshape[oleft : oi + 1]) < din:
+                oleft -= 1
+            if reduce(mul, outshape[oleft : oi + 1]) != din:
+                raise NotImplementedError(_not_implemented_message)
+            # TODO: don't coalesce shapes unnecessarily
+            cs = reduce(mul, outshape[oleft + 1 : oi + 1])
+
+            result_inchunks[ii] = contract_tuple(inchunks[ii], cs)  # (16, 16, 16, 16)
+
+            for i in range(oleft + 1, oi + 1):
+                result_outchunks[i] = (outshape[i],)
+
+            result_outchunks[oleft] = tuple(c // cs for c in result_inchunks[ii])
+
+            max_in_chunk = _cal_max_chunk_size(inchunks, ii, ii)
+            result_outchunks = _smooth_chunks(oleft, oi, max_in_chunk, result_outchunks)
+            # Build cross product of result_outchunks[oleft:oi+1]
+            result_inchunks[ii] = _calc_lower_dimension_chunks(
+                result_outchunks, oleft, oi
+            )
+            oi = oleft - 1
+            ii -= 1
+
+    return tuple(result_inchunks), tuple(result_outchunks), mapper_in, one_dimensions
+
+
+def _calc_lower_dimension_chunks(chunks, start, stop):
+    # We need the lower dimension chunks to match what the higher dimension chunks
+    # can be combined to, i.e. multiply the different dimensions
+    return tuple(
+        map(
+            lambda x: reduce(mul, x),
+            product(*chunks[start : stop + 1]),
+        )
+    )
+
+
+def _smooth_chunks(ileft, ii, max_in_chunk, result_inchunks):
+    # The previous step squashed the whole dimension into a single
+    # chunk for ileft + 1 (and potentially combined too many elements
+    # into a single chunk for ileft as well). We split up the single
+    # chunk into multiple chunks to match the max_in_chunk to keep
+    # chunksizes consistent:
+    # ((1, 1), (200)) -> ((1, 1), (20, ) * 10) for max_in_chunk = 20
+    # It's important to ensure that all dimensions before the dimension
+    # we adjust have all-1 chunks to respect C contiguous arrays
+    # during the reshaping
+
+    ileft_orig = ileft
+    max_result_in_chunk = _cal_max_chunk_size(result_inchunks, ileft, ii)
+    if max_in_chunk == max_result_in_chunk:
+        # reshaping doesn't mess up
+        return result_inchunks
+
+    while all(x == 1 for x in result_inchunks[ileft]):
+        # Find the first dimension where we can split chunks
+        ileft += 1
+
+    if ileft < ii + 1:
+        factor = math.ceil(max_result_in_chunk / max_in_chunk)
+        result_in_chunk = result_inchunks[ileft]
+
+        if len(result_in_chunk) == 1:
+            # This is a trivial case, when we arrive here is the chunk we are
+            # splitting the same length as the whole dimension and all previous
+            # chunks that are reshaped into the same dimension are all-one.
+            # So we can split this dimension.
+            elem = result_in_chunk[0]
+            factor = min(factor, elem)
+            ceil_elem = math.ceil(elem / factor)
+            new_inchunk = [ceil_elem] * factor
+            for i in range(ceil_elem * factor - elem):
+                new_inchunk[i] -= 1
+            result_inchunks[ileft] = tuple(new_inchunk)
+
+            if all(x == 1 for x in new_inchunk) and ileft < ii:
+                # might have to do another round
+                return _smooth_chunks(ileft_orig, ii, max_in_chunk, result_inchunks)
+        else:
+            # We are now in the more complicated case. The first dimension in the set
+            # of dimensions to squash has non-ones and our max chunk is bigger than
+            # what we want. We need to split the non-ones into multiple chunks along
+            # this axis.
+            other_max_chunk = max_result_in_chunk // max(result_inchunks[ileft])
+            result_in = []
+
+            for elem_in in result_in_chunk:
+                if elem_in * other_max_chunk <= max_in_chunk:
+                    result_in.append(elem_in)
+                    continue
+
+                factor = math.ceil(elem_in * other_max_chunk / max_in_chunk)
+                ceil_elem = math.ceil(elem_in / factor)
+                new_in_chunk = [ceil_elem] * math.ceil(factor)
+                for i in range(ceil_elem * factor - elem_in):
+                    new_in_chunk[i] -= 1
+                result_in.extend(new_in_chunk)
+
+            result_inchunks[ileft] = tuple(result_in)
+    return result_inchunks
+
+
+def _cal_max_chunk_size(chunks, start, stop):
+    return int(
+        reduce(
+            mul,
+            [max(chunks[axis]) for axis in range(start, stop + 1)],
+        )
+    )
+
+
+def expand_tuple(chunks, factor):
+    """
+    >>> expand_tuple((2, 4), 2)
+    (1, 1, 2, 2)
+
+    >>> expand_tuple((2, 4), 3)
+    (1, 1, 1, 1, 2)
+
+    >>> expand_tuple((3, 4), 2)
+    (1, 2, 2, 2)
+
+    >>> expand_tuple((7, 4), 3)
+    (2, 2, 3, 1, 1, 2)
+    """
+    if factor == 1:
+        return chunks
+
+    out = []
+    for c in chunks:
+        x = c
+        part = max(x / factor, 1)
+        while x >= 2 * part:
+            out.append(int(part))
+            x -= int(part)
+        if x:
+            out.append(x)
+    assert sum(chunks) == sum(out)
+    return tuple(out)
+
+
+def contract_tuple(chunks, factor):
+    """Return simple chunks tuple such that factor divides all elements
+
+    Examples
+    --------
+    >>> contract_tuple((2, 2, 8, 4), 4)
+    (4, 8, 4)
+    """
+    assert sum(chunks) % factor == 0
+
+    out = []
+    residual = 0
+    for chunk in chunks:
+        chunk += residual
+        div = chunk // factor
+        residual = chunk % factor
+        good = factor * div
+        if good:
+            out.append(good)
+    return tuple(out)
+
+
+# --------------------------------------------------------------------------
+# End of reshape_rechunk helpers
+# --------------------------------------------------------------------------
 
 
 class Reshape(ArrayExpr):
@@ -294,8 +551,6 @@ class ReshapeBlockwise(ArrayExpr):
     @functools.cached_property
     def _reshape_info(self):
         """Compute reshape mapping info (cached to avoid recomputation)."""
-        from dask.array.reshape import reshape_rechunk
-
         if len(self._shape) > self.array.ndim:
             return None  # Expansion case uses provided chunks directly
 

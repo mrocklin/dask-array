@@ -11,7 +11,7 @@ from dask._collections import new_collection
 from dask._task_spec import Alias, List, Task, TaskRef
 from dask_array._expr import ArrayExpr
 from dask_array.linalg._utils import _solve_triangular_lower
-from dask.array.utils import meta_from_array
+from dask_array._utils import meta_from_array
 
 
 def _cholesky_lower(a):
@@ -34,7 +34,7 @@ class Cholesky(ArrayExpr):
 
     @functools.cached_property
     def _meta(self):
-        from dask.array.utils import array_safe
+        from dask_array._utils import array_safe
 
         arr_meta = meta_from_array(self.array._meta)
         cho = np.linalg.cholesky(

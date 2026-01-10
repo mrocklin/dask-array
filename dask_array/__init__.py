@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import dask_array._backends
+from dask_array import _chunk as chunk
+from dask_array._core_utils import PerformanceWarning
 
 
 def _array_expr_enabled():

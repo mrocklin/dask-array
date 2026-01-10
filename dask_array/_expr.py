@@ -13,7 +13,7 @@ import toolz
 
 from dask._expr import FinalizeCompute, SingletonExpr
 from dask._task_spec import List, Task, TaskRef
-from dask.array.core import (
+from dask_array._core_utils import (
     PerformanceWarning,
     T_IntOrNaN,
     common_blockdim,
@@ -247,8 +247,8 @@ class ArrayExpr(SingletonExpr):
             return self
 
         from dask_array._rechunk import Rechunk
-        from dask.array.core import normalize_chunks
-        from dask.array.rechunk import validate_axis
+        from dask_array._core_utils import normalize_chunks
+        from dask_array._utils import validate_axis
 
         # Pre-resolve chunks to check for no-op and avoid singleton caching issues
         resolved_chunks = chunks

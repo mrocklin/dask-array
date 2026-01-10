@@ -15,9 +15,9 @@ from tlz import concat
 
 import dask
 import dask_array as da
-from dask.array.core import normalize_chunks
-from dask.array.numpy_compat import NUMPY_GE_210, AxisError
-from dask.array.utils import assert_eq, same_keys
+from dask_array._core_utils import normalize_chunks
+from dask_array._numpy_compat import NUMPY_GE_210, AxisError
+from dask_array._test_utils import assert_eq, same_keys
 
 
 @pytest.mark.parametrize(

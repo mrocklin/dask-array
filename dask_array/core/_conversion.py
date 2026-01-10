@@ -8,8 +8,8 @@ from collections.abc import Iterable
 
 import numpy as np
 
-from dask.array.core import getter_inline
-from dask.array.utils import meta_from_array
+from dask_array._core_utils import getter_inline
+from dask_array._utils import meta_from_array
 from dask.base import is_dask_collection
 from dask.utils import SerializableLock
 
@@ -196,7 +196,7 @@ def from_array(
         x = x.copy()
 
     # Validate chunks early to catch errors, but store original for compact repr
-    from dask.array.core import normalize_chunks
+    from dask_array._core_utils import normalize_chunks
 
     normalize_chunks(chunks, x.shape, dtype=x.dtype)  # validates
 
@@ -308,7 +308,7 @@ def asarray(
     else:
         from functools import partial
 
-        from dask.array.utils import asarray_safe
+        from dask_array._utils import asarray_safe
 
         like_meta = meta_from_array(like)
         if isinstance(a, Array):
@@ -396,7 +396,7 @@ def asanyarray(a, dtype=None, order=None, *, like=None, inline_array=False):
     else:
         from functools import partial
 
-        from dask.array.utils import asanyarray_safe
+        from dask_array._utils import asanyarray_safe
 
         like_meta = meta_from_array(like)
         if isinstance(a, Array):

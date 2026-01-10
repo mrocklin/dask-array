@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 import dask_array as da
-from dask.array.utils import assert_eq
+from dask_array._test_utils import assert_eq
 
 def test_contiguous_indexing_splits_to_input_chunk_size():
     """np.repeat pattern: output chunks stay close to input chunk size."""

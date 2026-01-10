@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from dask_array.io._base import IO
-from dask.array.utils import meta_from_array
+from dask_array._utils import meta_from_array
 
 if TYPE_CHECKING:
     pass

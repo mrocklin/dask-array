@@ -8,8 +8,54 @@ from itertools import product
 import numpy as np
 
 from dask._collections import new_collection
+
+
+# Local implementations of merge/scan functions (copied from dask.array.reductions)
+def _cumsum_merge(a, b):
+    if isinstance(a, np.ma.masked_array) or isinstance(b, np.ma.masked_array):
+        values = np.ma.getdata(a) + np.ma.getdata(b)
+        return np.ma.masked_array(values, mask=np.ma.getmaskarray(b))
+    return a + b
+
+
+def _cumprod_merge(a, b):
+    if isinstance(a, np.ma.masked_array) or isinstance(b, np.ma.masked_array):
+        values = np.ma.getdata(a) * np.ma.getdata(b)
+        return np.ma.masked_array(values, mask=np.ma.getmaskarray(b))
+    return a * b
+
+
+def _prefixscan_first(func, x, axis, dtype):
+    """Compute the prefix scan (e.g., cumsum) on the first block."""
+    return func(x, axis=axis, dtype=dtype)
+
+
+def _prefixscan_combine(func, binop, pre, x, axis, dtype):
+    """Combine results of a parallel prefix scan such as cumsum.
+
+    Parameters
+    ----------
+    func : callable
+        Cumulative function (e.g. ``np.cumsum``)
+    binop : callable
+        Associative function (e.g. ``add``)
+    pre : np.array
+        The value calculated in parallel from ``preop``.
+        For example, the sum of all the previous blocks.
+    x : np.array
+        Current block
+    axis : int
+    dtype : dtype
+
+    Returns
+    -------
+    np.array
+    """
+    return binop(pre, func(x, axis=axis, dtype=dtype))
+
+
 from dask_array._expr import ArrayExpr
-from dask.array.utils import validate_axis
+from dask_array._utils import validate_axis
 from dask.tokenize import _tokenize_deterministic
 from dask.utils import cached_property, funcname
 
@@ -294,8 +340,6 @@ class CumReductionBlelloch(ArrayExpr):
                 level += 1
 
         # Phase 2: Apply cumulative function and combine with prefix sums
-        from dask.array.reductions import _prefixscan_combine, _prefixscan_first
-
         # First blocks: just apply the cumulative function
         for index in full_indices[0]:
             dsk[base_key + index] = (
@@ -375,8 +419,6 @@ def cumsum(x, axis=None, dtype=None, out=None, method="sequential"):
     cumsum_along_axis : dask array
         A new array holding the result.
     """
-    from dask.array.reductions import _cumsum_merge
-
     return _cumreduction_expr(
         np.cumsum,
         _cumsum_merge,
@@ -413,8 +455,6 @@ def cumprod(x, axis=None, dtype=None, out=None, method="sequential"):
     cumprod_along_axis : dask array
         A new array holding the result.
     """
-    from dask.array.reductions import _cumprod_merge
-
     return _cumreduction_expr(
         np.cumprod,
         _cumprod_merge,

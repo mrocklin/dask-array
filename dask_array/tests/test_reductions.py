@@ -13,8 +13,8 @@ import itertools
 
 import dask_array as da
 from dask import config
-from dask.array.numpy_compat import ComplexWarning
-from dask.array.utils import assert_eq, same_keys
+from dask_array._numpy_compat import ComplexWarning
+from dask_array._test_utils import assert_eq, same_keys
 from dask.core import get_deps
 
 

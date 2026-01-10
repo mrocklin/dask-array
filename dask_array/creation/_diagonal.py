@@ -9,7 +9,7 @@ from dask._collections import new_collection
 from dask._task_spec import Task, TaskRef
 from dask_array._collection import asarray
 from dask_array._expr import ArrayExpr
-from dask.array.utils import meta_from_array
+from dask_array._utils import meta_from_array
 from dask.utils import derived_from
 
 
@@ -139,7 +139,7 @@ class Diagonal(ArrayExpr):
         return pop_axes(x.chunks, axis1, axis2) + (kdiag_chunks,)
 
     def _layer(self) -> dict:
-        from dask.array.utils import is_cupy_type
+        from dask_array._utils import is_cupy_type
 
         dsk = {}
         info = self._diag_info
@@ -225,7 +225,7 @@ class Diagonal(ArrayExpr):
 
 @derived_from(np)
 def diagonal(a, offset=0, axis1=0, axis2=1):
-    from dask.array.numpy_compat import AxisError
+    from dask_array._numpy_compat import AxisError
 
     if a.ndim < 2:
         raise ValueError("diag requires an array of at least two dimensions")

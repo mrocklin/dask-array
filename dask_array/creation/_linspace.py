@@ -7,7 +7,7 @@ import numpy as np
 
 from dask._collections import new_collection
 from dask._task_spec import Task
-from dask.array.chunk import linspace as _linspace
+from dask_array._chunk import linspace as _linspace
 
 from ._arange import Arange
 

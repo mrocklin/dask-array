@@ -8,10 +8,10 @@ import numpy as np
 
 from dask import config
 from dask._collections import new_collection
-from dask.array import chunk
+from dask_array import _chunk as chunk
 from dask_array._expr import ArrayExpr
 from dask_array.manipulation._transpose import Transpose
-from dask.array.chunk_types import is_valid_chunk_type
+from dask_array._chunk_types import is_valid_chunk_type
 from dask.base import DaskMethodsMixin, is_dask_collection, named_schedulers
 from dask.core import flatten
 from dask.utils import format_bytes, has_keyword, key_split, typename
@@ -58,10 +58,12 @@ from dask_array.stacking._block import block
 from dask_array.stacking._simple import dstack, hstack, vstack
 
 # Type imports
-from dask.array.core import (
+from dask_array._core_utils import (
     _HANDLED_FUNCTIONS,
     T_IntOrNaN,
+    _get_chunk_shape,
     _should_delegate,
+    cached_max,
     check_if_handled_given_other,
     finalize,
 )
@@ -236,8 +238,6 @@ class Array(DaskMethodsMixin):
 
     @property
     def chunksize(self) -> tuple:
-        from dask.array.core import cached_max
-
         return tuple(cached_max(c) for c in self.chunks)
 
     @property
@@ -279,7 +279,6 @@ class Array(DaskMethodsMixin):
         >>> y.chunks
         ((2, 1, 0),)
         """
-        from dask.array.core import _get_chunk_shape
         from dask.base import compute
 
         chunk_shapes = self.map_blocks(
@@ -439,7 +438,7 @@ class Array(DaskMethodsMixin):
         if isinstance(index, str) or (
             isinstance(index, list) and index and all(isinstance(i, str) for i in index)
         ):
-            from dask.array.chunk import getitem
+            from dask_array._chunk import getitem
 
             if isinstance(index, str):
                 dt = self.dtype[index]
@@ -492,7 +491,7 @@ class Array(DaskMethodsMixin):
         return new_collection(result)
 
     def __setitem__(self, key, value):
-        from dask.array.core import unknown_chunk_message
+        from dask_array._core_utils import unknown_chunk_message
 
         # Handle np.ma.masked assignment
         if value is np.ma.masked:
@@ -549,7 +548,7 @@ class Array(DaskMethodsMixin):
         # Validate indices and value shape eagerly (before creating lazy expression)
         import math
 
-        from dask.array.slicing import parse_assignment_indices
+        from dask_array.slicing._utils import parse_assignment_indices
 
         indices, implied_shape, _, implied_shape_positions = parse_assignment_indices(
             key, self.shape
@@ -774,7 +773,7 @@ class Array(DaskMethodsMixin):
         return divmod(other, self)
 
     def __array_function__(self, func, types, args, kwargs):
-        import dask.array as module
+        import dask_array as module
         from dask.base import compute
 
         def handle_nonmatching_names(func, args, kwargs):
@@ -1058,7 +1057,7 @@ class Array(DaskMethodsMixin):
         --------
         dask.array.to_tiledb : equivalent function
         """
-        from dask.array.tiledb_io import to_tiledb
+        from dask_array.io._tiledb import to_tiledb
 
         return to_tiledb(self, uri, *args, **kwargs)
 
@@ -1073,10 +1072,10 @@ class Array(DaskMethodsMixin):
 
         See Also
         --------
-        dask.array.to_hdf5
+        dask_array.to_hdf5
         h5py.File.create_dataset
         """
-        from dask.array.core import to_hdf5
+        from dask_array.io._store import to_hdf5
 
         return to_hdf5(filename, datapath, self, **kwargs)
 
@@ -1093,7 +1092,7 @@ class Array(DaskMethodsMixin):
         -------
         Array
         """
-        from dask.array.creation import to_backend
+        from dask_array.creation._utils import to_backend
 
         return to_backend(self, backend=backend, **kwargs)  # type: ignore[arg-type]
 
@@ -1110,7 +1109,7 @@ class Array(DaskMethodsMixin):
         str
             An svg string depicting the array as a grid of chunks
         """
-        from dask.array.svg import svg
+        from dask_array._svg import svg
 
         return svg(self.chunks, size=size)
 

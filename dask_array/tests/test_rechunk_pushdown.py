@@ -7,7 +7,7 @@ import pytest
 
 import dask_array as da
 from dask_array.io import FromArray
-from dask.array.utils import assert_eq
+from dask_array._test_utils import assert_eq
 
 def test_rechunk_dict_simplifies_through_from_array():
     """Dict chunks should simplify Rechunk(FromArray) -> FromArray."""

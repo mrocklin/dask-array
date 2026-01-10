@@ -9,9 +9,9 @@ from dask._collections import new_collection
 from dask._task_spec import Task
 from dask_array._collection import asarray
 from dask_array._expr import ArrayExpr
-from dask.array.creation import _get_like_function_shapes_chunks
-from dask.array.utils import meta_from_array
-from dask.array.wrap import _parse_wrap_args, broadcast_trick
+from dask_array._utils import meta_from_array
+
+from ._utils import _get_like_function_shapes_chunks, _parse_wrap_args, broadcast_trick
 
 
 class BroadcastTrick(ArrayExpr):

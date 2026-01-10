@@ -84,7 +84,7 @@ class Transpose(Blockwise):
     def _pushdown_through_elemwise(self):
         """Push transpose through elemwise by transposing each input."""
         from dask_array._blockwise import Elemwise
-        from dask.array.core import is_scalar_for_elemwise
+        from dask_array._core_utils import is_scalar_for_elemwise
 
         elemwise = self.array
         axes = self.axes
@@ -266,7 +266,7 @@ def moveaxis(a, source, destination):
     numpy.moveaxis
     """
     from dask_array.core import asanyarray
-    from dask.array.numpy_compat import normalize_axis_tuple
+    from dask_array._numpy_compat import normalize_axis_tuple
 
     a = asanyarray(a)
     source = normalize_axis_tuple(source, a.ndim, "source")
@@ -293,7 +293,7 @@ def rollaxis(a, axis, start=0):
     numpy.rollaxis
     """
     from dask_array.core import asanyarray
-    from dask.array.numpy_compat import normalize_axis_index
+    from dask_array._numpy_compat import normalize_axis_index
 
     a = asanyarray(a)
     n = a.ndim

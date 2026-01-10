@@ -9,18 +9,18 @@ from toolz import pluck
 
 from dask._task_spec import Alias, Task, TaskRef
 from dask_array._expr import ArrayExpr
-from dask.array.chunk import getitem
-from dask.array.optimization import fuse_slice
-from dask.array.slicing import (
+from dask_array._chunk import getitem
+from dask_array._utils import meta_from_array
+from dask_array.slicing._utils import (
     _slice_1d,
     check_index,
+    fuse_slice,
     new_blockdim,
     normalize_slice,
     posify_index,
     replace_ellipsis,
     sanitize_index,
 )
-from dask.array.utils import meta_from_array
 from dask.layers import ArrayBlockwiseDep
 from dask.utils import cached_cumsum, is_arraylike
 
@@ -203,7 +203,7 @@ def slice_with_int_dask_array_on_axis(x, idx, axis):
 
     This is a helper function of :func:`slice_with_int_dask_array`.
     """
-    from dask.array import chunk
+    from dask_array import _chunk as chunk
     from dask_array._collection import blockwise
 
     assert 0 <= axis < x.ndim
@@ -375,7 +375,7 @@ def slice_wrap_lists(x, index, allow_getitem_optimization):
 
 
 def slice_slices_and_integers(x, index, allow_getitem_optimization=False):
-    from dask.array.core import unknown_chunk_message
+    from dask_array._core_utils import unknown_chunk_message
 
     shape = tuple(cached_cumsum(dim, initial_zero=True)[-1] for dim in x.chunks)
 
@@ -393,7 +393,7 @@ def take(x, index, axis=0):
 
     if not np.isnan(x.chunks[axis]).any():
         from dask_array._shuffle import _shuffle
-        from dask.array.utils import arange_safe, asarray_safe
+        from dask_array._utils import arange_safe, asarray_safe
 
         # No-op check only for numpy arrays (dask array comparison triggers warnings)
         # Use is_dask_collection to catch both array-expr and legacy dask Arrays
@@ -416,7 +416,7 @@ def take(x, index, axis=0):
     elif len(x.chunks[axis]) == 1:
         return TakeUnknownOneChunk(x, index, axis)
     else:
-        from dask.array.core import unknown_chunk_message
+        from dask_array._core_utils import unknown_chunk_message
 
         raise ValueError(
             f"Array chunk size or shape is unknown. {unknown_chunk_message}"

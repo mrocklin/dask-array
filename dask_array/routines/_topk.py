@@ -8,7 +8,7 @@ from numbers import Number
 import numpy as np
 
 from dask_array._collection import asarray
-from dask.array.utils import validate_axis
+from dask_array._utils import validate_axis
 
 
 def topk(a, k, axis=-1, split_every=None):

@@ -8,9 +8,9 @@ import numpy as np
 
 from dask._task_spec import Alias, List, Task, TaskRef
 from dask_array._expr import ArrayExpr
-from dask.array.core import concatenate_shaped
-from dask.array.slicing import parse_assignment_indices, setitem
-from dask.array.utils import meta_from_array
+from dask_array._utils import meta_from_array
+from dask_array._core_utils import concatenate3 as concatenate_shaped
+from dask_array.slicing._utils import parse_assignment_indices, setitem
 from dask.base import is_dask_collection
 from dask.core import flatten
 from dask.utils import cached_cumsum

@@ -7,15 +7,37 @@ import math
 import numpy as np
 
 from dask import config
-from dask.array.einsumfuncs import chunk_einsum, einsum_symbols, einsum_symbols_set
 from dask.utils import cached_max, derived_from
+
+from dask_array._dispatch import einsum_lookup
+
+# Valid characters for einsum subscripts (from numpy)
+einsum_symbols = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+einsum_symbols_set = set(einsum_symbols)
+
+
+def chunk_einsum(*operands, **kwargs):
+    """Chunk-level einsum computation.
+
+    This function is used by blockwise to compute einsum on individual chunks.
+    It dispatches to the appropriate einsum implementation based on array type.
+    """
+    subscripts = kwargs.pop("subscripts")
+    ncontract_inds = kwargs.pop("ncontract_inds")
+    dtype = kwargs.pop("kernel_dtype")
+    einsum = einsum_lookup.dispatch(type(operands[0]))
+    chunk = einsum(subscripts, *operands, dtype=dtype, **kwargs)
+
+    # Avoid concatenate=True in blockwise by adding 1's
+    # for the contracted dimensions
+    return chunk.reshape(chunk.shape + (1,) * ncontract_inds)
 
 
 def _calculate_new_chunksizes(
     old_chunks, new_chunks, changeable_dimensions, target_size
 ):
     """Calculate new chunk sizes for einsum rechunking."""
-    from dask.array._shuffle import _calculate_new_chunksizes as _calc
+    from dask_array._shuffle import _calculate_new_chunksizes as _calc
 
     return _calc(old_chunks, new_chunks, changeable_dimensions, target_size)
 

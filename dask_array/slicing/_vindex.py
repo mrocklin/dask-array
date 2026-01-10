@@ -11,15 +11,15 @@ import numpy as np
 
 from dask._task_spec import List, Task, TaskRef
 from dask_array._expr import ArrayExpr
-from dask.array.core import (
+from dask_array._utils import meta_from_array
+from dask_array.slicing._utils import replace_ellipsis
+from dask_array._core_utils import (
     _get_axis,
     _vindex_merge,
     _vindex_slice_and_transpose,
     interleave_none,
     keyname,
 )
-from dask.array.slicing import replace_ellipsis
-from dask.array.utils import meta_from_array
 from dask.utils import cached_cumsum, cached_max
 
 
@@ -107,7 +107,7 @@ def _compute_indexer(index, chunks_along_axis):
 def _vindex_array(x, dict_indexes):
     """Point wise indexing with only NumPy Arrays."""
     from dask_array._collection import new_collection
-    from dask.array.wrap import empty
+    from dask_array.creation import empty
 
     try:
         broadcast_shape = np.broadcast_shapes(

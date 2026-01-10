@@ -57,14 +57,14 @@ def _get_n(arr):
 
 def _solve_triangular_lower(a, b):
     """Solve triangular system with lower triangular matrix."""
-    from dask.array.utils import solve_triangular_safe
+    from dask_array._utils import solve_triangular_safe
 
     return solve_triangular_safe(a, b, lower=True)
 
 
 def _solve_triangular_upper(a, b):
     """Solve triangular system with upper triangular matrix."""
-    from dask.array.utils import solve_triangular_safe
+    from dask_array._utils import solve_triangular_safe
 
     return solve_triangular_safe(a, b, lower=False)
 

@@ -84,8 +84,8 @@ def broadcast_arrays(*args, subok=False):
     from toolz import concat
 
     from dask_array._collection import broadcast_to
-    from dask.array.core import broadcast_chunks, broadcast_shapes
-    from dask.array.numpy_compat import NUMPY_GE_200
+    from dask_array._core_utils import broadcast_chunks, broadcast_shapes
+    from dask_array._numpy_compat import NUMPY_GE_200
 
     subok = bool(subok)
 

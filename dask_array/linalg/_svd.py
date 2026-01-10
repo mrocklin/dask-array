@@ -11,7 +11,7 @@ from dask._collections import new_collection
 from dask._task_spec import Task, TaskRef
 from dask_array._expr import ArrayExpr
 from dask_array.random import RandomState, default_rng
-from dask.array.utils import meta_from_array, svd_flip
+from dask_array._utils import meta_from_array, svd_flip
 from dask.base import wait
 from dask.utils import derived_from
 

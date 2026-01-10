@@ -8,7 +8,7 @@ import numpy as np
 
 from dask._task_spec import Alias
 from dask_array._expr import ArrayExpr
-from dask.array.utils import meta_from_array
+from dask_array._utils import meta_from_array
 
 
 def getitem_variadic(x, *index):

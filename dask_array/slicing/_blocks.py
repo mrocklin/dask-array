@@ -12,7 +12,7 @@ import numpy as np
 from dask._collections import new_collection
 from dask._task_spec import Alias
 from dask_array._expr import ArrayExpr
-from dask.array.slicing import normalize_index
+from dask_array.slicing._utils import normalize_index
 
 
 class BlockView:

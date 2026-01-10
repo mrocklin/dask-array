@@ -8,7 +8,7 @@ import pytest
 import dask_array as da
 from dask_array.io import FromArray
 from dask_array.slicing import SliceSlicesIntegers
-from dask.array.utils import assert_eq
+from dask_array._test_utils import assert_eq
 
 # Parametrized correctness tests: (array_shape, chunks, slice_tuple)
 SLICE_CASES = [

@@ -6,11 +6,11 @@ from operator import getitem
 
 import numpy as np
 
-from dask import core
+from dask import core as dask_core
 from dask._collections import new_collection
 from dask_array._collection import Array, asarray, blockwise, elemwise
 from dask_array._expr import ArrayExpr
-from dask.array.core import apply_infer_dtype
+from dask_array._core_utils import apply_infer_dtype
 from dask.base import is_dask_collection
 from dask.tokenize import _tokenize_deterministic, normalize_token
 from dask.utils import derived_from, funcname
@@ -330,7 +330,7 @@ class DoubleOutputs(ArrayExpr):
     def _layer(self) -> dict:
         return {
             (self._name,) + key[1:]: (getitem, key, self.operand("index"))
-            for key in core.flatten(self.array.__dask_keys__())
+            for key in dask_core.flatten(self.array.__dask_keys__())
         }
 
 
