@@ -248,7 +248,7 @@ def concatenate(seq, axis=0, allow_unknown_chunksizes=False):
 
     Create slices
 
-    >>> import dask.array as da
+    >>> import dask_array as da
     >>> import numpy as np
 
     >>> data = [da.from_array(np.ones((4, 4)), chunks=(2, 2))
@@ -267,7 +267,7 @@ def concatenate(seq, axis=0, allow_unknown_chunksizes=False):
     --------
     stack
     """
-    from dask.array import wrap
+    from dask_array.creation import empty, empty_like
 
     # Lazy import to avoid circular dependency
     from dask_array.core import asarray
@@ -314,9 +314,9 @@ def concatenate(seq, axis=0, allow_unknown_chunksizes=False):
     n = len(seq2)
     if n == 0:
         try:
-            return wrap.empty_like(meta, shape=shape, chunks=shape, dtype=meta.dtype)
+            return empty_like(meta, shape=shape, chunks=shape, dtype=meta.dtype)
         except TypeError:
-            return wrap.empty(shape, chunks=shape, dtype=meta.dtype)
+            return empty(shape, chunks=shape, dtype=meta.dtype)
     elif n == 1:
         return seq2[0]
 

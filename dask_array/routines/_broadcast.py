@@ -23,7 +23,7 @@ def unify_chunks(*args, **kwargs):
 
     Examples
     --------
-    >>> import dask.array as da
+    >>> import dask_array as da
     >>> x = da.ones(10, chunks=((5, 2, 3),))
     >>> y = da.ones(10, chunks=((2, 3, 5),))
     >>> chunkss, arrays = unify_chunks(x, 'i', y, 'i')

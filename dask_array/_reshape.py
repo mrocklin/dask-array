@@ -660,7 +660,7 @@ def reshape_blockwise(x, shape, chunks=None):
 
     Examples
     --------
-    >>> import dask.array as da
+    >>> import dask_array as da
     >>> x = da.from_array(np.arange(0, 27).reshape(3, 3, 3), chunks=(3, 2, (2, 1)))
     >>> result = reshape_blockwise(x, (3, 9))
     >>> result.chunks
@@ -737,7 +737,7 @@ def ravel(array_like):
 
     Examples
     --------
-    >>> import dask.array as da
+    >>> import dask_array as da
     >>> x = da.ones((2, 3), chunks=2)
     >>> da.ravel(x).compute()
     array([1., 1., 1., 1., 1., 1.])

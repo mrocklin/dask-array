@@ -266,7 +266,7 @@ class Array(DaskMethodsMixin):
 
         Examples
         --------
-        >>> import dask.array as da
+        >>> import dask_array as da
         >>> import numpy as np
         >>> x = da.from_array([-2, -1, 0, 1, 2], chunks=2)
         >>> x.chunks
@@ -1003,7 +1003,7 @@ class Array(DaskMethodsMixin):
         This is equivalent to numpy's advanced indexing, using arrays that are
         broadcast against each other. This allows for pointwise indexing:
 
-        >>> import dask.array as da
+        >>> import dask_array as da
         >>> x = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
         >>> x = da.from_array(x, chunks=2)
         >>> x.vindex[[0, 1, 2], [0, 1, 2]].compute()

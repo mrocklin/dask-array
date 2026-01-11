@@ -1057,7 +1057,7 @@ def rechunk(
 
     Examples
     --------
-    >>> import dask.array as da
+    >>> import dask_array as da
     >>> x = da.ones((1000, 1000), chunks=(100, 100))
 
     Specify uniform chunk sizes with a tuple

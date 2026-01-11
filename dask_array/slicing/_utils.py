@@ -20,6 +20,12 @@ from dask.utils import cached_cumsum, is_arraylike
 colon = slice(None, None, None)
 
 
+class SlicingNoop(Exception):
+    """This indicates that a slicing operation is a no-op. The caller has to handle this"""
+
+    pass
+
+
 # ============================================================================
 # Helper functions
 # ============================================================================

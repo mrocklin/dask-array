@@ -6,6 +6,10 @@ from their new locations.
 
 from __future__ import annotations
 
+import numpy as np
+
+from dask_array._core_utils import implements
+
 # Re-exports from _blockwise
 from dask_array._blockwise import outer  # noqa: F401
 
@@ -85,3 +89,14 @@ from dask_array.routines._triangular import (  # noqa: F401
     triu_indices_from,
 )
 from dask_array.routines._unique import union1d, unique  # noqa: F401
+
+
+def ptp(a, axis=None):
+    """Peak to peak (maximum - minimum) value along a given axis."""
+    return a.max(axis=axis) - a.min(axis=axis)
+
+
+@implements(np.iscomplexobj)
+def iscomplexobj(x):
+    """Check whether the input has a complex dtype."""
+    return issubclass(x.dtype.type, np.complexfloating)

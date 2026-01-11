@@ -35,7 +35,7 @@ class RandomState:
 
     Examples
     --------
-    >>> import dask.array as da
+    >>> import dask_array as da
     >>> state = da.random.RandomState(1234)  # a seed
     >>> x = state.normal(10, 0.1, size=3, chunks=(2,))
     >>> x.compute()

@@ -995,15 +995,26 @@ def broadcast_shapes(*shapes):
         return shapes[0]
     out = []
     for sizes in zip_longest(*map(reversed, shapes), fillvalue=-1):
-        if np.isnan(sizes).any():
+        has_nan = np.isnan(sizes).any()
+        # Filter out -1 (missing dims), 0 and 1 (broadcastable), and nan
+        non_trivial = [s for s in sizes if s not in (-1, 0, 1) and not np.isnan(s)]
+
+        if has_nan:
+            # If any nan, output is nan but we still validate non-nan values
             dim = np.nan
+            # All non-trivial sizes must match each other
+            if len(set(non_trivial)) > 1:
+                raise ValueError(
+                    "operands could not be broadcast together with "
+                    "shapes {}".format(" ".join(map(str, shapes)))
+                )
         else:
             dim = 0 if 0 in sizes else np.max(sizes).item()
-        if any(i not in [-1, 0, 1, dim] and not np.isnan(i) for i in sizes):
-            raise ValueError(
-                "operands could not be broadcast together with "
-                "shapes {}".format(" ".join(map(str, shapes)))
-            )
+            if any(i not in [-1, 0, 1, dim] for i in sizes):
+                raise ValueError(
+                    "operands could not be broadcast together with "
+                    "shapes {}".format(" ".join(map(str, shapes)))
+                )
         out.append(dim)
     return tuple(reversed(out))
 

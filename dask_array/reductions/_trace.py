@@ -47,7 +47,7 @@ def trace(a, offset=0, axis1=0, axis2=1, dtype=None):
 
     Examples
     --------
-    >>> import dask.array as da
+    >>> import dask_array as da
     >>> da.trace(da.eye(3)).compute()  # doctest: +SKIP
     3.0
     """

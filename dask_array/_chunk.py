@@ -254,10 +254,17 @@ def argtopk(a_plus_idx, k, axis, keepdims):
     assert keepdims is True
     axis = axis[0]
 
-    a, idx = a_plus_idx
+    if isinstance(a_plus_idx, list):
+        a_plus_idx = list(flatten(a_plus_idx))
+        a = np.concatenate([ai for ai, _ in a_plus_idx], axis)
+        idx = np.concatenate(
+            [np.broadcast_to(idxi, ai.shape) for ai, idxi in a_plus_idx], axis
+        )
+    else:
+        a, idx = a_plus_idx
 
     if abs(k) >= a.shape[axis]:
-        return a, idx
+        return a_plus_idx
 
     idx2 = np.argpartition(a, -k, axis=axis)
     k_slice = slice(-k, None) if k > 0 else slice(-k)
@@ -272,9 +279,9 @@ def argtopk_aggregate(a_plus_idx, k, axis, keepdims):
     Invoke argtopk one final time, sort the results internally, and drop the data.
     """
     assert keepdims is True
+    a_plus_idx = a_plus_idx if len(a_plus_idx) > 1 else a_plus_idx[0]
+    a, idx = argtopk(a_plus_idx, k, axis, keepdims)
     axis = axis[0]
-
-    a, idx = argtopk(a_plus_idx, k, axis, (axis,), keepdims)
     idx2 = np.argsort(a, axis=axis)
 
     idx = np.take_along_axis(idx, idx2, axis)

@@ -634,7 +634,7 @@ def overlap(x, depth, boundary, *, allow_rechunk=True):
     Examples
     --------
     >>> import numpy as np
-    >>> import dask.array as da
+    >>> import dask_array as da
 
     >>> x = np.arange(64).reshape((8, 8))
     >>> d = da.from_array(x, chunks=(4, 4))
@@ -699,7 +699,7 @@ def add_dummy_padding(x, depth, boundary):
     Pads an array which has 'none' as the boundary type.
     Used to simplify trimming arrays which use 'none'.
 
-    >>> import dask.array as da
+    >>> import dask_array as da
     >>> x = da.arange(6, chunks=3)
     >>> add_dummy_padding(x, {0: 1}, {0: 'none'}).compute()  # doctest: +NORMALIZE_WHITESPACE
     array([..., 0, 1, 2, 3, 4, 5, ...])
@@ -849,7 +849,7 @@ def map_overlap(
     Examples
     --------
     >>> import numpy as np
-    >>> import dask.array as da
+    >>> import dask_array as da
 
     >>> x = np.array([1, 1, 2, 3, 3, 3, 2, 1, 1])
     >>> x = da.from_array(x, chunks=5)
@@ -1186,7 +1186,7 @@ def push(array, n, axis):
 
         Requires bottleneck to be installed.
     """
-    import dask.array as da
+    import dask_array as da
     from dask._compatibility import import_optional_dependency
 
     import_optional_dependency("bottleneck", min_version="1.3.7")

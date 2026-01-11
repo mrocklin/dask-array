@@ -11,10 +11,9 @@ from tlz import merge
 
 from dask_array._dispatch import empty_lookup, percentile_lookup
 from dask.base import tokenize
-from dask.highlevelgraph import HighLevelGraph
 from dask.utils import derived_from
 
-from dask_array._collection import Array
+from dask_array.core import from_graph
 
 
 @wraps(np.percentile)
@@ -256,8 +255,10 @@ def percentile(a, q, method="linear", internal_method="default", **kwargs):
                 )
             }
         dsk = merge(dsk, dsk2)
-        graph = HighLevelGraph.from_collections(name2, dsk, dependencies=[a])
-        arr = Array(graph, name2, chunks=((len(q),),), meta=meta)
+        # Merge the dependency graph with our new tasks
+        full_dsk = dict(a.__dask_graph__())
+        full_dsk.update(dsk)
+        arr = from_graph(full_dsk, meta, ((len(q),),), [(name2, 0)], name2)
         return arr.reshape(()) if q_is_number else arr
 
     elif a.ndim > 1:

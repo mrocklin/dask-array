@@ -90,7 +90,7 @@ def map_blocks(
 
     Examples
     --------
-    >>> import dask.array as da
+    >>> import dask_array as da
     >>> x = da.arange(6, chunks=3)
 
     >>> x.map_blocks(lambda x: x * 2).compute()

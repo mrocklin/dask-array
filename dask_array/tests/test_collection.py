@@ -104,6 +104,9 @@ def test_from_array():
     assert d.chunks == ((5, 5), (5, 5))
 
 
+@pytest.mark.xfail(
+    reason="Requires dask core to recognize 'dask_array' module in is_dask_collection"
+)
 def test_is_dask_collection_doesnt_materialize():
     class ArrayTest(Array):
         def __dask_graph__(self):

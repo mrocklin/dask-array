@@ -132,7 +132,7 @@ def shuffle(x, indexer: list[list[int]], axis: int, chunks: Literal["auto"] = "a
 
     Examples
     --------
-    >>> import dask.array as da
+    >>> import dask_array as da
     >>> import numpy as np
     >>> arr = np.array([[1, 2, 3, 4, 5, 6, 7, 8], [9, 10, 11, 12, 13, 14, 15, 16]])
     >>> x = da.from_array(arr, chunks=(2, 4))

@@ -265,7 +265,7 @@ def apply_gufunc(
 
     Examples
     --------
-    >>> import dask.array as da
+    >>> import dask_array as da
     >>> import numpy as np
     >>> def stats(x):
     ...     return np.mean(x, axis=-1), np.std(x, axis=-1)
@@ -645,7 +645,7 @@ class gufunc:
 
     Examples
     --------
-    >>> import dask.array as da
+    >>> import dask_array as da
     >>> import numpy as np
     >>> a = da.random.normal(size=(10,20,30), chunks=(5, 10, 30))
     >>> def stats(x):
@@ -800,7 +800,7 @@ def as_gufunc(signature=None, **kwargs):
 
     Examples
     --------
-    >>> import dask.array as da
+    >>> import dask_array as da
     >>> import numpy as np
     >>> a = da.random.normal(size=(10,20,30), chunks=(5, 10, 30))
     >>> @da.as_gufunc("(i)->(),()", output_dtypes=(float, float))

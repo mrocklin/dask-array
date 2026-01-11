@@ -490,7 +490,7 @@ def nancumsum(x, axis, dtype=None, out=None, *, method="sequential"):
     nancumsum_along_axis : dask array
         A new array holding the result.
     """
-    from dask.array import chunk as chunk_module
+    from dask_array import _chunk as chunk_module
 
     return _cumreduction_expr(
         chunk_module.nancumsum,
@@ -527,7 +527,7 @@ def nancumprod(x, axis, dtype=None, out=None, *, method="sequential"):
     nancumprod_along_axis : dask array
         A new array holding the result.
     """
-    from dask.array import chunk as chunk_module
+    from dask_array import _chunk as chunk_module
 
     return _cumreduction_expr(
         chunk_module.nancumprod,

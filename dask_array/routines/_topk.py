@@ -18,7 +18,7 @@ def topk(a, k, axis=-1, split_every=None):
     extract the -k smallest elements instead, and return them sorted
     from smallest to largest.
     """
-    from dask.array import chunk
+    from dask_array import _chunk as chunk
     from dask_array.reductions import reduction
 
     a = asarray(a)
@@ -46,7 +46,7 @@ def argtopk(a, k, axis=-1, split_every=None):
     Returns them sorted from largest to smallest. If k is negative,
     extract the indices of the -k smallest elements instead.
     """
-    from dask.array import chunk
+    from dask_array import _chunk as chunk
     from dask_array.creation import arange
     from dask_array.reductions import reduction
 

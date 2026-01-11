@@ -2337,7 +2337,7 @@ def test_coarsen_bad_chunks(chunks):
     ],
 )
 def test_aligned_coarsen_chunks(chunks, divisor):
-    from dask.array.routines import aligned_coarsen_chunks as acc
+    from dask_array.routines import aligned_coarsen_chunks as acc
 
     aligned_chunks = acc(chunks, divisor)
     any_remainders = (np.array(aligned_chunks) % divisor) != 0

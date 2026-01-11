@@ -68,7 +68,7 @@ def from_delayed(value, shape, dtype=None, meta=None, name=None):
     Examples
     --------
     >>> import dask
-    >>> import dask.array as da
+    >>> import dask_array as da
     >>> import numpy as np
     >>> value = dask.delayed(np.ones)(5)
     >>> array = da.from_delayed(value, (5,), dtype=float)

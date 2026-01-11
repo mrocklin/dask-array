@@ -67,7 +67,7 @@ class Generator:
     Examples
     --------
     >>> from numpy.random import PCG64
-    >>> from dask.array.random import Generator
+    >>> from dask_array.random import Generator
     >>> rng = Generator(PCG64())
     >>> rng.standard_normal().compute() # doctest: +SKIP
     array(0.44595957)  # random
@@ -414,7 +414,7 @@ def default_rng(seed=None):
 
     Here we use ``default_rng`` to generate a random float:
 
-    >>> import dask.array as da
+    >>> import dask_array as da
     >>> rng = da.random.default_rng(12345)
     >>> print(rng)
     Generator(PCG64)
@@ -427,7 +427,7 @@ def default_rng(seed=None):
     Here we use ``default_rng`` to generate 3 random integers between 0
     (inclusive) and 10 (exclusive):
 
-    >>> import dask.array as da
+    >>> import dask_array as da
     >>> rng = da.random.default_rng(12345)
     >>> rints = rng.integers(low=0, high=10, size=3).compute()
     >>> rints
@@ -437,7 +437,7 @@ def default_rng(seed=None):
 
     Here we specify a seed so that we have reproducible results:
 
-    >>> import dask.array as da
+    >>> import dask_array as da
     >>> rng = da.random.default_rng(seed=42)
     >>> print(rng)
     Generator(PCG64)
@@ -450,7 +450,7 @@ def default_rng(seed=None):
     If we exit and restart our Python interpreter, we'll see that we
     generate the same random numbers again:
 
-    >>> import dask.array as da
+    >>> import dask_array as da
     >>> rng = da.random.default_rng(seed=42)
     >>> arr2 = rng.random((3, 3)).compute()
     >>> arr2

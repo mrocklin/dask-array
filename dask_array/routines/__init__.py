@@ -1,8 +1,13 @@
 """Array routines for array-expr."""
 
+import numpy as np
+
+from dask.utils import derived_from
+
 # Direct imports from submodules
 # Re-exports from other modules
 from dask_array._blockwise import outer  # noqa: F401
+from dask_array._collection import asanyarray, asarray
 from dask_array._ufunc import (  # noqa: F401
     allclose,
     around,
@@ -59,11 +64,23 @@ from dask_array.routines._triangular import (
 from dask_array.routines._unique import union1d, unique
 from dask_array.routines._where import where
 
+
+@derived_from(np)
+def array(x, dtype=None, ndmin=None, *, like=None):
+    x = asarray(x, like=like)
+    while ndmin is not None and x.ndim < ndmin:
+        x = x[None, :]
+    if dtype is not None and x.dtype != dtype:
+        x = x.astype(dtype)
+    return x
+
+
 __all__ = [
     "aligned_coarsen_chunks",
     "allclose",
     "append",
     "apply_along_axis",
+    "array",
     "apply_over_axes",
     "argwhere",
     "argtopk",

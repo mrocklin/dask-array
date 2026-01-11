@@ -28,7 +28,7 @@ def where(condition, x=None, y=None):
 
     Examples
     --------
-    >>> import dask.array as da
+    >>> import dask_array as da
     >>> x = da.arange(10, chunks=5)
     >>> da.where(x < 5, x, 10 * x).compute()  # doctest: +NORMALIZE_WHITESPACE
     array([ 0,  1,  2,  3,  4, 50, 60, 70, 80, 90])

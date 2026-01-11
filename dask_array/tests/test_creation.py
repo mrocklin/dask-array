@@ -1005,8 +1005,8 @@ def test_pad_udf(kwargs):
 
 
 def test_pad_constant_chunksizes():
-    array = dask.array.ones((10, 10), chunks=(1, 1))
-    result = dask.array.pad(
+    array = da.ones((10, 10), chunks=(1, 1))
+    result = da.pad(
         array, ((0, 16 - 10), (0, 0)), mode="constant", constant_values=0
     )
     assert tuple(map(max, result.chunks)) == (1, 1)

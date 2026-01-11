@@ -48,7 +48,8 @@ class Coarsen(ArrayExpr):
     @cached_property
     def _reduction(self):
         reduction = self.reduction
-        if reduction.__module__.startswith("dask."):
+        # Handle dask.array or dask_array functions - use numpy equivalent
+        if reduction.__module__.startswith(("dask.", "dask_array")):
             return getattr(np, reduction.__name__)
         return reduction
 
@@ -73,7 +74,7 @@ class Coarsen(ArrayExpr):
         )
 
     def _layer(self):
-        from dask.array import chunk
+        from dask_array import _chunk as chunk
 
         x = self.x
         axes = self.axes

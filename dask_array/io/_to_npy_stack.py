@@ -8,7 +8,6 @@ import numpy as np
 
 from dask import core as dask_core
 from dask.base import compute_as_if_collection
-from dask.highlevelgraph import HighLevelGraph
 
 
 def to_npy_stack(dirname, x, axis=0):
@@ -60,5 +59,7 @@ def to_npy_stack(dirname, x, axis=0):
         for i, key in enumerate(dask_core.flatten(xx.__dask_keys__()))
     }
 
-    graph = HighLevelGraph.from_collections(name, dsk, dependencies=[xx])
-    compute_as_if_collection(Array, graph, list(dsk))
+    # Merge the dependency graph with our new tasks
+    full_dsk = dict(xx.__dask_graph__())
+    full_dsk.update(dsk)
+    compute_as_if_collection(Array, full_dsk, list(dsk))

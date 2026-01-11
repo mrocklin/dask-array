@@ -205,7 +205,7 @@ def stack(seq, axis=0, allow_unknown_chunksizes=False):
 
     Create slices
 
-    >>> import dask.array as da
+    >>> import dask_array as da
     >>> import numpy as np
 
     >>> data = [da.from_array(np.ones((4, 4)), chunks=(2, 2))
@@ -227,7 +227,7 @@ def stack(seq, axis=0, allow_unknown_chunksizes=False):
     --------
     concatenate
     """
-    from dask.array import wrap
+    from dask_array.creation import empty, empty_like
 
     # Lazy import to avoid circular dependency
     from dask_array.core import asarray
@@ -265,9 +265,9 @@ def stack(seq, axis=0, allow_unknown_chunksizes=False):
     n = len(seq2)
     if n == 0:
         try:
-            return wrap.empty_like(meta, shape=shape, chunks=shape, dtype=meta.dtype)
+            return empty_like(meta, shape=shape, chunks=shape, dtype=meta.dtype)
         except TypeError:
-            return wrap.empty(shape, chunks=shape, dtype=meta.dtype)
+            return empty(shape, chunks=shape, dtype=meta.dtype)
 
     ind = list(range(ndim))
     uc_args = list(concat((x.expr, ind) for x in seq2))

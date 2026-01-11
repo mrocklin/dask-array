@@ -143,7 +143,7 @@ def fft_wrap(fft_func, kind=None, dtype=None, allow_fftpack=False):
 
     Examples
     --------
-    >>> import dask.array.fft as dff
+    >>> import dask_array.fft as dff
     >>> parallel_fft = dff.fft_wrap(np.fft.fft)
     >>> parallel_ifft = dff.fft_wrap(np.fft.ifft)
     """

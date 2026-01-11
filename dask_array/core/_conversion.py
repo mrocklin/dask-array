@@ -272,7 +272,7 @@ def asarray(
 
     Examples
     --------
-    >>> import dask.array as da
+    >>> import dask_array as da
     >>> import numpy as np
     >>> x = np.arange(3)
     >>> da.asarray(x)
@@ -362,7 +362,7 @@ def asanyarray(a, dtype=None, order=None, *, like=None, inline_array=False):
 
     Examples
     --------
-    >>> import dask.array as da
+    >>> import dask_array as da
     >>> import numpy as np
     >>> x = np.arange(3)
     >>> da.asanyarray(x)
