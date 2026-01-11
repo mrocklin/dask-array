@@ -15,7 +15,8 @@ from dask_array._chunk_types import is_valid_chunk_type
 from dask.base import DaskMethodsMixin, is_dask_collection, named_schedulers
 from dask.core import flatten
 from dask.utils import format_bytes, has_keyword, key_split, typename
-from dask.widgets import get_template
+
+from dask_array._templates import get_template
 
 try:
     ARRAY_TEMPLATE = get_template("array.html.j2")
@@ -382,7 +383,7 @@ class Array(DaskMethodsMixin):
             grid=grid,
             nbytes=nbytes,
             cbytes=cbytes,
-            layers="1 expression",
+            ntasks=len(self.__dask_graph__()),
         )
 
     def __bool__(self):

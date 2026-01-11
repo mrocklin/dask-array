@@ -43,21 +43,33 @@ def svg(chunks, size=200, **kwargs):
         return svg_nd(chunks, size=size, **kwargs)
 
 
-text_style = 'font-size="1.0rem" font-weight="100" text-anchor="middle"'
+# Modern styling constants - orange from Dask logo
+STROKE_COLOR = "#78716c"       # stone-500 - grid lines
+FILL_COLOR = "#fb923c"         # orange-400 - front face
+FILL_COLOR_TOP = "#fdba74"     # orange-300 - top face (lighter)
+FILL_COLOR_DARK = "#ea580c"    # orange-600 - side face / dense arrays
+TEXT_STYLE = 'font-size="1.0rem" font-weight="400" text-anchor="middle" fill="currentColor"'
+
+# SVG definitions for shadow filter
+SVG_DEFS = """  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="2" dy="2" stdDeviation="2" flood-opacity="0.15"/>
+    </filter>
+  </defs>
+"""
 
 
-def svg_2d(chunks, offset=(0, 0), skew=(0, 0), size=200, sizes=None):
+def svg_2d(chunks, offset=(0, 0), skew=(0, 0), size=200, sizes=None, face=None):
     shape = tuple(map(sum, chunks))
     sizes = sizes or draw_sizes(shape, size=size)
     y, x = grid_points(chunks, sizes)
 
     lines, (min_x, max_x, min_y, max_y) = svg_grid(
-        x, y, offset=offset, skew=skew, size=size
+        x, y, offset=offset, skew=skew, size=size, face=face
     )
 
-    header = '<svg width="{}" height="{}" style="stroke:rgb(0,0,0);stroke-width:1" >\n'.format(
-        int(max_x + 50), int(max_y + 50)
-    )
+    header = f'<svg width="{int(max_x + 50)}" height="{int(max_y + 50)}" style="stroke:{STROKE_COLOR};stroke-width:1">\n'
+    header += SVG_DEFS
     footer = "\n</svg>"
 
     if shape[0] >= 100:
@@ -68,18 +80,8 @@ def svg_2d(chunks, offset=(0, 0), skew=(0, 0), size=200, sizes=None):
     text = [
         "",
         "  <!-- Text -->",
-        '  <text x="{}" y="{}" {} >{}</text>'.format(
-            max_x / 2, max_y + 20, text_style, shape[1]
-        ),
-        '  <text x="{}" y="{}" {} transform="rotate({},{},{})">{}</text>'.format(
-            max_x + 20,
-            max_y / 2,
-            text_style,
-            rotate,
-            max_x + 20,
-            max_y / 2,
-            shape[0],
-        ),
+        f'  <text x="{max_x / 2}" y="{max_y + 20}" {TEXT_STYLE}>{shape[1]}</text>',
+        f'  <text x="{max_x + 20}" y="{max_y / 2}" {TEXT_STYLE} transform="rotate({rotate},{max_x + 20},{max_y / 2})">{shape[0]}</text>',
     ]
 
     return header + "\n".join(lines + text) + footer
@@ -91,20 +93,23 @@ def svg_3d(chunks, size=200, sizes=None, offset=(0, 0)):
     x, y, z = grid_points(chunks, sizes)
     ox, oy = offset
 
+    # Left face (side) - darker
     xy, (mnx, mxx, mny, mxy) = svg_grid(
-        x / 1.7, y, offset=(ox + 10, oy + 0), skew=(1, 0), size=size
+        x / 1.7, y, offset=(ox + 10, oy + 0), skew=(1, 0), size=size, face="side"
     )
 
+    # Top face - lighter
     zx, (_, _, _, max_x) = svg_grid(
-        z, x / 1.7, offset=(ox + 10, oy + 0), skew=(0, 1), size=size
-    )
-    zy, (min_z, max_z, min_y, max_y) = svg_grid(
-        z, y, offset=(ox + max_x + 10, oy + max_x), skew=(0, 0), size=size
+        z, x / 1.7, offset=(ox + 10, oy + 0), skew=(0, 1), size=size, face="top"
     )
 
-    header = '<svg width="{}" height="{}" style="stroke:rgb(0,0,0);stroke-width:1" >\n'.format(
-        int(max_z + 50), int(max_y + 50)
+    # Front face - normal
+    zy, (min_z, max_z, min_y, max_y) = svg_grid(
+        z, y, offset=(ox + max_x + 10, oy + max_x), skew=(0, 0), size=size, face="front"
     )
+
+    header = f'<svg width="{int(max_z + 50)}" height="{int(max_y + 50)}" style="stroke:{STROKE_COLOR};stroke-width:1">\n'
+    header += SVG_DEFS
     footer = "\n</svg>"
 
     if shape[1] >= 100:
@@ -115,29 +120,9 @@ def svg_3d(chunks, size=200, sizes=None, offset=(0, 0)):
     text = [
         "",
         "  <!-- Text -->",
-        '  <text x="{}" y="{}" {} >{}</text>'.format(
-            (min_z + max_z) / 2,
-            max_y + 20,
-            text_style,
-            shape[2],
-        ),
-        '  <text x="{}" y="{}" {} transform="rotate({},{},{})">{}</text>'.format(
-            max_z + 20,
-            (min_y + max_y) / 2,
-            text_style,
-            rotate,
-            max_z + 20,
-            (min_y + max_y) / 2,
-            shape[1],
-        ),
-        '  <text x="{}" y="{}" {} transform="rotate(45,{},{})">{}</text>'.format(
-            (mnx + mxx) / 2 - 10,
-            mxy - (mxx - mnx) / 2 + 20,
-            text_style,
-            (mnx + mxx) / 2 - 10,
-            mxy - (mxx - mnx) / 2 + 20,
-            shape[0],
-        ),
+        f'  <text x="{(min_z + max_z) / 2}" y="{max_y + 20}" {TEXT_STYLE}>{shape[2]}</text>',
+        f'  <text x="{max_z + 20}" y="{(min_y + max_y) / 2}" {TEXT_STYLE} transform="rotate({rotate},{max_z + 20},{(min_y + max_y) / 2})">{shape[1]}</text>',
+        f'  <text x="{(mnx + mxx) / 2 - 10}" y="{mxy - (mxx - mnx) / 2 + 20}" {TEXT_STYLE} transform="rotate(45,{(mnx + mxx) / 2 - 10},{mxy - (mxx - mnx) / 2 + 20})">{shape[0]}</text>',
     ]
 
     return header + "\n".join(xy + zx + zy + text) + footer
@@ -170,9 +155,8 @@ def svg_nd(chunks, size=200):
 
         out.append(o)
 
-    header = '<svg width="{}" height="{}" style="stroke:rgb(0,0,0);stroke-width:1" >\n'.format(
-        int(left), int(total_height)
-    )
+    header = f'<svg width="{int(left)}" height="{int(total_height)}" style="stroke:{STROKE_COLOR};stroke-width:1">\n'
+    header += SVG_DEFS
     footer = "\n</svg>"
     return header + "\n\n".join(out) + footer
 
@@ -205,7 +189,7 @@ def svg_lines(x1, y1, x2, y2, max_n=20):
     return lines
 
 
-def svg_grid(x, y, offset=(0, 0), skew=(0, 0), size=200):
+def svg_grid(x, y, offset=(0, 0), skew=(0, 0), size=200, face=None):
     """Create lines of SVG text that show a grid
 
     Parameters
@@ -215,6 +199,8 @@ def svg_grid(x, y, offset=(0, 0), skew=(0, 0), size=200):
     offset: tuple
         translational displacement of the grid in SVG coordinates
     skew: tuple
+    face: str, optional
+        For 3D: "top", "front", or "side" to determine shading
     """
     # Horizontal lines
     x1 = np.zeros_like(y) + offset[0]
@@ -250,12 +236,22 @@ def svg_grid(x, y, offset=(0, 0), skew=(0, 0), size=200):
 
     v_lines = ["", "  <!-- Vertical lines -->"] + svg_lines(x1, y1, x2, y2, max_n)
 
-    color = "ECB172" if len(x) < max_n and len(y) < max_n else "8B4903"
+    # Determine fill color based on face and density
+    is_dense = len(x) >= max_n or len(y) >= max_n
+    if is_dense:
+        color = FILL_COLOR_DARK
+    elif face == "top":
+        color = FILL_COLOR_TOP
+    elif face == "side":
+        color = FILL_COLOR_DARK
+    else:
+        color = FILL_COLOR
+
     corners = f"{x1[0]},{y1[0]} {x1[-1]},{y1[-1]} {x2[-1]},{y2[-1]} {x2[0]},{y2[0]}"
     rect = [
         "",
         "  <!-- Colored Rectangle -->",
-        f'  <polygon points="{corners}" style="fill:#{color}A0;stroke-width:0"/>',
+        f'  <polygon points="{corners}" style="fill:{color};fill-opacity:0.7;stroke-width:0" filter="url(#shadow)"/>',
     ]
 
     return h_lines + v_lines + rect, (min_x, max_x, min_y, max_y)

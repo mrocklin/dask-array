@@ -1,0 +1,48 @@
+<style>
+.dask-array-repr { --border: #e7e5e4; --label: #a8a29e; --header: #78716c; --value: #292524; --text: #44403c; }
+@media (prefers-color-scheme: dark) {
+  .dask-array-repr { --border: #44403c; --label: #78716c; --header: #a8a29e; --value: #e7e5e4; --text: #d6d3d1; }
+}
+</style>
+<table class="dask-array-repr" style="border-collapse: separate; border-spacing: 0;">
+    <tr>
+        <td>
+            <table style="border-collapse: collapse; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; font-size: 14px;">
+                <thead>
+                    <tr>
+                        <td style="padding: 6px 12px;"></td>
+                        <th style="padding: 6px 12px; text-align: right; font-weight: 500; color: var(--header);">Array</th>
+                        <th style="padding: 6px 12px; text-align: right; font-weight: 500; color: var(--header);">Chunk</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if nbytes %}
+                    <tr>
+                        <th style="padding: 6px 12px; text-align: left; font-weight: 400; color: var(--label); border-top: 1px solid var(--border);">Bytes</th>
+                        <td style="padding: 6px 12px; text-align: right; font-weight: 600; color: var(--value); border-top: 1px solid var(--border);">{{ nbytes }}</td>
+                        <td style="padding: 6px 12px; text-align: right; font-weight: 600; color: var(--value); border-top: 1px solid var(--border);">{{ cbytes }}</td>
+                    </tr>
+                    {% endif %}
+                    <tr>
+                        <th style="padding: 6px 12px; text-align: left; font-weight: 400; color: var(--label); border-top: 1px solid var(--border);">Shape</th>
+                        <td style="padding: 6px 12px; text-align: right; font-weight: 600; color: var(--value); border-top: 1px solid var(--border);">{{ array.shape }}</td>
+                        <td style="padding: 6px 12px; text-align: right; font-weight: 600; color: var(--value); border-top: 1px solid var(--border);">{{ array.chunksize }}</td>
+                    </tr>
+                    <tr>
+                        <th style="padding: 6px 12px; text-align: left; font-weight: 400; color: var(--label); border-top: 1px solid var(--border);">Count</th>
+                        <td style="padding: 6px 12px; text-align: right; font-weight: 600; color: var(--value); border-top: 1px solid var(--border);">{{ ntasks }} Tasks</td>
+                        <td style="padding: 6px 12px; text-align: right; font-weight: 600; color: var(--value); border-top: 1px solid var(--border);">{{ array.npartitions }} Chunks</td>
+                    </tr>
+                    <tr>
+                        <th style="padding: 6px 12px; text-align: left; font-weight: 400; color: var(--label); border-top: 1px solid var(--border);">Type</th>
+                        <td style="padding: 6px 12px; text-align: right; font-weight: 600; color: var(--value); border-top: 1px solid var(--border);">{{ array.dtype }}</td>
+                        <td style="padding: 6px 12px; text-align: right; font-weight: 600; color: var(--value); border-top: 1px solid var(--border);">{{ array._meta | type | typename }}</td>
+                    </tr>
+                </tbody>
+            </table>
+        </td>
+        <td style="vertical-align: middle; padding-left: 24px; color: var(--text);">
+        {{ grid }}
+        </td>
+    </tr>
+</table>
