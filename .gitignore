@@ -19,5 +19,9 @@ htmlcov/
 .vscode/
 *.swp
 
+# Jupyter
+*.ipynb
+.ipynb_checkpoints/
+
 # OS
 .DS_Store
