@@ -21,6 +21,23 @@ Aggregate phase:              final
 - `combine`: Merges intermediate results (optional, defaults to `aggregate`)
 - `aggregate`: Produces final result
 
+## Expression Architecture
+
+Reductions use a two-level expression design:
+
+1. **`Reduction`** - High-level logical expression capturing the intent
+2. **`PartialReduce`** - Low-level physical expression for tree reduction steps
+
+```
+User calls x.sum()
+       ↓
+   Reduction(x, chunk=sum, aggregate=sum, axis=...)
+       ↓ _lower()
+   PartialReduce(Blockwise(...), ...) → PartialReduce(...) → ...
+```
+
+This separation enables optimizations at the logical level (like slice pushdown) before lowering to the physical tree structure.
+
 ## Core API (`reductions/_reduction.py`)
 
 ```python
@@ -38,6 +55,8 @@ def reduction(
     weights=None,        # Optional weights
 )
 ```
+
+Returns a `Reduction` expression that lowers to `Blockwise` + `PartialReduce` cascade.
 
 ## Simple Reductions
 
@@ -198,15 +217,48 @@ Controls tree width and depth:
 x.sum(axis=(0, 1), split_every={0: 4, 1: 8})
 ```
 
+## Reduction Expression
+
+The high-level logical expression capturing reduction intent:
+
+```python
+class Reduction(ArrayExpr):
+    _parameters = [
+        "array",          # Input expression
+        "chunk",          # Per-chunk function
+        "aggregate",      # Final aggregation function
+        "axis",           # Tuple of axes to reduce
+        "keepdims",
+        "dtype",
+        "split_every",
+        "combine",        # Intermediate combine function
+        "name",
+        "concatenate",
+        "output_size",
+        "meta",
+        "weights",        # Optional weights expression
+    ]
+
+    def _lower(self):
+        """Transform to Blockwise + PartialReduce cascade."""
+        # 1. Create Blockwise for per-chunk reduction
+        # 2. Build tree of PartialReduce expressions
+        ...
+
+    def _simplify_up(self, parent, dependents):
+        """Enable slice pushdown through Reduction."""
+        ...
+```
+
 ## PartialReduce Expression
 
-The expression class representing one reduction step:
+The low-level expression representing one tree reduction step:
 
 ```python
 class PartialReduce(ArrayExpr):
     _parameters = [
         "array",          # Input expression
-        "func",           # Reduction function
+        "func",           # Reduction function (with axis/keepdims baked in)
         "split_every",    # Dict mapping axis → split_every value
         "keepdims",
         "dtype",
@@ -214,6 +266,8 @@ class PartialReduce(ArrayExpr):
         "reduced_meta",
     ]
 ```
+
+`PartialReduce` is created during lowering and handles actual task generation.
 
 ## Implementing a New Reduction
 
@@ -277,21 +331,28 @@ axis = validate_axis(axis, x.ndim)  # Handle negative indices
 
 ## Optimization: Slice Pushdown
 
-`PartialReduce._accept_slice()` enables:
+Both `Reduction` and `PartialReduce` implement `_accept_slice()` to enable slices to push through reductions:
 
 ```python
 # Before optimization
 x.sum(axis=0)[:5]
 
-# After optimization (fewer elements processed)
+# After simplify(): slice pushed through Reduction
 x[:, :5].sum(axis=0)
 ```
+
+The optimization works by:
+1. Mapping output indices back to input indices (inserting `slice(None)` for reduced axes)
+2. Creating a new Reduction/PartialReduce with the sliced input
+3. Handling integer indices by converting to size-1 slices, then extracting
+
+This reduces computation by only processing the data needed for the final result.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `reductions/_reduction.py` | Core `reduction()` function, `PartialReduce` class |
+| `reductions/_reduction.py` | `Reduction` and `PartialReduce` classes, `reduction()` function |
 | `reductions/_common.py` | `sum`, `mean`, `var`, `std`, `min`, `max`, nan-variants |
 | `reductions/_cumulative.py` | `cumsum`, `cumprod` |
 | `reductions/_arg_reduction.py` | `argmin`, `argmax` |

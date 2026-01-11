@@ -415,18 +415,19 @@ def test_slice_through_reduction_correctness(shape, chunks, axis, slice_):
 
 def test_optimization_applied_to_reduction():
     """Verify optimization IS applied: slice pushed through reduction."""
+    from dask_array.reductions._reduction import Reduction
     from dask_array.slicing import SliceSlicesIntegers
 
     x = da.ones((100, 100), chunks=(10, 10))
     y = x.sum(axis=0)[:5]
 
-    # Before simplification: Slice(PartialReduce(...))
+    # Before simplification: Slice(Reduction(...))
     assert isinstance(y.expr, SliceSlicesIntegers)
 
-    # After simplification: PartialReduce(Blockwise(Slice(...)))
+    # After simplification: Reduction(Slice(...)) - slice pushed through
     simplified = y.expr.simplify()
     assert not isinstance(simplified, SliceSlicesIntegers)
-    assert "sum-aggregate" in simplified._name
+    assert isinstance(simplified, Reduction)
 
 
 def test_optimization_pushes_through_new_axes_when_safe():

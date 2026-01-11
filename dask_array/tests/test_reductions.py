@@ -624,6 +624,9 @@ def test_reduction_intermediate_chunks():
     x = da.ones((10, 12), chunks=(5, 4))
     result = x.sum(axis=0, keepdims=True)
 
+    # Lower the expression to get the physical Blockwise + PartialReduce tree
+    lowered = result.expr.lower_completely()
+
     # Walk the expression tree to find the Blockwise (chunk step)
     from dask_array._blockwise import Blockwise
 
@@ -636,7 +639,7 @@ def test_reduction_intermediate_chunks():
                 return found
         return None
 
-    blockwise_expr = find_blockwise(result.expr)
+    blockwise_expr = find_blockwise(lowered)
     assert blockwise_expr is not None
 
     # The intermediate should have chunks of size 1 along reduced axis

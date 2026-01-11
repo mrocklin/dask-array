@@ -22,9 +22,213 @@ from dask.tokenize import _tokenize_deterministic
 from dask.utils import cached_property, funcname, getargspec, is_series_like
 
 
-# TODO(expr): This needs something like what we have in DataFrame land with ACA
-# Way too many expressions that we are calling directly that should come from a
-# lower step.
+class Reduction(ArrayExpr):
+    """Logical reduction expression that captures reduction intent.
+
+    This expression represents a reduction operation conceptually,
+    without immediately materializing the physical Blockwise + PartialReduce
+    cascade. The physical implementation is deferred to _lower().
+    """
+
+    _parameters = [
+        "array",
+        "chunk",
+        "aggregate",
+        "axis",
+        "keepdims",
+        "dtype",
+        "split_every",
+        "combine",
+        "name",
+        "concatenate",
+        "output_size",
+        "meta",
+        "weights",
+    ]
+    _defaults = {
+        "axis": None,
+        "keepdims": False,
+        "dtype": None,
+        "split_every": None,
+        "combine": None,
+        "name": None,
+        "concatenate": True,
+        "output_size": 1,
+        "meta": None,
+        "weights": None,
+    }
+
+    def __dask_tokenize__(self):
+        if not self._determ_token:
+            self._determ_token = _tokenize_deterministic(
+                self.chunk,
+                self.aggregate,
+                self.array,
+                self.axis,
+                self.keepdims,
+                self.operand("dtype"),
+                self.split_every,
+                self.combine,
+                self.concatenate,
+                self.output_size,
+                self.weights,
+            )
+        return self._determ_token
+
+    @cached_property
+    def _name(self):
+        prefix = self.operand("name") or funcname(self.chunk)
+        return f"{prefix}-{self.deterministic_token}"
+
+    @cached_property
+    def name(self):
+        """Return the name of the final lowered expression.
+
+        This ensures that Array.name matches the task keys in the graph.
+        """
+        return self.lower_completely().name
+
+    @cached_property
+    def chunks(self):
+        """Output chunks after reduction."""
+        axis = self.axis
+        if self.keepdims:
+            return tuple((self.output_size,) if i in axis else c for i, c in enumerate(self.array.chunks))
+        else:
+            return tuple(c for i, c in enumerate(self.array.chunks) if i not in axis)
+
+    @cached_property
+    def dtype(self):
+        if self.operand("dtype") is not None:
+            return np.dtype(self.operand("dtype"))
+        return self.array.dtype
+
+    @property
+    def _meta(self):
+        # Compute a minimal metadata array with correct dtype and ndim
+        dtype = self.dtype
+        ndim = len(self.chunks)
+        return np.empty((0,) * ndim, dtype=dtype)
+
+    def _layer(self):
+        """Generate the task layer by lowering first.
+
+        Reduction should always be lowered before graph generation,
+        but we need to support direct _layer() calls for is_dask_collection().
+        """
+        return self.lower_completely()._layer()
+
+    def _simplify_up(self, parent, dependents):
+        """Allow slice operations to push through Reduction."""
+        from dask_array.slicing import SliceSlicesIntegers
+
+        if isinstance(parent, SliceSlicesIntegers):
+            return self._accept_slice(parent)
+        return None
+
+    def _accept_slice(self, slice_expr):
+        """Accept a slice being pushed through this Reduction."""
+        reduced_axes = set(self.axis)
+
+        def make_result(sliced_input, input_index):
+            # Handle sliced weights if present
+            sliced_weights = None
+            if self.weights is not None:
+                sliced_weights = new_collection(self.weights)[input_index].expr
+
+            return Reduction(
+                sliced_input.expr,
+                self.chunk,
+                self.aggregate,
+                self.axis,
+                self.keepdims,
+                self.operand("dtype"),
+                self.split_every,
+                self.combine,
+                self.operand("name"),
+                self.concatenate,
+                self.output_size,
+                self.meta,
+                sliced_weights,
+            )
+
+        return _accept_slice_impl(slice_expr, self.array, reduced_axes, self.keepdims, make_result)
+
+    def _lower(self):
+        """Lower to Blockwise + PartialReduce cascade."""
+        from dask_array._collection import blockwise
+
+        axis = self.axis
+        dtype = self.operand("dtype") or float
+        name = self.operand("name")
+        output_size = self.output_size
+
+        # Prepare chunk function with dtype if needed
+        chunk_func = self.chunk
+        if "dtype" in getargspec(chunk_func).args:
+            chunk_func = partial(chunk_func, dtype=dtype)
+
+        aggregate_func = self.aggregate
+        if "dtype" in getargspec(aggregate_func).args:
+            aggregate_func = partial(aggregate_func, dtype=dtype)
+
+        # Build args for blockwise
+        inds = tuple(range(self.array.ndim))
+        args = (self.array, inds)
+
+        if self.weights is not None:
+            args += (self.weights, inds)
+
+        # Create Blockwise for per-chunk reduction
+        adjust_chunks = {i: output_size for i in axis}
+        tmp = blockwise(
+            chunk_func,
+            inds,
+            *args,
+            axis=axis,
+            keepdims=True,
+            token=name,
+            dtype=dtype,
+            adjust_chunks=adjust_chunks,
+        )
+
+        # Compute reduced_meta for PartialReduce
+        if self.meta is None and hasattr(self.array, "_meta"):
+            try:
+                reduced_meta = compute_meta(
+                    chunk_func, self.array.dtype, self.array._meta, axis=axis, keepdims=True, computing_meta=True
+                )
+            except TypeError:
+                reduced_meta = compute_meta(chunk_func, self.array.dtype, self.array._meta, axis=axis, keepdims=True)
+            except ValueError:
+                reduced_meta = None
+        else:
+            reduced_meta = self.meta
+
+        # Build tree reduction with PartialReduce
+        result = _build_tree_reduce_expr(
+            tmp.expr,
+            aggregate_func,
+            axis,
+            self.keepdims,
+            dtype,
+            self.split_every,
+            self.combine,
+            name,
+            self.concatenate,
+            reduced_meta,
+        )
+
+        # Override final chunks for output_size != 1
+        if self.keepdims and output_size != 1:
+            from dask_array._expr import ChunksOverride
+
+            final_chunks = tuple((output_size,) if i in axis else c for i, c in enumerate(result.chunks))
+            result = ChunksOverride(result, final_chunks)
+
+        return result
+
+
 def reduction(
     x,
     chunk,
@@ -156,20 +360,13 @@ def reduction(
 
     if dtype is None:
         raise ValueError("Must specify dtype")
-    if "dtype" in getargspec(chunk).args:
-        chunk = partial(chunk, dtype=dtype)
-    if "dtype" in getargspec(aggregate).args:
-        aggregate = partial(aggregate, dtype=dtype)
+
     if is_series_like(x):
         x = x.values
 
-    # Map chunk across all blocks
-    inds = tuple(range(x.ndim))
-
-    args = (x.expr, inds)
-
+    # Handle weights broadcasting
+    weights_expr = None
     if weights is not None:
-        # Broadcast weights to x and add to args
         from dask_array._broadcast import broadcast_to
         from dask_array.core._conversion import asanyarray
 
@@ -178,50 +375,26 @@ def reduction(
             wgt = broadcast_to(wgt, x.shape)
         except ValueError:
             raise ValueError(f"Weights with shape {wgt.shape} are not broadcastable to x with shape {x.shape}")
+        weights_expr = wgt.expr
 
-        args += (wgt.expr, inds)
-
-    # The dtype of `tmp` doesn't actually matter, and may be incorrect.
-    # Use adjust_chunks to set reduced axes to output_size (default 1)
-    adjust_chunks = {i: output_size for i in axis}
-    tmp = blockwise(
-        chunk,
-        inds,
-        *args,
-        axis=axis,
-        keepdims=True,
-        token=name,
-        dtype=dtype or float,
-        adjust_chunks=adjust_chunks,
+    # Create the Reduction expression
+    result = new_collection(
+        Reduction(
+            x.expr,
+            chunk,
+            aggregate,
+            axis,
+            keepdims,
+            dtype,
+            split_every,
+            combine,
+            name,
+            concatenate,
+            output_size,
+            meta,
+            weights_expr,
+        )
     )
-    if meta is None and hasattr(x, "_meta"):
-        try:
-            reduced_meta = compute_meta(chunk, x.dtype, x._meta, axis=axis, keepdims=True, computing_meta=True)
-        except TypeError:
-            reduced_meta = compute_meta(chunk, x.dtype, x._meta, axis=axis, keepdims=True)
-        except ValueError:
-            reduced_meta = None
-    else:
-        reduced_meta = None
-
-    result = _tree_reduce(
-        tmp,
-        aggregate,
-        axis,
-        keepdims,
-        dtype,
-        split_every,
-        combine,
-        name=name,
-        concatenate=concatenate,
-        reduced_meta=reduced_meta if reduced_meta is not None else meta,
-    )
-    # Override final chunks for output_size != 1
-    if keepdims and output_size != 1:
-        from dask_array._expr import ChunksOverride
-
-        final_chunks = tuple((output_size,) if i in axis else c for i, c in enumerate(result.chunks))
-        result = new_collection(ChunksOverride(result.expr, final_chunks))
 
     # Handle out= parameter
     if out is not None:
@@ -247,6 +420,29 @@ def _tree_reduce(
 
     Lower level, users should use ``reduction`` or ``arg_reduction`` directly.
     """
+    return new_collection(
+        _build_tree_reduce_expr(
+            x, aggregate, axis, keepdims, dtype, split_every, combine, name, concatenate, reduced_meta
+        )
+    )
+
+
+def _build_tree_reduce_expr(
+    x,
+    aggregate,
+    axis,
+    keepdims,
+    dtype,
+    split_every,
+    combine,
+    name,
+    concatenate,
+    reduced_meta,
+):
+    """Build tree reduction cascade of PartialReduce expressions.
+
+    Shared implementation used by both Reduction._build_tree_reduce and _tree_reduce.
+    """
     # Normalize split_every
     split_every = split_every or config.get("split_every", 16)
     if isinstance(split_every, dict):
@@ -257,14 +453,18 @@ def _tree_reduce(
     else:
         raise ValueError("split_every must be a int or a dict")
 
-    # Reduce across intermediates
+    # Compute tree depth
     depth = 1
     for i, n in enumerate(x.numblocks):
         if i in split_every and split_every[i] != 1:
             depth = int(builtins.max(depth, math.ceil(math.log(n, split_every[i]))))
+
+    # Build combine function
     func = partial(combine or aggregate, axis=axis, keepdims=True)
     if concatenate:
         func = compose(func, partial(_concatenate2, axes=sorted(axis)))
+
+    # Build intermediate PartialReduce layers
     for _ in range(depth - 1):
         x = PartialReduce(
             x,
@@ -275,20 +475,98 @@ def _tree_reduce(
             name=(name or funcname(combine or aggregate)) + "-partial",
             reduced_meta=reduced_meta,
         )
-    func = partial(aggregate, axis=axis, keepdims=keepdims)
+
+    # Build final aggregate function
+    agg_func = partial(aggregate, axis=axis, keepdims=keepdims)
     if concatenate:
-        func = compose(func, partial(_concatenate2, axes=sorted(axis)))
-    return new_collection(
-        PartialReduce(
-            x,
-            func,
-            split_every,
-            keepdims=keepdims,
-            dtype=dtype,
-            name=(name or funcname(aggregate)) + "-aggregate",
-            reduced_meta=reduced_meta,
-        )
+        agg_func = compose(agg_func, partial(_concatenate2, axes=sorted(axis)))
+
+    # Final aggregation layer
+    return PartialReduce(
+        x,
+        agg_func,
+        split_every,
+        keepdims=keepdims,
+        dtype=dtype,
+        name=(name or funcname(aggregate)) + "-aggregate",
+        reduced_meta=reduced_meta,
     )
+
+
+def _accept_slice_impl(slice_expr, input_array, reduced_axes, keepdims, make_result):
+    """Shared implementation for slice pushdown through reductions.
+
+    Parameters
+    ----------
+    slice_expr : SliceSlicesIntegers
+        The slice expression being pushed through
+    input_array : ArrayExpr
+        The input array to the reduction
+    reduced_axes : set
+        Set of axes being reduced
+    keepdims : bool
+        Whether the reduction keeps dimensions
+    make_result : callable(sliced_input, input_index) -> expr
+        Factory function to create the result expression
+
+    Returns
+    -------
+    expr or None
+        The transformed expression, or None if slice cannot be pushed through
+    """
+    from dask_array.slicing import SliceSlicesIntegers
+
+    index = slice_expr.index
+
+    # Don't handle None/newaxis
+    if any(idx is None for idx in index):
+        return None
+
+    input_ndim = input_array.ndim
+
+    if keepdims:
+        # With keepdims, output has same ndim as input
+        full_index = index + (slice(None),) * (input_ndim - len(index))
+    else:
+        # Without keepdims, reduced axes are removed from output
+        out_axis = [i for i in range(input_ndim) if i not in reduced_axes]
+        output_ndim = len(out_axis)
+        full_index = index + (slice(None),) * (output_ndim - len(index))
+
+    # Convert integers to size-1 slices to preserve dimensions
+    slice_index = tuple(slice(idx, idx + 1) if isinstance(idx, Integral) else idx for idx in full_index)
+    has_integers = any(isinstance(idx, Integral) for idx in full_index)
+
+    # Build input index mapping output axes to input axes
+    if keepdims:
+        input_index = slice_index
+    else:
+        input_index = []
+        out_pos = 0
+        for in_ax in range(input_ndim):
+            if in_ax in reduced_axes:
+                input_index.append(slice(None))
+            else:
+                input_index.append(slice_index[out_pos])
+                out_pos += 1
+        input_index = tuple(input_index)
+
+    # Apply the slice to the input
+    sliced_input = new_collection(input_array)[input_index]
+
+    # Don't push slice through if it would create empty arrays on non-reduced axes
+    for ax in range(input_ndim):
+        if ax not in reduced_axes and sliced_input.shape[ax] == 0:
+            return None
+
+    result = make_result(sliced_input, input_index)
+
+    # If we converted integers to slices, extract with [0] to restore dimensions
+    if has_integers:
+        extract_index = tuple(0 if isinstance(idx, Integral) else slice(None) for idx in full_index)
+        return SliceSlicesIntegers(result, extract_index, slice_expr.allow_getitem_optimization)
+
+    return result
 
 
 class PartialReduce(ArrayExpr):
@@ -430,82 +708,18 @@ class PartialReduce(ArrayExpr):
         return None
 
     def _accept_slice(self, slice_expr):
-        """Accept a slice being pushed through this PartialReduce.
-
-        For x.sum(axis=0)[:5], we transform to x[:, :5].sum(axis=0).
-        The key is mapping output slice indices back to input indices,
-        inserting slice(None) for the reduced axes.
-        """
-        from numbers import Integral
-
-        from dask._collections import new_collection
-
-        index = slice_expr.index
-        input_array = self.array
-
-        # Don't handle None/newaxis
-        if any(idx is None for idx in index):
-            return None
-
-        # Get reduced axes from split_every
+        """Accept a slice being pushed through this PartialReduce."""
         reduced_axes = set(self.split_every.keys())
-        keepdims = self.keepdims
-        input_ndim = input_array.ndim
 
-        if keepdims:
-            # With keepdims, output has same ndim as input
-            full_index = index + (slice(None),) * (input_ndim - len(index))
-        else:
-            # Without keepdims, reduced axes are removed from output
-            out_axis = [i for i in range(input_ndim) if i not in reduced_axes]
-            output_ndim = len(out_axis)
-            full_index = index + (slice(None),) * (output_ndim - len(index))
+        def make_result(sliced_input, input_index):
+            return PartialReduce(
+                sliced_input.expr,
+                self.func,
+                self.split_every,
+                self.keepdims,
+                self.operand("dtype"),
+                self.operand("name"),
+                self.reduced_meta,
+            )
 
-        # Convert integers to size-1 slices to preserve dimensions
-        slice_index = tuple(slice(idx, idx + 1) if isinstance(idx, Integral) else idx for idx in full_index)
-        has_integers = any(isinstance(idx, Integral) for idx in full_index)
-
-        # Build input index mapping output axes to input axes
-        if keepdims:
-            input_index = slice_index
-        else:
-            input_index = []
-            out_pos = 0
-            for in_ax in range(input_ndim):
-                if in_ax in reduced_axes:
-                    input_index.append(slice(None))
-                else:
-                    input_index.append(slice_index[out_pos])
-                    out_pos += 1
-            input_index = tuple(input_index)
-
-        # Apply the slice to the input and create new PartialReduce
-        sliced_input = new_collection(input_array)[input_index]
-
-        # Don't push slice through if it would create empty arrays on non-reduced axes.
-        # Reductions on empty non-reduced dimensions cause issues with task aggregation.
-        for ax in range(input_ndim):
-            if ax not in reduced_axes and sliced_input.shape[ax] == 0:
-                return None
-
-        result = PartialReduce(
-            sliced_input.expr,
-            self.func,
-            self.split_every,
-            self.keepdims,
-            self.operand("dtype"),
-            self.operand("name"),
-            self.reduced_meta,
-        )
-
-        # If we converted integers to slices, extract with [0] to restore dimensions
-        if has_integers:
-            from dask_array.slicing import SliceSlicesIntegers
-
-            extract_index = tuple(0 if isinstance(idx, Integral) else slice(None) for idx in full_index)
-            return SliceSlicesIntegers(result, extract_index, slice_expr.allow_getitem_optimization)
-
-        return result
-
-
-from dask_array._collection import blockwise
+        return _accept_slice_impl(slice_expr, self.array, reduced_axes, self.keepdims, make_result)

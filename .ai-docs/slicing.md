@@ -223,7 +223,7 @@ Slices optimize by pushing through other operations. See [optimizations.md](./op
 - `Concatenate` / `Stack`
 - `BroadcastTo`
 - `FromArray` (IO)
-- `PartialReduce`
+- `Reduction` / `PartialReduce`
 - `Reshape`
 - `ExpandDims`
 

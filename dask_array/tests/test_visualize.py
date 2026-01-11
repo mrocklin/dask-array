@@ -41,7 +41,7 @@ def test_expr_table_contains_operation_names():
     table = expr_table(z.expr)
     text = str(table)
 
-    assert "Sum" in text
+    assert "Reduction" in text
     assert "Ones" in text
 
 
@@ -69,5 +69,5 @@ def test_expr_table_html_output():
     html = table._repr_html_()
 
     assert "<pre>" in html
-    assert "Sum" in html
+    assert "Reduction" in html
     assert "Ones" in html
