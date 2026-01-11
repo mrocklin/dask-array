@@ -71,3 +71,15 @@ def test_expr_table_html_output():
     assert "<pre>" in html
     assert "Reduction" in html
     assert "Ones" in html
+
+
+def test_expr_repr_html():
+    """Test that ArrayExpr._repr_html_ works for Jupyter display."""
+    x = da.ones((10, 10), chunks=5)
+    y = x.sum()
+
+    # The expression should have _repr_html_ for Jupyter
+    html = y.expr._repr_html_()
+
+    assert "<pre>" in html
+    assert "Reduction" in html

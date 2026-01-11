@@ -140,6 +140,28 @@ class ArrayExpr(SingletonExpr):
 
         return expr_table(self, color=color)
 
+    def _repr_html_(self):
+        """Jupyter notebook display using rich table."""
+        try:
+            return self._table()._repr_html_()
+        except (ImportError, NotImplementedError):
+            return f"<pre>{chr(10).join(self._tree_repr_lines())}</pre>"
+
+    def __repr__(self):
+        """Return rich table representation if available, else simple repr."""
+        try:
+            return repr(self._table())
+        except (ImportError, NotImplementedError, Exception):
+            return str(self)
+
+    def pprint(self):
+        """Pretty print the expression tree using rich table if available."""
+        try:
+            self._table().print()
+        except (ImportError, NotImplementedError):
+            for line in self._tree_repr_lines():
+                print(line)
+
     @cached_property
     def shape(self) -> tuple[T_IntOrNaN, ...]:
         return tuple(cached_cumsum(c, initial_zero=True)[-1] for c in self.chunks)
