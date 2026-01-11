@@ -357,13 +357,6 @@ def render_flow_svg(expr) -> str:
         f'style="font-family: system-ui;" xmlns="http://www.w3.org/2000/svg">'
     ]
 
-    # Add definitions for shadow
-    svg_parts.append("""<defs>
-    <filter id="card-shadow" x="-10%" y="-10%" width="120%" height="130%">
-      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.1"/>
-    </filter>
-  </defs>""")
-
     # Draw arrows first (so they appear behind cards)
     for edge in edges:
         src_x, src_y = node_positions[id(edge.source)]
@@ -375,20 +368,33 @@ def render_flow_svg(expr) -> str:
         x2 = tgt_x - CARD_WIDTH / 2 - 4
         y2 = tgt_y
 
+        # Calculate column span - long arrows get vertical offset
+        col_span = edge.target.col - edge.source.col
+
         if abs(y1 - y2) < 5:
-            # Straight horizontal arrow - use arrowhead
-            # Draw line and separate arrowhead
-            svg_parts.append(f'<line x1="{x1}" y1="{y1}" x2="{x2 - 8}" y2="{y2}" stroke="#a8a29e" stroke-width="2"/>')
-            # Arrowhead pointing right
-            svg_parts.append(f'<polygon points="{x2},{y2} {x2 - 8},{y2 - 4} {x2 - 8},{y2 + 4}" fill="#a8a29e"/>')
+            if col_span <= 1:
+                # Simple horizontal arrow - straight line with arrowhead
+                svg_parts.append(
+                    f'<line x1="{x1}" y1="{y1}" x2="{x2 - 8}" y2="{y2}" stroke="#a8a29e" stroke-width="2"/>'
+                )
+                svg_parts.append(f'<polygon points="{x2},{y2} {x2 - 8},{y2 - 4} {x2 - 8},{y2 + 4}" fill="#a8a29e"/>')
+            else:
+                # Long-span arrow - horizontal line offset below, cards cover the middle
+                y_offset = 12 + (col_span - 2) * 6
+                y_line = y1 + y_offset
+                svg_parts.append(
+                    f'<line x1="{x1}" y1="{y_line}" x2="{x2 - 8}" y2="{y_line}" stroke="#a8a29e" stroke-width="2"/>'
+                )
+                svg_parts.append(
+                    f'<polygon points="{x2},{y_line} {x2 - 8},{y_line - 4} {x2 - 8},{y_line + 4}" fill="#a8a29e"/>'
+                )
         else:
-            # Curved arrow for cross-row connections - no arrowhead, use dot instead
+            # Curved arrow for cross-row connections - use dot instead of arrowhead
             mid_x = (x1 + x2) / 2
             svg_parts.append(
                 f'<path d="M {x1} {y1} C {mid_x} {y1}, {mid_x} {y2}, {x2} {y2}" '
                 f'stroke="#a8a29e" stroke-width="2" fill="none"/>'
             )
-            # End with a small circle instead of arrowhead
             svg_parts.append(f'<circle cx="{x2}" cy="{y2}" r="4" fill="#a8a29e"/>')
 
     # Draw cards - use consistent SVG size across all cards
@@ -411,19 +417,19 @@ def _render_card(node: FlowNode, x: float, y: float, emphasized: bool, global_ma
 
     # Card styling based on emphasis
     if emphasized:
-        # Emphasized: stronger border, subtle warm tint
-        fill = "#fffbf7"  # Very subtle orange tint
-        stroke = "#a8a29e"  # Darker border
-        stroke_width = "1.5"
+        # Emphasized: visible border, warm orange tint for large arrays
+        fill = "#fff7ed"  # orange-50 - noticeable warm tint
+        stroke = "#fb923c"  # orange-400 - matches array color
+        stroke_width = "2"
     else:
-        # De-emphasized: lighter, more muted
-        fill = "white"
-        stroke = "#e7e5e4"  # Lighter border
+        # Normal: subtle gray background, visible border
+        fill = "#fafaf9"  # stone-50 - subtle off-white
+        stroke = "#d6d3d1"  # stone-300 - visible but not harsh
         stroke_width = "1"
 
     parts.append(
         f'<rect x="{x}" y="{y}" width="{CARD_WIDTH}" height="{CARD_HEIGHT}" '
-        f'rx="6" fill="{fill}" stroke="{stroke}" stroke-width="{stroke_width}" filter="url(#card-shadow)"/>'
+        f'rx="6" fill="{fill}" stroke="{stroke}" stroke-width="{stroke_width}"/>'
     )
 
     # Text colors based on emphasis
