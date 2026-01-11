@@ -1,3 +1,9 @@
+<style>
+.dask-array-repr .dask-table-header { color: var(--jp-ui-font-color2, #78716c); }
+.dask-array-repr .dask-table-label { color: var(--jp-ui-font-color3, #a8a29e); }
+.dask-array-repr .dask-table-data { color: var(--jp-ui-font-color1, #1c1917); }
+.dask-array-repr .dask-table-border { border-top: 1px solid var(--jp-border-color2, #e7e5e4); }
+</style>
 <details class="dask-array-repr" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
     <summary style="cursor: pointer; list-style: none;">
         <table style="border-collapse: separate; border-spacing: 0; display: inline-table;">
@@ -7,27 +13,27 @@
                         <thead>
                             <tr>
                                 <td style="padding: 6px 12px;"></td>
-                                <th style="padding: 6px 12px; text-align: right; font-weight: 400; color: #78716c;">Array</th>
-                                <th style="padding: 6px 12px; text-align: right; font-weight: 400; color: #78716c;">Chunk</th>
+                                <th class="dask-table-header" style="padding: 6px 12px; text-align: right; font-weight: 400;">Array</th>
+                                <th class="dask-table-header" style="padding: 6px 12px; text-align: right; font-weight: 400;">Chunk</th>
                             </tr>
                         </thead>
                         <tbody>
                             {% if nbytes %}
                             <tr>
-                                <th style="padding: 6px 12px; text-align: left; font-weight: 400; color: #a8a29e; border-top: 1px solid #e7e5e4;">Bytes</th>
-                                <td style="padding: 6px 12px; text-align: right; font-weight: 600; color: #1c1917; border-top: 1px solid #e7e5e4;">{{ nbytes }}</td>
-                                <td style="padding: 6px 12px; text-align: right; font-weight: 600; color: #1c1917; border-top: 1px solid #e7e5e4;">{{ cbytes }}</td>
+                                <th class="dask-table-label dask-table-border" style="padding: 6px 12px; text-align: left; font-weight: 400;">Bytes</th>
+                                <td class="dask-table-data dask-table-border" style="padding: 6px 12px; text-align: right; font-weight: 600;">{{ nbytes }}</td>
+                                <td class="dask-table-data dask-table-border" style="padding: 6px 12px; text-align: right; font-weight: 600;">{{ cbytes }}</td>
                             </tr>
                             {% endif %}
                             <tr>
-                                <th style="padding: 6px 12px; text-align: left; font-weight: 400; color: #a8a29e; border-top: 1px solid #e7e5e4;">Shape</th>
-                                <td style="padding: 6px 12px; text-align: right; font-weight: 600; color: #1c1917; border-top: 1px solid #e7e5e4;">{{ array.shape }}</td>
-                                <td style="padding: 6px 12px; text-align: right; font-weight: 600; color: #1c1917; border-top: 1px solid #e7e5e4;">{{ array.chunksize }}</td>
+                                <th class="dask-table-label dask-table-border" style="padding: 6px 12px; text-align: left; font-weight: 400;">Shape</th>
+                                <td class="dask-table-data dask-table-border" style="padding: 6px 12px; text-align: right; font-weight: 600;">{{ array.shape }}</td>
+                                <td class="dask-table-data dask-table-border" style="padding: 6px 12px; text-align: right; font-weight: 600;">{{ array.chunksize }}</td>
                             </tr>
                             <tr>
-                                <th style="padding: 6px 12px; text-align: left; font-weight: 400; color: #a8a29e; border-top: 1px solid #e7e5e4;">Nodes</th>
-                                <td style="padding: 6px 12px; text-align: right; font-weight: 600; color: #1c1917; border-top: 1px solid #e7e5e4;">{{ n_expr }}</td>
-                                <td style="padding: 6px 12px; border-top: 1px solid #e7e5e4;"></td>
+                                <th class="dask-table-label dask-table-border" style="padding: 6px 12px; text-align: left; font-weight: 400;">Nodes</th>
+                                <td class="dask-table-data dask-table-border" style="padding: 6px 12px; text-align: right; font-weight: 600;">{{ n_expr }}</td>
+                                <td class="dask-table-border" style="padding: 6px 12px;"></td>
                             </tr>
                         </tbody>
                     </table>

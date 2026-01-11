@@ -357,6 +357,21 @@ def render_flow_svg(expr) -> str:
         f'style="font-family: system-ui;" xmlns="http://www.w3.org/2000/svg">'
     ]
 
+    # Add styles using JupyterLab CSS variables with light-mode fallbacks
+    svg_parts.append("""<style>
+      .flow-card { fill: var(--jp-layout-color1, #fafaf9); }
+      .flow-card-emphasized { fill: var(--jp-layout-color2, #fff7ed); }
+      .flow-card-border { stroke: var(--jp-border-color1, #d6d3d1); }
+      .flow-card-border-emphasized { stroke: #fb923c; }
+      .flow-text-title { fill: var(--jp-ui-font-color1, #44403c); }
+      .flow-text-info { fill: var(--jp-ui-font-color2, #57534e); }
+      .flow-text-secondary { fill: var(--jp-ui-font-color3, #a8a29e); }
+      .flow-divider { stroke: var(--jp-border-color2, #e7e5e4); }
+      .flow-arrow-line { stroke: var(--jp-ui-font-color3, #a8a29e); }
+      .flow-arrow-head { fill: var(--jp-ui-font-color3, #a8a29e); }
+      .flow-arrow-path { stroke: var(--jp-ui-font-color3, #a8a29e); fill: none; }
+    </style>""")
+
     # Draw arrows first (so they appear behind cards)
     for edge in edges:
         src_x, src_y = node_positions[id(edge.source)]
@@ -375,27 +390,29 @@ def render_flow_svg(expr) -> str:
             if col_span <= 1:
                 # Simple horizontal arrow - straight line with arrowhead
                 svg_parts.append(
-                    f'<line x1="{x1}" y1="{y1}" x2="{x2 - 8}" y2="{y2}" stroke="#a8a29e" stroke-width="2"/>'
+                    f'<line class="flow-arrow-line" x1="{x1}" y1="{y1}" x2="{x2 - 8}" y2="{y2}" stroke="#a8a29e" stroke-width="2"/>'
                 )
-                svg_parts.append(f'<polygon points="{x2},{y2} {x2 - 8},{y2 - 4} {x2 - 8},{y2 + 4}" fill="#a8a29e"/>')
+                svg_parts.append(
+                    f'<polygon class="flow-arrow-head" points="{x2},{y2} {x2 - 8},{y2 - 4} {x2 - 8},{y2 + 4}" fill="#a8a29e"/>'
+                )
             else:
                 # Long-span arrow - horizontal line offset below, cards cover the middle
                 y_offset = 12 + (col_span - 2) * 6
                 y_line = y1 + y_offset
                 svg_parts.append(
-                    f'<line x1="{x1}" y1="{y_line}" x2="{x2 - 8}" y2="{y_line}" stroke="#a8a29e" stroke-width="2"/>'
+                    f'<line class="flow-arrow-line" x1="{x1}" y1="{y_line}" x2="{x2 - 8}" y2="{y_line}" stroke="#a8a29e" stroke-width="2"/>'
                 )
                 svg_parts.append(
-                    f'<polygon points="{x2},{y_line} {x2 - 8},{y_line - 4} {x2 - 8},{y_line + 4}" fill="#a8a29e"/>'
+                    f'<polygon class="flow-arrow-head" points="{x2},{y_line} {x2 - 8},{y_line - 4} {x2 - 8},{y_line + 4}" fill="#a8a29e"/>'
                 )
         else:
             # Curved arrow for cross-row connections - use dot instead of arrowhead
             mid_x = (x1 + x2) / 2
             svg_parts.append(
-                f'<path d="M {x1} {y1} C {mid_x} {y1}, {mid_x} {y2}, {x2} {y2}" '
+                f'<path class="flow-arrow-path" d="M {x1} {y1} C {mid_x} {y1}, {mid_x} {y2}, {x2} {y2}" '
                 f'stroke="#a8a29e" stroke-width="2" fill="none"/>'
             )
-            svg_parts.append(f'<circle cx="{x2}" cy="{y2}" r="4" fill="#a8a29e"/>')
+            svg_parts.append(f'<circle class="flow-arrow-head" cx="{x2}" cy="{y2}" r="4" fill="#a8a29e"/>')
 
     # Draw cards - use consistent SVG size across all cards
     for node in nodes:
@@ -421,14 +438,22 @@ def _render_card(node: FlowNode, x: float, y: float, emphasized: bool, global_ma
         fill = "#fff7ed"  # orange-50 - noticeable warm tint
         stroke = "#fb923c"  # orange-400 - matches array color
         stroke_width = "2"
+        card_class = "flow-card-emphasized flow-card-border-emphasized"
+        title_class = "flow-text-title"
+        info_class = "flow-text-info"
+        secondary_class = "flow-text-secondary"
     else:
         # Normal: subtle gray background, visible border
         fill = "#fafaf9"  # stone-50 - subtle off-white
         stroke = "#d6d3d1"  # stone-300 - visible but not harsh
         stroke_width = "1"
+        card_class = "flow-card flow-card-border"
+        title_class = "flow-text-title"
+        info_class = "flow-text-info"
+        secondary_class = "flow-text-secondary"
 
     parts.append(
-        f'<rect x="{x}" y="{y}" width="{CARD_WIDTH}" height="{CARD_HEIGHT}" '
+        f'<rect class="{card_class}" x="{x}" y="{y}" width="{CARD_WIDTH}" height="{CARD_HEIGHT}" '
         f'rx="6" fill="{fill}" stroke="{stroke}" stroke-width="{stroke_width}"/>'
     )
 
@@ -451,14 +476,14 @@ def _render_card(node: FlowNode, x: float, y: float, emphasized: bool, global_ma
         ops_str = ops_str[:16] + "…"
 
     parts.append(
-        f'<text x="{x + CARD_WIDTH / 2}" y="{y + 20}" '
+        f'<text class="{title_class}" x="{x + CARD_WIDTH / 2}" y="{y + 20}" '
         f'text-anchor="middle" font-size="11" font-weight="600" fill="{title_color}">'
         f"{ops_str}</text>"
     )
 
     # Divider line
     parts.append(
-        f'<line x1="{x + 10}" y1="{y + 30}" x2="{x + CARD_WIDTH - 10}" y2="{y + 30}" '
+        f'<line class="flow-divider" x1="{x + 10}" y1="{y + 30}" x2="{x + CARD_WIDTH - 10}" y2="{y + 30}" '
         f'stroke="#e7e5e4" stroke-width="1"/>'
     )
 
@@ -493,7 +518,7 @@ def _render_card(node: FlowNode, x: float, y: float, emphasized: bool, global_ma
 
     # Divider line before info section
     parts.append(
-        f'<line x1="{x + 10}" y1="{y + 110}" x2="{x + CARD_WIDTH - 10}" y2="{y + 110}" '
+        f'<line class="flow-divider" x1="{x + 10}" y1="{y + 110}" x2="{x + CARD_WIDTH - 10}" y2="{y + 110}" '
         f'stroke="#e7e5e4" stroke-width="1"/>'
     )
 
@@ -503,7 +528,7 @@ def _render_card(node: FlowNode, x: float, y: float, emphasized: bool, global_ma
     left_margin = x + 12
 
     parts.append(
-        f'<text x="{left_margin}" y="{y + 128}" '
+        f'<text class="{info_class}" x="{left_margin}" y="{y + 128}" '
         f'text-anchor="start" font-size="10" fill="{info_color}">'
         f"{shape_str}</text>"
     )
@@ -512,7 +537,7 @@ def _render_card(node: FlowNode, x: float, y: float, emphasized: bool, global_ma
         # Same font size as shape, but bold for emphasized (large) arrays
         bytes_weight = 'font-weight="600"' if emphasized else ""
         parts.append(
-            f'<text x="{left_margin}" y="{y + 142}" '
+            f'<text class="{secondary_class}" x="{left_margin}" y="{y + 142}" '
             f'text-anchor="start" font-size="10" {bytes_weight} fill="{secondary_color}">'
             f"{bytes_str}</text>"
         )
