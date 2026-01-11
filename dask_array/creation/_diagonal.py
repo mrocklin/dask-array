@@ -157,9 +157,7 @@ class Diagonal(ArrayExpr):
 
             out_chunks = self.chunks
             for free_idx in free_indices:
-                shape = tuple(
-                    out_chunks[axis][free_idx[axis]] for axis in range(ndims_free)
-                )
+                shape = tuple(out_chunks[axis][free_idx[axis]] for axis in range(ndims_free))
                 key = (self._name,) + free_idx + (0,)
                 dsk[key] = Task(key, partial(xp.empty, dtype=x.dtype), shape + (0,))  # type: ignore[misc]
             return dsk
@@ -196,13 +194,7 @@ class Diagonal(ArrayExpr):
             kdiag_row_end = min(nrows, ncols - local_k)
 
             for free_idx in free_indices:
-                input_idx = (
-                    free_idx[:axis1]
-                    + (I,)
-                    + free_idx[axis1 : axis2 - 1]
-                    + (J,)
-                    + free_idx[axis2 - 1 :]
-                )
+                input_idx = free_idx[:axis1] + (I,) + free_idx[axis1 : axis2 - 1] + (J,) + free_idx[axis2 - 1 :]
                 output_idx = free_idx + (i,)
                 key = (self._name,) + output_idx
                 dsk[key] = Task(

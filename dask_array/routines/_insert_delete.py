@@ -79,9 +79,7 @@ def insert(arr, obj, values, axis):
 
     obj = np.where(obj < 0, obj + arr.shape[axis], obj)
     if (np.diff(obj) < 0).any():
-        raise NotImplementedError(
-            "da.insert only implemented for monotonic ``obj`` argument"
-        )
+        raise NotImplementedError("da.insert only implemented for monotonic ``obj`` argument")
 
     split_arr = _split_at_breaks(arr, np.unique(obj), axis)
 
@@ -89,17 +87,14 @@ def insert(arr, obj, values, axis):
         # we need to turn values into a dask array
         values = asarray(values)
 
-        values_shape = tuple(
-            len(obj) if axis == n else s for n, s in enumerate(arr.shape)
-        )
+        values_shape = tuple(len(obj) if axis == n else s for n, s in enumerate(arr.shape))
         values = broadcast_to(values, values_shape)
     elif scalar_obj:
         values = values[(slice(None),) * axis + (None,)]
 
     values = asarray(values)
     values_chunks = tuple(
-        values_bd if axis == n else arr_bd
-        for n, (arr_bd, values_bd) in enumerate(zip(arr.chunks, values.chunks))
+        values_bd if axis == n else arr_bd for n, (arr_bd, values_bd) in enumerate(zip(arr.chunks, values.chunks))
     )
     values = values.rechunk(values_chunks)
 
@@ -131,16 +126,7 @@ def delete(arr, obj, axis):
     target_arr = _split_at_breaks(arr, obj, axis)
 
     target_arr = [
-        (
-            arr[
-                tuple(
-                    slice(1, None) if axis == n else slice(None)
-                    for n in range(arr.ndim)
-                )
-            ]
-            if i != 0
-            else arr
-        )
+        (arr[tuple(slice(1, None) if axis == n else slice(None) for n in range(arr.ndim))] if i != 0 else arr)
         for i, arr in enumerate(target_arr)
     ]
     return concatenate(target_arr, axis=axis)

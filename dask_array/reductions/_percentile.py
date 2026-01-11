@@ -1,4 +1,5 @@
 """Percentile functions for dask arrays."""
+
 from __future__ import annotations
 
 import warnings
@@ -88,9 +89,7 @@ def merge_percentiles(finalq, qs, vals, method="lower", Ns=None, raise_on_nan=Tr
     qs, vals, Ns = L
 
     if vals[0].dtype.name == "category":
-        result = merge_percentiles(
-            finalq, qs, [v.codes for v in vals], method, Ns, raise_on_nan
-        )
+        result = merge_percentiles(finalq, qs, [v.codes for v in vals], method, Ns, raise_on_nan)
         import pandas as pd
 
         return pd.Categorical.from_codes(result, vals[0].categories, vals[0].ordered)
@@ -145,10 +144,7 @@ def merge_percentiles(finalq, qs, vals, method="lower", Ns=None, raise_on_nan=Tr
             index[mask] = upper[mask]
             rv = combined_vals[index]
         else:
-            raise ValueError(
-                "interpolation method can only be 'linear', 'lower', "
-                "'higher', 'midpoint', or 'nearest'"
-            )
+            raise ValueError("interpolation method can only be 'linear', 'lower', 'higher', 'midpoint', or 'nearest'")
     return rv
 
 
@@ -189,9 +185,7 @@ def percentile(a, q, method="linear", internal_method="default", **kwargs):
             method = kwargs.pop("interpolation")
 
         if kwargs:
-            raise TypeError(
-                f"percentile() got an unexpected keyword argument {kwargs.keys()}"
-            )
+            raise TypeError(f"percentile() got an unexpected keyword argument {kwargs.keys()}")
 
         q_is_number = False
         if isinstance(q, Number):
@@ -206,9 +200,7 @@ def percentile(a, q, method="linear", internal_method="default", **kwargs):
         meta = meta_from_array(a, dtype=dtype)
 
         if internal_method not in allowed_internal_methods:
-            raise ValueError(
-                f"`internal_method=` must be one of {allowed_internal_methods}"
-            )
+            raise ValueError(f"`internal_method=` must be one of {allowed_internal_methods}")
 
         if (
             internal_method == "tdigest"
@@ -217,15 +209,10 @@ def percentile(a, q, method="linear", internal_method="default", **kwargs):
         ):
             from dask.utils import import_required
 
-            import_required(
-                "crick", "crick is a required dependency for using the t-digest method."
-            )
+            import_required("crick", "crick is a required dependency for using the t-digest method.")
 
             name = "percentile_tdigest_chunk-" + token
-            dsk = {
-                (name, i): (_tdigest_chunk, key)
-                for i, key in enumerate(a.__dask_keys__())
-            }
+            dsk = {(name, i): (_tdigest_chunk, key) for i, key in enumerate(a.__dask_keys__())}
 
             name2 = "percentile_tdigest-" + token
             dsk2 = {(name2, 0): (_percentiles_from_tdigest, q, sorted(dsk))}
@@ -239,10 +226,7 @@ def percentile(a, q, method="linear", internal_method="default", **kwargs):
 
             calc_q = np.concatenate((zero, q, hundred))
             name = "percentile_chunk-" + token
-            dsk = {
-                (name, i): (percentile_lookup, key, calc_q, method)
-                for i, key in enumerate(a.__dask_keys__())
-            }
+            dsk = {(name, i): (percentile_lookup, key, calc_q, method) for i, key in enumerate(a.__dask_keys__())}
 
             name2 = "percentile-" + token
             dsk2 = {

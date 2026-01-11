@@ -1,4 +1,5 @@
 """Common reduction functions using the expression-based reduction framework."""
+
 from __future__ import annotations
 
 import builtins
@@ -9,8 +10,6 @@ from numbers import Integral, Number
 
 import numpy as np
 from dask.utils import deepmap, derived_from
-
-import builtins
 
 from dask_array._core_utils import _concatenate2
 from dask_array._dispatch import divide_lookup, numel_lookup, nannumel_lookup
@@ -186,38 +185,29 @@ def nanprod(a, axis=None, dtype=None, keepdims=False, split_every=None, out=None
 def _nanmin_skip(x_chunk, axis, keepdims):
     if x_chunk.size > 0:
         with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore", "All-NaN slice encountered", RuntimeWarning
-            )
+            warnings.filterwarnings("ignore", "All-NaN slice encountered", RuntimeWarning)
             return np.nanmin(x_chunk, axis=axis, keepdims=keepdims)
     else:
-        return asarray_safe(
-            np.array([], dtype=x_chunk.dtype), like=meta_from_array(x_chunk)
-        )
+        return asarray_safe(np.array([], dtype=x_chunk.dtype), like=meta_from_array(x_chunk))
 
 
 def _nanmax_skip(x_chunk, axis, keepdims):
     if x_chunk.size > 0:
         with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore", "All-NaN slice encountered", RuntimeWarning
-            )
+            warnings.filterwarnings("ignore", "All-NaN slice encountered", RuntimeWarning)
             return np.nanmax(x_chunk, axis=axis, keepdims=keepdims)
     else:
-        return asarray_safe(
-            np.array([], dtype=x_chunk.dtype), like=meta_from_array(x_chunk)
-        )
+        return asarray_safe(np.array([], dtype=x_chunk.dtype), like=meta_from_array(x_chunk))
 
 
 @derived_from(np)
 def nanmin(a, axis=None, keepdims=False, split_every=None, out=None):
     if np.isnan(a.size):
         from dask_array._core_utils import unknown_chunk_message
+
         raise ValueError(f"Arrays chunk sizes are unknown. {unknown_chunk_message}")
     if a.size == 0:
-        raise ValueError(
-            "zero-size array to reduction operation fmin which has no identity"
-        )
+        raise ValueError("zero-size array to reduction operation fmin which has no identity")
     return reduction(
         a,
         _nanmin_skip,
@@ -234,11 +224,10 @@ def nanmin(a, axis=None, keepdims=False, split_every=None, out=None):
 def nanmax(a, axis=None, keepdims=False, split_every=None, out=None):
     if np.isnan(a.size):
         from dask_array._core_utils import unknown_chunk_message
+
         raise ValueError(f"Arrays chunk sizes are unknown. {unknown_chunk_message}")
     if a.size == 0:
-        raise ValueError(
-            "zero-size array to reduction operation fmax which has no identity"
-        )
+        raise ValueError("zero-size array to reduction operation fmax which has no identity")
     return reduction(
         a,
         _nanmax_skip,
@@ -252,9 +241,7 @@ def nanmax(a, axis=None, keepdims=False, split_every=None, out=None):
 
 
 # Mean implementation
-def mean_chunk(
-    x, sum=chunk.sum, numel=numel, dtype="f8", computing_meta=False, **kwargs
-):
+def mean_chunk(x, sum=chunk.sum, numel=numel, dtype="f8", computing_meta=False, **kwargs):
     if computing_meta:
         return x
     n = numel(x, dtype=dtype, **kwargs)
@@ -375,9 +362,7 @@ def moment_chunk(
 
 
 def _moment_helper(Ms, ns, inner_term, order, sum, axis, kwargs):
-    M = Ms[..., order - 2].sum(axis=axis, **kwargs) + sum(
-        ns * inner_term**order, axis=axis, **kwargs
-    )
+    M = Ms[..., order - 2].sum(axis=axis, **kwargs) + sum(ns * inner_term**order, axis=axis, **kwargs)
     for k in range(1, order - 1):
         coeff = math.factorial(order) / (math.factorial(k) * math.factorial(order - k))
         M += coeff * sum(Ms[..., order - k - 2] * inner_term**k, axis=axis, **kwargs)
@@ -420,10 +405,7 @@ def moment_combine(
             mu = divide(total, n, dtype=dtype)
             inner_term = divide(totals, ns, dtype=dtype) - mu
 
-    xs = [
-        _moment_helper(Ms, ns, inner_term, o, sum, axis, kwargs)
-        for o in range(2, order + 1)
-    ]
+    xs = [_moment_helper(Ms, ns, inner_term, o, sum, axis, kwargs) for o in range(2, order + 1)]
     M = np.stack(xs, axis=-1)
     return {"total": total, "n": n, "M": M}
 
@@ -480,9 +462,7 @@ def moment_agg(
     return divide(M, denominator, dtype=dtype)
 
 
-def moment(
-    a, order, axis=None, dtype=None, keepdims=False, ddof=0, split_every=None, out=None
-):
+def moment(a, order, axis=None, dtype=None, keepdims=False, ddof=0, split_every=None, out=None):
     """Calculate the nth centralized moment.
 
     Parameters
@@ -516,16 +496,13 @@ def moment(
 
     if order < 2:
         from dask_array.creation import ones, zeros
+
         reduced = a.sum(axis=axis)  # get reduced shape and chunks
         if order == 0:
             # When order equals 0, the result is 1, by definition.
-            return ones(
-                reduced.shape, chunks=reduced.chunks, dtype="f8", meta=reduced._meta
-            )
+            return ones(reduced.shape, chunks=reduced.chunks, dtype="f8", meta=reduced._meta)
         # By definition the first order about the mean is 0.
-        return zeros(
-            reduced.shape, chunks=reduced.chunks, dtype="f8", meta=reduced._meta
-        )
+        return zeros(reduced.shape, chunks=reduced.chunks, dtype="f8", meta=reduced._meta)
 
     if dtype is not None:
         dt = dtype
@@ -536,9 +513,7 @@ def moment(
 
     return reduction(
         a,
-        partial(
-            moment_chunk, order=order, implicit_complex_dtype=implicit_complex_dtype
-        ),
+        partial(moment_chunk, order=order, implicit_complex_dtype=implicit_complex_dtype),
         partial(moment_agg, order=order, ddof=ddof),
         axis=axis,
         keepdims=keepdims,
@@ -575,9 +550,7 @@ def var(a, axis=None, dtype=None, keepdims=False, ddof=0, split_every=None, out=
 
 
 @derived_from(np)
-def nanvar(
-    a, axis=None, dtype=None, keepdims=False, ddof=0, split_every=None, out=None
-):
+def nanvar(a, axis=None, dtype=None, keepdims=False, ddof=0, split_every=None, out=None):
     if dtype is not None:
         dt = dtype
     else:
@@ -636,9 +609,7 @@ def std(a, axis=None, dtype=None, keepdims=False, ddof=0, split_every=None, out=
 
 
 @derived_from(np)
-def nanstd(
-    a, axis=None, dtype=None, keepdims=False, ddof=0, split_every=None, out=None
-):
+def nanstd(a, axis=None, dtype=None, keepdims=False, ddof=0, split_every=None, out=None):
     result = safe_sqrt(
         nanvar(
             a,
@@ -662,11 +633,7 @@ def _arg_combine(data, axis, argfunc, keepdims=False):
         # Array type doesn't support structured arrays (e.g., CuPy),
         # therefore `data` is stored in a `dict`.
         assert data["vals"].ndim == data["arg"].ndim
-        axis = (
-            None
-            if len(axis) == data["vals"].ndim or data["vals"].ndim == 1
-            else axis[0]
-        )
+        axis = None if len(axis) == data["vals"].ndim or data["vals"].ndim == 1 else axis[0]
     else:
         axis = None if len(axis) == data.ndim or data.ndim == 1 else axis[0]
 
@@ -710,9 +677,7 @@ def arg_chunk(func, argfunc, x, axis, offset_info):
         vals = np.ma.filled(vals, fill_value)
 
     try:
-        result = np.empty_like(
-            vals, shape=vals.shape, dtype=[("vals", vals.dtype), ("arg", arg.dtype)]
-        )
+        result = np.empty_like(vals, shape=vals.shape, dtype=[("vals", vals.dtype), ("arg", arg.dtype)])
     except TypeError:
         # Array type doesn't support structured arrays (e.g., CuPy)
         result = dict()
@@ -726,9 +691,7 @@ def arg_combine(argfunc, data, axis=None, **kwargs):
     arg, vals = _arg_combine(data, axis, argfunc, keepdims=True)
 
     try:
-        result = np.empty_like(
-            vals, shape=vals.shape, dtype=[("vals", vals.dtype), ("arg", arg.dtype)]
-        )
+        result = np.empty_like(vals, shape=vals.shape, dtype=[("vals", vals.dtype), ("arg", arg.dtype)])
     except TypeError:
         # Array type doesn't support structured arrays (e.g., CuPy).
         result = dict()
@@ -840,8 +803,7 @@ def median(a, axis=None, keepdims=False, out=None):
     """
     if axis is None:
         raise NotImplementedError(
-            "The da.median function only works along an axis.  "
-            "The full algorithm is difficult to do in parallel"
+            "The da.median function only works along an axis.  The full algorithm is difficult to do in parallel"
         )
 
     if not isinstance(axis, Iterable):
@@ -858,11 +820,7 @@ def median(a, axis=None, keepdims=False, out=None):
         axis=axis,
         keepdims=keepdims,
         drop_axis=axis if not keepdims else None,
-        chunks=(
-            [1 if ax in axis else c for ax, c in enumerate(a.chunks)]
-            if keepdims
-            else None
-        ),
+        chunks=([1 if ax in axis else c for ax, c in enumerate(a.chunks)] if keepdims else None),
     )
 
     result = handle_out(out, result)
@@ -908,11 +866,7 @@ def nanmedian(a, axis=None, keepdims=False, out=None):
         func,
         axis=axis,
         drop_axis=axis if not keepdims else None,
-        chunks=(
-            [1 if ax in axis else c for ax, c in enumerate(a.chunks)]
-            if keepdims
-            else None
-        ),
+        chunks=([1 if ax in axis else c for ax, c in enumerate(a.chunks)] if keepdims else None),
         **kwargs,
     )
 
@@ -923,9 +877,7 @@ def nanmedian(a, axis=None, keepdims=False, out=None):
 def _get_quantile_chunks(a, q, axis, keepdims):
     quantile_chunk = [len(q)] if isinstance(q, Iterable) else []
     if keepdims:
-        return quantile_chunk + [
-            1 if ax in axis else c for ax, c in enumerate(a.chunks)
-        ]
+        return quantile_chunk + [1 if ax in axis else c for ax, c in enumerate(a.chunks)]
     else:
         return quantile_chunk + [c for ax, c in enumerate(a.chunks) if ax not in axis]
 
@@ -943,13 +895,7 @@ def _span_indexers(a):
 
 
 def _custom_quantile(a, q, axis=None, method="linear", keepdims=False, **kwargs):
-    if (
-        method != "linear"
-        or len(axis) != 1
-        or axis[0] != len(a.shape) - 1
-        or len(a.shape) == 1
-        or a.shape[-1] > 1000
-    ):
+    if method != "linear" or len(axis) != 1 or axis[0] != len(a.shape) - 1 or len(a.shape) == 1 or a.shape[-1] > 1000:
         return np.nanquantile(a, q, axis=axis, method=method, keepdims=keepdims, **kwargs)
 
     sorted_arr = np.sort(a, axis=-1)
@@ -964,10 +910,7 @@ def _custom_quantile(a, q, axis=None, method="linear", keepdims=False, **kwargs)
     quantiles = []
     reshape_shapes = (1,) + tuple(sorted_arr.shape[:-1]) + ((1,) if keepdims else ())
     for single_q in list(q):
-        i = (
-            np.ones(nr_quantiles) * (a.shape[-1] - 1)
-            - np.isnan(sorted_arr).sum(axis=-1).reshape(-1)
-        ) * single_q
+        i = (np.ones(nr_quantiles) * (a.shape[-1] - 1) - np.isnan(sorted_arr).sum(axis=-1).reshape(-1)) * single_q
         lower_value, higher_value = np.floor(i).astype(int), np.ceil(i).astype(int)
 
         lower = sorted_arr[tuple(indexers) + (tuple(lower_value),)]
@@ -977,9 +920,7 @@ def _custom_quantile(a, q, axis=None, method="linear", keepdims=False, **kwargs)
         factor_higher = np.where(factor_higher == 0.0, 1.0, factor_higher)
         factor_lower = higher_value - i
 
-        quantiles.append(
-            (higher * factor_higher + lower * factor_lower).reshape(*reshape_shapes)
-        )
+        quantiles.append((higher * factor_higher + lower * factor_lower).reshape(*reshape_shapes))
 
     if is_scalar:
         return quantiles[0].squeeze(axis=0)
@@ -1017,8 +958,7 @@ def quantile(
     if axis is None:
         if builtins.any(n_blocks > 1 for n_blocks in a.numblocks):
             raise NotImplementedError(
-                "The da.quantile function only works along an axis.  "
-                "The full algorithm is difficult to do in parallel"
+                "The da.quantile function only works along an axis.  The full algorithm is difficult to do in parallel"
             )
         else:
             axis = tuple(range(len(a.shape)))
@@ -1037,7 +977,8 @@ def quantile(
     try:
         # Check if weights parameter is supported
         import numpy as np
-        if hasattr(np.quantile, '__wrapped__') or weights is not None:
+
+        if hasattr(np.quantile, "__wrapped__") or weights is not None:
             kwargs["weights"] = weights
     except Exception:
         pass

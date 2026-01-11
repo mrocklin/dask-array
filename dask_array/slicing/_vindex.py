@@ -75,8 +75,7 @@ def _vindex(x, *indexes):
                 raise IndexError("vindex does not support indexing with boolean arrays")
             if ((ind >= size) | (ind < -size)).any():
                 raise IndexError(
-                    "vindex key has entries out of bounds for "
-                    f"indexing along axis {i} of size {size}: {ind!r}"
+                    f"vindex key has entries out of bounds for indexing along axis {i} of size {size}: {ind!r}"
                 )
             ind %= size
             array_indexes[i] = ind
@@ -96,12 +95,8 @@ def _compute_indexer(index, chunks_along_axis):
     """
     chunk_boundaries = np.cumsum((0,) + chunks_along_axis)
     input_chunk_ids = np.searchsorted(chunk_boundaries[1:], index, side="right")
-    changes = np.concatenate(
-        [[0], np.where(np.diff(input_chunk_ids) != 0)[0] + 1, [len(index)]]
-    )
-    return [
-        index[changes[i] : changes[i + 1]].tolist() for i in range(len(changes) - 1)
-    ]
+    changes = np.concatenate([[0], np.where(np.diff(input_chunk_ids) != 0)[0] + 1, [len(index)]])
+    return [index[changes[i] : changes[i + 1]].tolist() for i in range(len(changes) - 1)]
 
 
 def _vindex_array(x, dict_indexes):
@@ -110,14 +105,11 @@ def _vindex_array(x, dict_indexes):
     from dask_array.creation import empty
 
     try:
-        broadcast_shape = np.broadcast_shapes(
-            *(arr.shape for arr in dict_indexes.values())
-        )
+        broadcast_shape = np.broadcast_shapes(*(arr.shape for arr in dict_indexes.values()))
     except ValueError as e:
         shapes_str = " ".join(str(a.shape) for a in dict_indexes.values())
         raise IndexError(
-            "shape mismatch: indexing arrays could not be "
-            f"broadcast together with shapes {shapes_str}"
+            f"shape mismatch: indexing arrays could not be broadcast together with shapes {shapes_str}"
         ) from e
     npoints = math.prod(broadcast_shape)
 
@@ -136,9 +128,7 @@ def _vindex_array(x, dict_indexes):
         return result.reshape(tuple(new_shape))
 
     if npoints > 0:
-        result_1d = new_collection(
-            VIndexArray(x.expr, dict_indexes, broadcast_shape, npoints)
-        )
+        result_1d = new_collection(VIndexArray(x.expr, dict_indexes, broadcast_shape, npoints))
         return result_1d.reshape(broadcast_shape + result_1d.shape[1:])
 
     # output has zero dimension - just create a new zero-shape array
@@ -180,9 +170,7 @@ class VIndexArray(ArrayExpr):
 
     @functools.cached_property
     def _max_chunk_point_dimensions(self):
-        return functools.reduce(
-            mul, map(cached_max, self._subset_to_indexed_axes(self.array.chunks))
-        )
+        return functools.reduce(mul, map(cached_max, self._subset_to_indexed_axes(self.array.chunks)))
 
     @functools.cached_property
     def chunks(self):
@@ -196,8 +184,7 @@ class VIndexArray(ArrayExpr):
         chunks.insert(
             0,
             (
-                (max_chunk_point_dimensions,) * n_chunks
-                + ((remainder,) if remainder > 0 else ())
+                (max_chunk_point_dimensions,) * n_chunks + ((remainder,) if remainder > 0 else ())
                 if npoints > 0
                 else (0,)
             ),
@@ -211,18 +198,12 @@ class VIndexArray(ArrayExpr):
         axes = self._axes
 
         bounds2 = tuple(
-            np.array(cached_cumsum(c, initial_zero=True))
-            for c in self._subset_to_indexed_axes(self.array.chunks)
+            np.array(cached_cumsum(c, initial_zero=True)) for c in self._subset_to_indexed_axes(self.array.chunks)
         )
-        axis = _get_axis(
-            tuple(i if i in axes else None for i in range(self.array.ndim))
-        )
+        axis = _get_axis(tuple(i if i in axes else None for i in range(self.array.ndim)))
 
         # Now compute indices of each output element within each input block
-        block_idxs = tuple(
-            np.searchsorted(b, ind, side="right") - 1
-            for b, ind in zip(bounds2, dict_indexes.values())
-        )
+        block_idxs = tuple(np.searchsorted(b, ind, side="right") - 1 for b, ind in zip(bounds2, dict_indexes.values()))
         starts = (b[i] for i, b in zip(block_idxs, bounds2))
         inblock_idxs = []
         for idx, start in zip(dict_indexes.values(), starts):
@@ -241,16 +222,9 @@ class VIndexArray(ArrayExpr):
         max_chunk_point_dimensions = self._max_chunk_point_dimensions
         n_chunks, remainder = divmod(npoints, max_chunk_point_dimensions)
 
-        other_blocks = product(
-            *[
-                range(len(c)) if i not in axes else [None]
-                for i, c in enumerate(self.array.chunks)
-            ]
-        )
+        other_blocks = product(*[range(len(c)) if i not in axes else [None] for i, c in enumerate(self.array.chunks)])
 
-        full_slices = [
-            slice(None, None) if i not in axes else None for i in range(self.array.ndim)
-        ]
+        full_slices = [slice(None, None) if i not in axes else None for i in range(self.array.ndim)]
 
         # The output is constructed as a new dimension and then reshaped
         outinds = np.arange(npoints).reshape(broadcast_shape)
@@ -276,9 +250,7 @@ class VIndexArray(ArrayExpr):
         for okey in other_blocks:
             merge_inputs = defaultdict(list)
             merge_indexer = defaultdict(list)
-            for i, (start, stop) in enumerate(
-                zip(key_bounds[:-1], key_bounds[1:], strict=True)
-            ):
+            for i, (start, stop) in enumerate(zip(key_bounds[:-1], key_bounds[1:], strict=True)):
                 slicer = slice(start, stop)
                 key = sorted_keys[start]
                 outblock, *input_blocks = np.unravel_index(key, ravel_shape)
@@ -307,7 +279,4 @@ class VIndexArray(ArrayExpr):
 
     def __dask_keys__(self):
         # Override to return 1D keys since we reshape after
-        return [
-            (self._name,) + idx
-            for idx in np.ndindex(tuple(len(c) for c in self.chunks))
-        ]
+        return [(self._name,) + idx for idx in np.ndindex(tuple(len(c) for c in self.chunks))]

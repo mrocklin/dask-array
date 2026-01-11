@@ -172,9 +172,7 @@ class MapOverlap(ArrayExpr):
         primary = self._get_primary_array()
         primary_idx = self._get_primary_index()
         if self.allow_rechunk:
-            return _get_overlap_rechunked_chunks(
-                new_collection(primary), self.depth[primary_idx]
-            )
+            return _get_overlap_rechunked_chunks(new_collection(primary), self.depth[primary_idx])
         return primary.chunks
 
     @functools.cached_property
@@ -275,9 +273,7 @@ class MapOverlap(ArrayExpr):
 
         if needs_trim:
             # Apply trim slice to output
-            return SliceSlicesIntegers(
-                new_expr, tuple(output_trim_index), parent.allow_getitem_optimization
-            )
+            return SliceSlicesIntegers(new_expr, tuple(output_trim_index), parent.allow_getitem_optimization)
         else:
             return new_expr
 
@@ -290,15 +286,11 @@ class MapOverlap(ArrayExpr):
         overlapped = []
         for arr, d, b in zip(self.arrays, self.depth, self.boundary):
             arr_coll = new_collection(arr)
-            overlapped_arr = overlap(
-                arr_coll, depth=d, boundary=b, allow_rechunk=self.allow_rechunk
-            )
+            overlapped_arr = overlap(arr_coll, depth=d, boundary=b, allow_rechunk=self.allow_rechunk)
             overlapped.append(overlapped_arr.expr)
 
         # Build map_blocks expression
-        result = map_blocks(
-            self.func, *[new_collection(a) for a in overlapped], **self._kwargs
-        )
+        result = map_blocks(self.func, *[new_collection(a) for a in overlapped], **self._kwargs)
 
         if self.trim_output:
             # Find highest-rank array for trim settings
@@ -384,12 +376,7 @@ def _trim(x, axes, boundary, _overlap_trim_info):
     axes = [axes.get(i, 0) for i in range(x.ndim)]
     axes_front = (ax[0] if isinstance(ax, tuple) else ax for ax in axes)
     axes_back = (
-        (
-            -ax[1]
-            if isinstance(ax, tuple) and ax[1]
-            else -ax if isinstance(ax, Integral) and ax else None
-        )
-        for ax in axes
+        (-ax[1] if isinstance(ax, tuple) and ax[1] else -ax if isinstance(ax, Integral) and ax else None) for ax in axes
     )
 
     trim_front = (
@@ -397,14 +384,8 @@ def _trim(x, axes, boundary, _overlap_trim_info):
         for i, (chunk_location, ax) in enumerate(zip(chunk_location, axes_front))
     )
     trim_back = (
-        (
-            None
-            if (chunk_location == chunks - 1 and boundary.get(i, "none") == "none")
-            else ax
-        )
-        for i, (chunks, chunk_location, ax) in enumerate(
-            zip(num_chunks, chunk_location, axes_back)
-        )
+        (None if (chunk_location == chunks - 1 and boundary.get(i, "none") == "none") else ax)
+        for i, (chunks, chunk_location, ax) in enumerate(zip(num_chunks, chunk_location, axes_back))
     )
     ind = tuple(slice(front, back) for front, back in zip(trim_front, trim_back))
     return x[ind]
@@ -416,15 +397,9 @@ def periodic(x, axis, depth):
     Useful to create periodic boundary conditions for overlap
     """
 
-    left = (
-        (slice(None, None, None),) * axis
-        + (slice(0, depth),)
-        + (slice(None, None, None),) * (x.ndim - axis - 1)
-    )
+    left = (slice(None, None, None),) * axis + (slice(0, depth),) + (slice(None, None, None),) * (x.ndim - axis - 1)
     right = (
-        (slice(None, None, None),) * axis
-        + (slice(-depth, None),)
-        + (slice(None, None, None),) * (x.ndim - axis - 1)
+        (slice(None, None, None),) * axis + (slice(-depth, None),) + (slice(None, None, None),) * (x.ndim - axis - 1)
     )
     l = x[left]
     r = x[right]
@@ -440,11 +415,7 @@ def reflect(x, axis, depth):
     This is the converse of ``periodic``
     """
     if depth == 1:
-        left = (
-            (slice(None, None, None),) * axis
-            + (slice(0, 1),)
-            + (slice(None, None, None),) * (x.ndim - axis - 1)
-        )
+        left = (slice(None, None, None),) * axis + (slice(0, 1),) + (slice(None, None, None),) * (x.ndim - axis - 1)
     else:
         left = (
             (slice(None, None, None),) * axis
@@ -470,16 +441,8 @@ def nearest(x, axis, depth):
     This mimics what the skimage.filters.gaussian_filter(... mode="nearest")
     does.
     """
-    left = (
-        (slice(None, None, None),) * axis
-        + (slice(0, 1),)
-        + (slice(None, None, None),) * (x.ndim - axis - 1)
-    )
-    right = (
-        (slice(None, None, None),) * axis
-        + (slice(-1, -2, -1),)
-        + (slice(None, None, None),) * (x.ndim - axis - 1)
-    )
+    left = (slice(None, None, None),) * axis + (slice(0, 1),) + (slice(None, None, None),) * (x.ndim - axis - 1)
+    right = (slice(None, None, None),) * axis + (slice(-1, -2, -1),) + (slice(None, None, None),) * (x.ndim - axis - 1)
 
     l = repeat(x[left], depth, axis=axis)
     r = repeat(x[right], depth, axis=axis)
@@ -593,9 +556,7 @@ def ensure_minimum_chunksize(size, chunks):
     elif len(output) >= 1:
         output[-1] += new
     else:
-        raise ValueError(
-            f"The overlapping depth {size} is larger than your array {sum(chunks)}."
-        )
+        raise ValueError(f"The overlapping depth {size} is larger than your array {sum(chunks)}.")
 
     return tuple(output)
 
@@ -670,9 +631,7 @@ def overlap(x, depth, boundary, *, allow_rechunk=True):
     depths = [max(d) if isinstance(d, tuple) else d for d in depth2.values()]
     if allow_rechunk:
         # rechunk if new chunks are needed to fit depth in every chunk
-        x1 = x.rechunk(
-            _get_overlap_rechunked_chunks(x, depth2)
-        )  # this is a no-op if x.chunks == new_chunks
+        x1 = x.rechunk(_get_overlap_rechunked_chunks(x, depth2))  # this is a no-op if x.chunks == new_chunks
 
     else:
         original_chunks_too_small = any(min(c) < d for d, c in zip(depths, x.chunks))
@@ -687,9 +646,7 @@ def overlap(x, depth, boundary, *, allow_rechunk=True):
 
     x2 = boundaries(x1, depth2, boundary2)
     x3 = overlap_internal(x2, depth2)
-    trim = {
-        k: v * 2 if boundary2.get(k, "none") != "none" else 0 for k, v in depth2.items()
-    }
+    trim = {k: v * 2 if boundary2.get(k, "none") != "none" else 0 for k, v in depth2.items()}
     x4 = chunk.trim(x3, trim)
     return x4
 
@@ -757,9 +714,7 @@ def _map_overlap_direct(func, args, depth, boundary, trim, allow_rechunk, kwargs
                 drop_axis = [drop_axis]
             ndim_out = max(a.ndim for a in overlapped)
             drop_axis = [d % ndim_out for d in drop_axis]
-            kept_axes = tuple(
-                ax for ax in range(overlapped[i].ndim) if ax not in drop_axis
-            )
+            kept_axes = tuple(ax for ax in range(overlapped[i].ndim) if ax not in drop_axis)
             trim_depth = {n: trim_depth[ax] for n, ax in enumerate(kept_axes)}
             trim_boundary = {n: trim_boundary[ax] for n, ax in enumerate(kept_axes)}
 
@@ -1015,9 +970,7 @@ def map_overlap(
     if not allow_rechunk:
         for x, d in zip(args, depth):
             depths = [max(dd) if isinstance(dd, tuple) else dd for dd in d.values()]
-            original_chunks_too_small = any(
-                min(c) < dd for dd, c in zip(depths, x.chunks)
-            )
+            original_chunks_too_small = any(min(c) < dd for dd, c in zip(depths, x.chunks))
             if original_chunks_too_small:
                 raise ValueError(
                     "Overlap depth is larger than smallest chunksize.\n"
@@ -1029,14 +982,8 @@ def map_overlap(
     # Fall back to direct implementation for complex cases:
     # - new_axis/drop_axis: change dimensionality
     # - explicit chunks: change output shape/chunks
-    if (
-        kwargs.get("new_axis") is not None
-        or kwargs.get("drop_axis") is not None
-        or kwargs.get("chunks") is not None
-    ):
-        return _map_overlap_direct(
-            func, args, depth, boundary, trim, allow_rechunk, kwargs
-        )
+    if kwargs.get("new_axis") is not None or kwargs.get("drop_axis") is not None or kwargs.get("chunks") is not None:
+        return _map_overlap_direct(func, args, depth, boundary, trim, allow_rechunk, kwargs)
 
     # Create the logical MapOverlap
     # It will be lowered to the full pipeline during optimization
@@ -1120,13 +1067,9 @@ def sliding_window_view(x, window_shape, axis=None, automatic_rechunk=True):
 
     # Ensure that each chunk is big enough to leave at least a size-1 chunk
     # after windowing (this is only really necessary for the last chunk).
-    safe_chunks = list(
-        ensure_minimum_chunksize(d + 1, c) for d, c in zip(depths, x.chunks)
-    )
+    safe_chunks = list(ensure_minimum_chunksize(d + 1, c) for d, c in zip(depths, x.chunks))
     if automatic_rechunk:
-        safe_chunks = [
-            s if d != 0 else c for d, c, s in zip(depths, x.chunks, safe_chunks)
-        ]
+        safe_chunks = [s if d != 0 else c for d, c, s in zip(depths, x.chunks, safe_chunks)]
         # safe chunks is our output chunks, so add the new dimensions
         safe_chunks.extend([(w,) for w in window_shape])
         max_chunk = reduce(mul, map(max, x.chunks))
@@ -1193,9 +1136,7 @@ def push(array, n, axis):
 
     if n is not None and 0 < n < array.shape[axis] - 1:
         arr = da.broadcast_to(
-            da.arange(
-                array.shape[axis], chunks=array.chunks[axis], dtype=array.dtype
-            ).reshape(
+            da.arange(array.shape[axis], chunks=array.chunks[axis], dtype=array.dtype).reshape(
                 tuple(size if i == axis else 1 for i, size in enumerate(array.shape))
             ),
             array.shape,

@@ -95,9 +95,7 @@ def test_reductions_0D():
 
 def reduction_1d_test(da_func, darr, np_func, narr, use_dtype=True, split_every=True):
     assert_eq(da_func(darr), np_func(narr))
-    assert_eq(
-        da_func(narr), np_func(narr)
-    )  # Ensure Dask reductions work with NumPy arrays
+    assert_eq(da_func(narr), np_func(narr))  # Ensure Dask reductions work with NumPy arrays
     assert_eq(da_func(darr, keepdims=True), np_func(narr, keepdims=True))
     assert_eq(da_func(darr, axis=()), np_func(narr, axis=()))
     assert same_keys(da_func(darr), da_func(darr))
@@ -113,9 +111,7 @@ def reduction_1d_test(da_func, darr, np_func, narr, use_dtype=True, split_every=
         assert same_keys(a1, a2)
         assert_eq(a1, np_func(narr))
         assert_eq(a2, np_func(narr))
-        assert_eq(
-            da_func(darr, keepdims=True, split_every=2), np_func(narr, keepdims=True)
-        )
+        assert_eq(da_func(darr, keepdims=True, split_every=2), np_func(narr, keepdims=True))
 
 
 @pytest.mark.parametrize("dtype", ["f4", "i4", "c8"])
@@ -156,9 +152,7 @@ def test_reductions_1D_datetime():
 
 
 @pytest.mark.parametrize("dtype", ["f4", "c8"])
-@pytest.mark.parametrize(
-    "x", [np.array([np.inf, np.nan, -np.inf, 2]), np.array([np.nan, np.nan, 3, 2])]
-)
+@pytest.mark.parametrize("x", [np.array([np.inf, np.nan, -np.inf, 2]), np.array([np.nan, np.nan, 3, 2])])
 def test_reductions_1D_nans(x, dtype):
     x = x.astype(dtype)
     a = da.from_array(x, chunks=(1,))
@@ -181,12 +175,8 @@ def reduction_2d_test(da_func, darr, np_func, narr, use_dtype=True, split_every=
     assert_eq(da_func(darr, axis=1), np_func(narr, axis=1))
     assert_eq(da_func(darr, axis=-1), np_func(narr, axis=-1))
     assert_eq(da_func(darr, axis=-2), np_func(narr, axis=-2))
-    assert_eq(
-        da_func(darr, axis=1, keepdims=True), np_func(narr, axis=1, keepdims=True)
-    )
-    assert_eq(
-        da_func(darr, axis=(), keepdims=True), np_func(narr, axis=(), keepdims=True)
-    )
+    assert_eq(da_func(darr, axis=1, keepdims=True), np_func(narr, axis=1, keepdims=True))
+    assert_eq(da_func(darr, axis=(), keepdims=True), np_func(narr, axis=(), keepdims=True))
     assert_eq(da_func(darr, axis=(1, 0)), np_func(narr, axis=(1, 0)))
 
     assert same_keys(da_func(darr, axis=()), da_func(darr, axis=()))
@@ -317,9 +307,7 @@ def test_arg_reductions(dfunc, func):
     assert_eq(dfunc(a3), func(x3))
 
 
-@pytest.mark.parametrize(
-    ["dfunc", "func"], [(da.nanmin, np.nanmin), (da.nanmax, np.nanmax)]
-)
+@pytest.mark.parametrize(["dfunc", "func"], [(da.nanmin, np.nanmin), (da.nanmax, np.nanmax)])
 def test_nan_reduction_warnings(dfunc, func):
     x = np.random.default_rng().random((10, 10, 10))
     x[5] = np.nan
@@ -330,9 +318,7 @@ def test_nan_reduction_warnings(dfunc, func):
     assert_eq(dfunc(a, 1), expected)
 
 
-@pytest.mark.parametrize(
-    ["dfunc", "func"], [(da.nanargmin, np.nanargmin), (da.nanargmax, np.nanargmax)]
-)
+@pytest.mark.parametrize(["dfunc", "func"], [(da.nanargmin, np.nanargmin), (da.nanargmax, np.nanargmax)])
 def test_nanarg_reductions(dfunc, func):
     x = np.random.default_rng().random((10, 10, 10))
     x[5] = np.nan
@@ -368,9 +354,7 @@ def test_min_max_empty_chunks(dfunc, func):
     assert_eq(dfunc(a3[a3 >= 2]), func(x3[x3 >= 2]))
 
     a4 = da.arange(10)
-    with pytest.raises(
-        ValueError
-    ):  # Checking it mimics numpy behavior when all chunks are empty
+    with pytest.raises(ValueError):  # Checking it mimics numpy behavior when all chunks are empty
         dfunc(a4[a4 < 0]).compute()
 
 
@@ -452,9 +436,7 @@ def test_reductions_2D_nans():
 
 def test_moment():
     def moment(x, n, axis=None):
-        return ((x - x.mean(axis=axis, keepdims=True)) ** n).sum(
-            axis=axis
-        ) / np.ones_like(x).sum(axis=axis)
+        return ((x - x.mean(axis=axis, keepdims=True)) ** n).sum(axis=axis) / np.ones_like(x).sum(axis=axis)
 
     # Poorly conditioned
     x = np.array([1.0, 2.0, 3.0] * 10).reshape((3, 10)) + 1e8
@@ -509,9 +491,7 @@ def test_nan_object(func):
             # from NumPy.
             warnings.simplefilter("ignore", RuntimeWarning)
 
-        x = np.array([[1, np.nan, 3, 4], [5, 6, 7, np.nan], [9, 10, 11, 12]]).astype(
-            object
-        )
+        x = np.array([[1, np.nan, 3, 4], [5, 6, 7, np.nan], [9, 10, 11, 12]]).astype(object)
         d = da.from_array(x, chunks=(2, 2))
 
         if func in {"nanmin", "nanmax"}:
@@ -630,9 +610,7 @@ def test_reduction_names():
 
 def test_general_reduction_names():
     dtype = int
-    a = da.reduction(
-        da.ones(10, dtype, chunks=2), np.sum, np.sum, dtype=dtype, name="foo"
-    )
+    a = da.reduction(da.ones(10, dtype, chunks=2), np.sum, np.sum, dtype=dtype, name="foo")
     names, tokens = list(zip_longest(*[key[0].rsplit("-", 1) for key in a.dask]))
     # array-expr uses "ones" vs traditional "ones_like" and may skip "foo-partial"
     expected_traditional = {"ones_like", "foo", "foo-partial", "foo-aggregate"}
@@ -739,9 +717,7 @@ def test_array_cumreduction_out(func):
     assert_eq(x, func(np.ones((10, 10)), axis=0))
 
 
-@pytest.mark.parametrize(
-    "npfunc,daskfunc", [(np.sort, da.topk), (np.argsort, da.argtopk)]
-)
+@pytest.mark.parametrize("npfunc,daskfunc", [(np.sort, da.topk), (np.argsort, da.argtopk)])
 @pytest.mark.parametrize("split_every", [None, 2, 4, 8])
 def test_topk_argtopk1(npfunc, daskfunc, split_every):
     # Test data
@@ -780,12 +756,8 @@ def test_topk_argtopk1(npfunc, daskfunc, split_every):
         daskfunc(b, k, axis=3, split_every=split_every)
 
     # bottom 5 elements, sorted ascending
-    assert_eq(
-        npfunc(npb, axis=0)[:k, :, :], daskfunc(b, -k, axis=0, split_every=split_every)
-    )
-    assert_eq(
-        npfunc(npb, axis=1)[:, :k, :], daskfunc(b, -k, axis=1, split_every=split_every)
-    )
+    assert_eq(npfunc(npb, axis=0)[:k, :, :], daskfunc(b, -k, axis=0, split_every=split_every))
+    assert_eq(npfunc(npb, axis=1)[:, :k, :], daskfunc(b, -k, axis=1, split_every=split_every))
     assert_eq(
         npfunc(npb, axis=-1)[:, :, :k],
         daskfunc(b, -k, axis=-1, split_every=split_every),
@@ -794,9 +766,7 @@ def test_topk_argtopk1(npfunc, daskfunc, split_every):
         daskfunc(b, -k, axis=3, split_every=split_every)
 
 
-@pytest.mark.parametrize(
-    "npfunc,daskfunc", [(np.sort, da.topk), (np.argsort, da.argtopk)]
-)
+@pytest.mark.parametrize("npfunc,daskfunc", [(np.sort, da.topk), (np.argsort, da.argtopk)])
 @pytest.mark.parametrize("split_every", [None, 2, 3, 4])
 @pytest.mark.parametrize("chunksize", [1, 2, 3, 4, 5, 10])
 def test_topk_argtopk2(npfunc, daskfunc, split_every, chunksize):
@@ -816,9 +786,7 @@ def test_topk_argtopk3():
 
     # As Array methods
     assert_eq(a.topk(5, axis=1, split_every=2), da.topk(a, 5, axis=1, split_every=2))
-    assert_eq(
-        a.argtopk(5, axis=1, split_every=2), da.argtopk(a, 5, axis=1, split_every=2)
-    )
+    assert_eq(a.argtopk(5, axis=1, split_every=2), da.argtopk(a, 5, axis=1, split_every=2))
 
 
 @pytest.mark.parametrize(
@@ -956,9 +924,7 @@ def test_nan_func_does_not_warn(func):
 
 @pytest.mark.parametrize("chunks", list(permutations(((2, 1) * 8, (3,) * 8, (6,) * 4))))
 @pytest.mark.parametrize("split_every", [2, 4])
-@pytest.mark.parametrize(
-    "axes", list(permutations((0, 1, 2), 2)) + list(permutations((0, 1, 2)))
-)
+@pytest.mark.parametrize("axes", list(permutations((0, 1, 2), 2)) + list(permutations((0, 1, 2))))
 def test_chunk_structure_independence(axes, split_every, chunks):
     # Reducing an array should not depend on its chunk-structure!!!
     # See Issue #8541: https://github.com/dask/dask/issues/8541
@@ -1074,9 +1040,7 @@ def test_quantile_func_family_with_axis_none(func):
     # when axis=None and more than one chunk is present
     # along at least one dimension
     darr = da.ones((3, 3), chunks=(2, 2))
-    with pytest.raises(
-        NotImplementedError, match="The full algorithm is difficult to do in parallel"
-    ):
+    with pytest.raises(NotImplementedError, match="The full algorithm is difficult to do in parallel"):
         func(darr, 0.5, axis=None)
 
     # Check that the functions behave as expected
@@ -1092,9 +1056,7 @@ def test_nanquantile_all_nan():
     darr = da.from_array(arr, chunks=(2, 3, 4, -1))
     da.nanquantile(darr, 0.75, axis=-1).compute()
     with pytest.raises(RuntimeWarning):
-        assert_eq(
-            da.nanquantile(darr, 0.75, axis=-1), np.nanquantile(arr, 0.75, axis=-1)
-        )
+        assert_eq(da.nanquantile(darr, 0.75, axis=-1), np.nanquantile(arr, 0.75, axis=-1))
         assert_eq(da.percentile(darr, 0.75, axis=-1), np.percentile(arr, 0.75, axis=-1))
 
 
@@ -1124,6 +1086,4 @@ def test_nanquantile_two_dims():
     arr = np.random.randn(10, 10)
     darr = da.from_array(arr, chunks=(2, -1))
     assert_eq(da.nanquantile(darr, 0.75, axis=-1), np.nanquantile(arr, 0.75, axis=-1))
-    assert_eq(
-        da.nanpercentile(darr, 0.75, axis=-1), np.nanpercentile(arr, 0.75, axis=-1)
-    )
+    assert_eq(da.nanpercentile(darr, 0.75, axis=-1), np.nanpercentile(arr, 0.75, axis=-1))

@@ -236,9 +236,7 @@ def test_region_zarr_deferred(tmp_path):
     numpy_arrays = [v for v in graph.values() if isinstance(v, np.ndarray)]
 
     assert len(zarr_arrays) == 1, "Graph should contain the zarr array"
-    assert (
-        len(numpy_arrays) == 0
-    ), "Graph should not contain numpy arrays (data not loaded)"
+    assert len(numpy_arrays) == 0, "Graph should not contain numpy arrays (data not loaded)"
 
     # The zarr array in graph should be the full array, not sliced
     assert zarr_arrays[0].shape == (10000, 10000)

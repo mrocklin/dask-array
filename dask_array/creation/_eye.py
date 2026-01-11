@@ -28,9 +28,7 @@ class Eye(ArrayExpr):
 
     @functools.cached_property
     def chunks(self):
-        vchunks, hchunks = normalize_chunks(
-            self.operand("chunks"), shape=(self.N, self._M), dtype=self.dtype
-        )
+        vchunks, hchunks = normalize_chunks(self.operand("chunks"), shape=(self.N, self._M), dtype=self.dtype)
         return (vchunks, hchunks)
 
     @functools.cached_property

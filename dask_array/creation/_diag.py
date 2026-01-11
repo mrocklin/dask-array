@@ -85,9 +85,7 @@ def diag(v, k=0):
         raise TypeError(f"v must be a dask array or numpy array, got {type(v)}")
 
     # Handle numpy arrays - wrap and return
-    if isinstance(v, np.ndarray) or (
-        hasattr(v, "__array_function__") and not isinstance(v, Array)
-    ):
+    if isinstance(v, np.ndarray) or (hasattr(v, "__array_function__") and not isinstance(v, Array)):
         if v.ndim == 1:
             abs(k)
             result = np.diag(v, k)

@@ -30,9 +30,7 @@ def _pad_reuse_expr(array, pad_width, mode, **kwargs):
         if reflect_type == "odd":
             raise NotImplementedError("`pad` does not support `reflect_type` of `odd`.")
         if reflect_type != "even":
-            raise ValueError(
-                "unsupported value for reflect_type, must be one of (`even`, `odd`)"
-            )
+            raise ValueError("unsupported value for reflect_type, must be one of (`even`, `odd`)")
 
     result = np.empty(array.ndim * (3,), dtype=object)
     for idx in np.ndindex(result.shape):
@@ -96,9 +94,7 @@ def _pad_stats_expr(array, pad_width, mode, stat_length):
         select = []
         pad_shape = []
         pad_chunks = []
-        for d, (i, s, c, w, l) in enumerate(
-            zip(idx, array.shape, array.chunks, pad_width, stat_length)
-        ):
+        for d, (i, s, c, w, l) in enumerate(zip(idx, array.shape, array.chunks, pad_width, stat_length)):
             if i < 1:
                 axes.append(d)
                 select.append(slice(None, l[0], None))
@@ -150,9 +146,7 @@ def _pad_udf_expr(array, pad_width, mode, **kwargs):
 
     chunks = result.chunks
     for d in range(result.ndim):
-        result = result.rechunk(
-            chunks[:d] + (result.shape[d : d + 1],) + chunks[d + 1 :]
-        )
+        result = result.rechunk(chunks[:d] + (result.shape[d : d + 1],) + chunks[d + 1 :])
 
         result = result.map_blocks(
             wrapped_pad_func,
@@ -184,22 +178,16 @@ def _pad_edge_expr(array, pad_width, mode, **kwargs):
 
     result = array
     for d in range(array.ndim):
-        pad_shapes, pad_chunks = get_pad_shapes_chunks(
-            result, pad_width, (d,), mode=mode
-        )
+        pad_shapes, pad_chunks = get_pad_shapes_chunks(result, pad_width, (d,), mode=mode)
         pad_arrays = [result, result]
 
         if mode == "constant":
             constant_values = kwargs["constant_values"][d]
             constant_values = [
-                asarray_safe(c, like=meta_from_array(array), dtype=result.dtype)
-                for c in constant_values
+                asarray_safe(c, like=meta_from_array(array), dtype=result.dtype) for c in constant_values
             ]
 
-            pad_arrays = [
-                broadcast_to(v, s, c)
-                for v, s, c in zip(constant_values, pad_shapes, pad_chunks)
-            ]
+            pad_arrays = [broadcast_to(v, s, c) for v, s, c in zip(constant_values, pad_shapes, pad_chunks)]
         elif mode in ["edge", "linear_ramp"]:
             pad_slices = [result.ndim * [slice(None)], result.ndim * [slice(None)]]
             pad_slices[0][d] = slice(None, 1, None)
@@ -209,10 +197,7 @@ def _pad_edge_expr(array, pad_width, mode, **kwargs):
             pad_arrays = [result[sl] for sl in pad_slices]
 
             if mode == "edge":
-                pad_arrays = [
-                    broadcast_to(a, s, c)
-                    for a, s, c in zip(pad_arrays, pad_shapes, pad_chunks)
-                ]
+                pad_arrays = [broadcast_to(a, s, c) for a, s, c in zip(pad_arrays, pad_shapes, pad_chunks)]
             elif mode == "linear_ramp":
                 end_values = kwargs["end_values"][d]
 
@@ -226,14 +211,11 @@ def _pad_edge_expr(array, pad_width, mode, **kwargs):
                         dim=d,
                         step=(2 * i - 1),
                     )
-                    for i, (a, ev, pw, c) in enumerate(
-                        zip(pad_arrays, end_values, pad_width[d], pad_chunks)
-                    )
+                    for i, (a, ev, pw, c) in enumerate(zip(pad_arrays, end_values, pad_width[d], pad_chunks))
                 ]
         elif mode == "empty":
             pad_arrays = [
-                empty_like(array, shape=s, dtype=array.dtype, chunks=c)
-                for s, c in zip(pad_shapes, pad_chunks)
+                empty_like(array, shape=s, dtype=array.dtype, chunks=c) for s, c in zip(pad_shapes, pad_chunks)
             ]
 
         result = concatenate([pad_arrays[0], result, pad_arrays[1]], axis=d)
@@ -269,9 +251,7 @@ def pad(array, pad_width, mode="constant", **kwargs):
     except KeyError as e:
         raise ValueError(f"mode '{mode}' is not supported") from e
     if unsupported_kwargs:
-        raise ValueError(
-            f"unsupported keyword arguments for mode '{mode}': {unsupported_kwargs}"
-        )
+        raise ValueError(f"unsupported keyword arguments for mode '{mode}': {unsupported_kwargs}")
 
     if mode in {"maximum", "mean", "median", "minimum"}:
         stat_length = kwargs.get("stat_length", tuple((n, n) for n in array.shape))

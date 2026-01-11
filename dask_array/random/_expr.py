@@ -98,9 +98,7 @@ class Random(IO):
             func_applier = _apply_random
             gen = self.rng._RandomState
         else:
-            raise TypeError(
-                "Unknown object type: Not a Generator and Not a RandomState"
-            )
+            raise TypeError("Unknown object type: Not a Generator and Not a RandomState")
         token = tokenize(bitgen_token, self.size, self.chunks, self.args, self.kwargs)
         name = f"{self.distribution}-{token}"
 

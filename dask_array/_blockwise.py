@@ -83,16 +83,12 @@ class Blockwise(ArrayExpr):
                 dtype=getattr(self._meta_provided, "dtype", None),
             )
         else:
-            meta = compute_meta(
-                self.func, self.operand("dtype"), *self.args[::2], **self.kwargs
-            )
+            meta = compute_meta(self.func, self.operand("dtype"), *self.args[::2], **self.kwargs)
             if meta is None:
                 # compute_meta failed (e.g., function has assertions on shapes)
                 # Fall back to a default meta based on the explicitly provided dtype
                 # (use operand to avoid recursion since dtype property may depend on _meta)
-                meta = meta_from_array(
-                    None, ndim=self.ndim, dtype=self.operand("dtype")
-                )
+                meta = meta_from_array(None, ndim=self.ndim, dtype=self.operand("dtype"))
             return meta
 
     @cached_property
@@ -100,9 +96,7 @@ class Blockwise(ArrayExpr):
         if self.align_arrays:
             chunkss, arrays, _ = unify_chunks_expr(*self.args)
         else:
-            arginds = [
-                (a, i) for (a, i) in toolz.partition(2, self.args) if i is not None
-            ]
+            arginds = [(a, i) for (a, i) in toolz.partition(2, self.args) if i is not None]
             chunkss = {}
             # For each dimension, use the input chunking that has the most blocks;
             # this will ensure that broadcasting works as expected, and in
@@ -134,9 +128,7 @@ class Blockwise(ArrayExpr):
                             )
                         chunks[i] = tuple(self.adjust_chunks[ind])
                     else:
-                        raise NotImplementedError(
-                            "adjust_chunks values must be callable, int, or tuple"
-                        )
+                        raise NotImplementedError("adjust_chunks values must be callable, int, or tuple")
             chunks = tuple(chunks)
         return tuple(map(tuple, chunks))
 
@@ -187,9 +179,7 @@ class Blockwise(ArrayExpr):
         from dask.layers import ArrayBlockwiseDep
 
         if self.concatenate:
-            raise NotImplementedError(
-                "Blockwise with concatenate not supported for fusion"
-            )
+            raise NotImplementedError("Blockwise with concatenate not supported for fusion")
 
         idx_to_block = self._idx_to_block(block_id)
 
@@ -283,14 +273,8 @@ class Blockwise(ArrayExpr):
                 arg, collections = unpack_collections(arg)
                 dependencies.extend(collections)
             else:
-                if (
-                    hasattr(arg, "ndim")
-                    and hasattr(ind, "__len__")
-                    and arg.ndim != len(ind)
-                ):
-                    raise ValueError(
-                        f"Index string {ind} does not match array dimension {arg.ndim}"
-                    )
+                if hasattr(arg, "ndim") and hasattr(ind, "__len__") and arg.ndim != len(ind):
+                    raise ValueError(f"Index string {ind} does not match array dimension {arg.ndim}")
                 # TODO(expr): this class is a confusing crutch to pass arguments to the
                 #  graph, we should write them directly into the graph
                 if not isinstance(arg, ArrayBlockwiseDep):
@@ -378,9 +362,7 @@ class Blockwise(ArrayExpr):
             elif shuffle_ind in ind:
                 # Find the axis in this input that corresponds to shuffle_ind
                 input_axis = ind.index(shuffle_ind)
-                shuffled = Shuffle(
-                    arr, shuffle_expr.indexer, input_axis, shuffle_expr.operand("name")
-                )
+                shuffled = Shuffle(arr, shuffle_expr.indexer, input_axis, shuffle_expr.operand("name"))
                 new_args.extend([shuffled, ind])
             else:
                 # This input doesn't have the shuffle dimension
@@ -429,11 +411,7 @@ class Blockwise(ArrayExpr):
         full_index = index + (slice(None),) * (len(out_ind) - len(index))
 
         # Find which output axes have non-trivial slices
-        sliced_axes = {
-            i
-            for i, idx in enumerate(full_index)
-            if isinstance(idx, Integral) or idx != slice(None)
-        }
+        sliced_axes = {i for i, idx in enumerate(full_index) if isinstance(idx, Integral) or idx != slice(None)}
 
         # Use getattr since subclasses may define as class attribute or property
         adjust_chunks = getattr(self, "adjust_chunks", None)
@@ -464,10 +442,7 @@ class Blockwise(ArrayExpr):
             return self._accept_slice_coarse(slice_expr, full_index, adjust_chunks)
 
         # Convert integers to size-1 slices for pushdown
-        slice_index = tuple(
-            slice(idx, idx + 1) if isinstance(idx, Integral) else idx
-            for idx in full_index
-        )
+        slice_index = tuple(slice(idx, idx + 1) if isinstance(idx, Integral) else idx for idx in full_index)
         has_integers = any(isinstance(idx, Integral) for idx in full_index)
 
         # For subclasses with a single "array" parameter, use substitute_parameters
@@ -525,12 +500,8 @@ class Blockwise(ArrayExpr):
         if has_integers:
             from dask_array.slicing import SliceSlicesIntegers
 
-            extract_index = tuple(
-                0 if isinstance(idx, Integral) else slice(None) for idx in full_index
-            )
-            return SliceSlicesIntegers(
-                result, extract_index, slice_expr.allow_getitem_optimization
-            )
+            extract_index = tuple(0 if isinstance(idx, Integral) else slice(None) for idx in full_index)
+            return SliceSlicesIntegers(result, extract_index, slice_expr.allow_getitem_optimization)
 
         return result
 
@@ -557,11 +528,7 @@ class Blockwise(ArrayExpr):
             # First block containing element at 'start'
             first_block = np.searchsorted(cumsum[1:], start, side="right")
             # Last block containing element before 'stop'
-            last_block = (
-                np.searchsorted(cumsum[1:], stop - 1, side="right")
-                if stop > start
-                else first_block - 1
-            )
+            last_block = np.searchsorted(cumsum[1:], stop - 1, side="right") if stop > start else first_block - 1
             if first_block >= len(cumsum) - 1:
                 return None, None  # Out of bounds
             return int(first_block), int(last_block)
@@ -637,14 +604,8 @@ class Blockwise(ArrayExpr):
                             if last < first:  # Empty
                                 arg_slices.append(slice(0, 0))
                             else:
-                                in_cumsum = list(
-                                    cached_cumsum(
-                                        arg.chunks[dim_idx], initial_zero=True
-                                    )
-                                )
-                                arg_slices.append(
-                                    slice(in_cumsum[first], in_cumsum[last + 1])
-                                )
+                                in_cumsum = list(cached_cumsum(arg.chunks[dim_idx], initial_zero=True))
+                                arg_slices.append(slice(in_cumsum[first], in_cumsum[last + 1]))
                     except ValueError:
                         arg_slices.append(slice(None))  # Contracted dimension
 
@@ -692,9 +653,7 @@ class Blockwise(ArrayExpr):
 
             # Build the output adjustment index
             adj_index = tuple(output_adjustments)
-            return SliceSlicesIntegers(
-                result, adj_index, slice_expr.allow_getitem_optimization
-            )
+            return SliceSlicesIntegers(result, adj_index, slice_expr.allow_getitem_optimization)
 
         return result
 
@@ -742,11 +701,7 @@ class Elemwise(Blockwise):
         if self.where is True and self.out is not None:
             out_name = getattr(self.out, "_name", None)
             # Only exclude if out is not also an input argument
-            input_names = {
-                getattr(a, "_name", None)
-                for a in self.elemwise_args
-                if hasattr(a, "_name")
-            }
+            input_names = {getattr(a, "_name", None) for a in self.elemwise_args if hasattr(a, "_name")}
             if out_name and out_name not in input_names:
                 deps = [d for d in deps if d._name != out_name]
         return deps
@@ -766,9 +721,7 @@ class Elemwise(Blockwise):
             shapes.append(self.out.shape)
 
         shapes = [s if isinstance(s, Iterable) else () for s in shapes]
-        out_ndim = len(
-            broadcast_shapes(*shapes)
-        )  # Raises ValueError if dimensions mismatch
+        out_ndim = len(broadcast_shapes(*shapes))  # Raises ValueError if dimensions mismatch
         return tuple(range(out_ndim))[::-1]
 
     @cached_property
@@ -786,23 +739,14 @@ class Elemwise(Blockwise):
             # them just like other arrays, and if necessary cast the result of op
             # to match.
             vals = [
-                (
-                    np.empty((1,) * max(1, a.ndim), dtype=a.dtype)
-                    if not is_scalar_for_elemwise(a)
-                    else a
-                )
+                (np.empty((1,) * max(1, a.ndim), dtype=a.dtype) if not is_scalar_for_elemwise(a) else a)
                 for a in self.elemwise_args
             ]
             try:
-                dtype = apply_infer_dtype(
-                    self.op, vals, self.user_kwargs, "elemwise", suggest_dtype=False
-                )
+                dtype = apply_infer_dtype(self.op, vals, self.user_kwargs, "elemwise", suggest_dtype=False)
             except Exception:
                 raise NotImplementedError
-            need_enforce_dtype = any(
-                not is_scalar_for_elemwise(a) and a.ndim == 0
-                for a in self.elemwise_args
-            )
+            need_enforce_dtype = any(not is_scalar_for_elemwise(a) and a.ndim == 0 for a in self.elemwise_args)
 
         blockwise_kwargs = {}
         op = self.op
@@ -850,11 +794,7 @@ class Elemwise(Blockwise):
             toolz.concat(
                 (
                     a,
-                    (
-                        tuple(range(a.ndim)[::-1])
-                        if not is_scalar_for_elemwise(a)
-                        else None
-                    ),
+                    (tuple(range(a.ndim)[::-1]) if not is_scalar_for_elemwise(a) else None),
                 )
                 for a in self.elemwise_args + extra_args
             )
@@ -1081,9 +1021,7 @@ class Elemwise(Blockwise):
         )
 
 
-def _broadcast_block_id(
-    numblocks: tuple[int, ...], block_id: tuple[int, ...]
-) -> tuple[int, ...]:
+def _broadcast_block_id(numblocks: tuple[int, ...], block_id: tuple[int, ...]) -> tuple[int, ...]:
     """Adjust block_id for broadcasting.
 
     When an array has fewer dimensions or single-block dimensions,
@@ -1106,9 +1044,7 @@ def _broadcast_block_id(
     return tuple(result)
 
 
-def _compute_block_id(
-    ind: tuple, idx_to_block: dict, numblocks: tuple[int, ...]
-) -> tuple[int, ...]:
+def _compute_block_id(ind: tuple, idx_to_block: dict, numblocks: tuple[int, ...]) -> tuple[int, ...]:
     """Compute block_id for a dependency given symbolic indices.
 
     Maps symbolic indices to block coordinates using idx_to_block mapping.
@@ -1169,9 +1105,7 @@ def _symbolic_mapping(expr, parent_mapping):
         # Blockwise: each arg has indices that select from out_ind
         idx_to_parent = {}
         for dim, idx in enumerate(expr.out_ind):
-            idx_to_parent[idx] = (
-                parent_mapping[dim] if dim < len(parent_mapping) else dim
-            )
+            idx_to_parent[idx] = parent_mapping[dim] if dim < len(parent_mapping) else dim
 
         for arr, ind in toolz.partition(2, expr.args):
             if ind is not None and hasattr(arr, "_name"):
@@ -1295,8 +1229,7 @@ def optimize_blockwise_fusion_array(expr):
         roots = [
             expr_mapping[k]
             for k, v in dependents.items()
-            if v == set()
-            or all(not is_fusable_elemwise(expr_mapping.get(_name)) for _name in v)
+            if v == set() or all(not is_fusable_elemwise(expr_mapping.get(_name)) for _name in v)
         ]
 
         while roots:
@@ -1324,9 +1257,7 @@ def optimize_blockwise_fusion_array(expr):
                     if dep_dependents <= (stack_names | group_names | {node._name}):
                         # dep can be fused into this group
                         stack.append(dep)
-                    elif dependencies.get(dep._name) and dep._name not in [
-                        r._name for r in roots
-                    ]:
+                    elif dependencies.get(dep._name) and dep._name not in [r._name for r in roots]:
                         # Can't fuse dep, but may be able to use as new root
                         roots.append(dep)
 

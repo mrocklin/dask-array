@@ -81,11 +81,7 @@ def test_atleast_nd_one_arg(funcname, shape, chunks):
 @pytest.mark.parametrize("funcname", ["atleast_1d", "atleast_2d", "atleast_3d"])
 @pytest.mark.parametrize(
     "shape1, shape2",
-    list(
-        itertools.combinations_with_replacement(
-            [tuple(), (4,), (4, 6), (4, 6, 8), (4, 6, 8, 10)], 2
-        )
-    ),
+    list(itertools.combinations_with_replacement([tuple(), (4,), (4, 6), (4, 6, 8), (4, 6, 8, 10)], 2)),
 )
 def test_atleast_nd_two_args(funcname, shape1, shape2):
     np_a_1 = np.random.default_rng().random(shape1)
@@ -175,9 +171,7 @@ def test_moveaxis_rollaxis(funcname, shape):
 def test_moveaxis_rollaxis_keyword():
     x = np.random.default_rng().random((10, 12, 7))
     d = da.from_array(x, chunks=(4, 5, 2))
-    assert_eq(
-        np.moveaxis(x, destination=1, source=0), da.moveaxis(d, destination=1, source=0)
-    )
+    assert_eq(np.moveaxis(x, destination=1, source=0), da.moveaxis(d, destination=1, source=0))
     assert_eq(np.rollaxis(x, 2), da.rollaxis(d, 2))
     assert isinstance(da.rollaxis(d, 1), da.Array)
     assert_eq(np.rollaxis(x, start=1, axis=2), da.rollaxis(d, start=1, axis=2))
@@ -361,9 +355,7 @@ def test_tensordot():
         assert not same_keys(da.tensordot(a, b, axes=0), da.tensordot(a, b, axes=1))
 
 
-@pytest.mark.parametrize(
-    "axes", [0, 1, (0, 1), (1, 0), ((1, 0), (2, 1)), ((1, 2), (2, 0)), ((2, 0), (1, 2))]
-)
+@pytest.mark.parametrize("axes", [0, 1, (0, 1), (1, 0), ((1, 0), (2, 1)), ((1, 2), (2, 0)), ((2, 0), (1, 2))])
 def test_tensordot_2(axes):
     x = np.arange(4 * 4 * 4).reshape((4, 4, 4))
     y = da.from_array(x, chunks=2)
@@ -654,9 +646,7 @@ def test_gradient(shape, varargs, axis, edge_order):
         for e_r_d_a, e_r_a in zip(r_d_a, r_a):
             assert_eq(e_r_d_a, e_r_a)
 
-        assert_eq(
-            da.sqrt(sum(map(da.square, r_d_a))), np.sqrt(sum(map(np.square, r_a)))
-        )
+        assert_eq(da.sqrt(sum(map(da.square, r_d_a))), np.sqrt(sum(map(np.square, r_a))))
 
 
 def test_bincount():
@@ -707,9 +697,7 @@ def test_digitize():
     for chunks in [2, 4]:
         for right in [False, True]:
             d = da.from_array(x, chunks=chunks)
-            assert_eq(
-                da.digitize(d, bins, right=right), np.digitize(x, bins, right=right)
-            )
+            assert_eq(da.digitize(d, bins, right=right), np.digitize(x, bins, right=right))
 
     x = np.random.default_rng().random(size=(100, 100))
     bins = np.random.default_rng().random(size=13)
@@ -717,9 +705,7 @@ def test_digitize():
     for chunks in [(10, 10), (10, 20), (13, 17), (87, 54)]:
         for right in [False, True]:
             d = da.from_array(x, chunks=chunks)
-            assert_eq(
-                da.digitize(d, bins, right=right), np.digitize(x, bins, right=right)
-            )
+            assert_eq(da.digitize(d, bins, right=right), np.digitize(x, bins, right=right))
 
 
 @pytest.mark.parametrize(
@@ -934,9 +920,7 @@ def test_histogram_delayed_bins(density, weighted):
 
 def test_histogram_delayed_n_bins_raises_with_density():
     data = da.random.default_rng().random(10, chunks=2)
-    with pytest.raises(
-        NotImplementedError, match="`bins` cannot be a scalar Dask object"
-    ):
+    with pytest.raises(NotImplementedError, match="`bins` cannot be a scalar Dask object"):
         da.histogram(data, bins=da.array(10), range=[0, 1], density=True)
 
 
@@ -1037,9 +1021,7 @@ def test_histogramdd_seq_of_arrays():
 def test_histogramdd_alternative_bins_range():
     # test for normal input
     n1, n2 = 600, 3
-    x = da.random.default_rng().uniform(
-        0, 1, size=(n1, n2), chunks=((200, 200, 200), (3,))
-    )
+    x = da.random.default_rng().uniform(0, 1, size=(n1, n2), chunks=((200, 200, 200), (3,)))
     bins = (3, 5, 4)
     ranges = ((0, 1),) * len(bins)
     (a1, b1) = da.histogramdd(x, bins=bins, range=ranges)
@@ -1108,9 +1090,7 @@ def test_histogramdd_weighted_density():
 
 def test_histogramdd_raises_incompat_sample_chunks():
     data = da.random.default_rng().random(size=(10, 3), chunks=(5, 1))
-    with pytest.raises(
-        ValueError, match="Input array can only be chunked along the 0th axis"
-    ):
+    with pytest.raises(ValueError, match="Input array can only be chunked along the 0th axis"):
         da.histogramdd(data, bins=10, range=((0, 1),) * 3)
 
 
@@ -1119,9 +1099,7 @@ def test_histogramdd_raises_incompat_multiarg_chunks():
     x = rng.random(size=(10,), chunks=2)
     y = rng.random(size=(10,), chunks=2)
     z = rng.random(size=(10,), chunks=5)
-    with pytest.raises(
-        ValueError, match="All coordinate arrays must be chunked identically."
-    ):
+    with pytest.raises(ValueError, match="All coordinate arrays must be chunked identically."):
         da.histogramdd((x, y, z), bins=(3,) * 3, range=((0, 1),) * 3)
 
 
@@ -1166,9 +1144,7 @@ def test_histogramdd_raises_incompat_bins_or_range():
         da.histogramdd(data, bins=bins, range=ranges)
 
     # has range elements that are not pairs
-    with pytest.raises(
-        ValueError, match="range argument should be a sequence of pairs"
-    ):
+    with pytest.raises(ValueError, match="range argument should be a sequence of pairs"):
         da.histogramdd(data, bins=bins, range=((0, 1), (0, 1, 2), 3, 5))
 
 
@@ -1183,15 +1159,11 @@ def test_histogramdd_raise_normed_and_density():
 def test_histogramdd_raise_incompat_shape():
     # 1D
     data = da.random.default_rng().random(size=(10,), chunks=(2,))
-    with pytest.raises(
-        ValueError, match="Single array input to histogramdd should be columnar"
-    ):
+    with pytest.raises(ValueError, match="Single array input to histogramdd should be columnar"):
         da.histogramdd(data, bins=4, range=((-3, 3),))
     # 3D (not columnar)
     data = da.random.default_rng().random(size=(4, 4, 4), chunks=(2, 2, 2))
-    with pytest.raises(
-        ValueError, match="Single array input to histogramdd should be columnar"
-    ):
+    with pytest.raises(ValueError, match="Single array input to histogramdd should be columnar"):
         da.histogramdd(data, bins=4, range=((-3, 3),))
 
 
@@ -1236,9 +1208,7 @@ def test_cov():
         da.cov(d, ddof=1.5)
 
 
-@pytest.mark.skipif(
-    not NUMPY_GE_220, reason="fweights is not an kwarg prior to numpy 2.2"
-)
+@pytest.mark.skipif(not NUMPY_GE_220, reason="fweights is not an kwarg prior to numpy 2.2")
 def test_cov_fweights():
     x1 = da.array([[0, 2], [1, 1], [2, 0]]).T
     res1 = da.array([[1.0, -1.0], [-1.0, 1.0]])
@@ -1265,9 +1235,7 @@ def test_cov_fweights():
         da.cov(x1, fweights=f)
 
 
-@pytest.mark.skipif(
-    not NUMPY_GE_220, reason="aweights is not an kwarg prior to numpy 2.2"
-)
+@pytest.mark.skipif(not NUMPY_GE_220, reason="aweights is not an kwarg prior to numpy 2.2")
 def test_cov_aweights():
     x1 = da.array([[0, 2], [1, 1], [2, 0]]).T
     res1 = da.array([[1.0, -1.0], [-1.0, 1.0]])
@@ -1300,9 +1268,7 @@ def test_cov_aweights():
         da.cov(x1, aweights=wrong_length_weights)
 
 
-@pytest.mark.skipif(
-    not NUMPY_GE_220, reason="fweights and aweights are not kwargs prior to numpy 2.2"
-)
+@pytest.mark.skipif(not NUMPY_GE_220, reason="fweights and aweights are not kwargs prior to numpy 2.2")
 def test_cov_fweights_aweights_combined():
     x1 = da.array([[0, 2], [1, 1], [2, 0]]).T
 
@@ -1418,9 +1384,7 @@ def test_unique_rand(seed, shape, chunks):
     [[(10,), (5,)], [(10,), (3,)], [(4, 5), (3, 2)], [(20, 20), (4, 5)]],
 )
 @pytest.mark.parametrize("invert", [True, False])
-def test_isin_rand(
-    seed, low, high, elements_shape, elements_chunks, test_shape, test_chunks, invert
-):
+def test_isin_rand(seed, low, high, elements_shape, elements_chunks, test_shape, test_chunks, invert):
     rng = np.random.default_rng(seed)
 
     a1 = rng.integers(low, high, size=elements_shape)
@@ -1489,9 +1453,7 @@ def test_shape_and_ndim(shape):
     assert np.ndim(x) == len(shape)
 
 
-@pytest.mark.parametrize(
-    "shape", [((12,), (12,)), ((4, 3), (3, 4)), ((12,), (1, 6, 2))]
-)
+@pytest.mark.parametrize("shape", [((12,), (12,)), ((4, 3), (3, 4)), ((12,), (1, 6, 2))])
 @pytest.mark.parametrize("reverse", [True, False])
 def test_union1d(shape, reverse):
     s1, s2 = shape
@@ -2258,9 +2220,7 @@ def test_ravel_multi_index_unknown_shape_fails():
     multi_index1 = da.from_array([2, -1, 3, -1], chunks=2)
     multi_index1 = multi_index1[multi_index1 > 0]
 
-    multi_index2 = da.from_array(
-        [[1, 2], [-1, -1], [3, 4], [5, 6], [7, 8], [-1, -1]], chunks=(2, 1)
-    )
+    multi_index2 = da.from_array([[1, 2], [-1, -1], [3, 4], [5, 6], [7, 8], [-1, -1]], chunks=(2, 1))
     multi_index2 = multi_index2[(multi_index2 > 0).all(axis=1)]
 
     multi_index = [1, multi_index1, multi_index2]
@@ -2290,12 +2250,8 @@ def test_coarsen():
     x = np.random.default_rng().integers(10, size=(24, 24))
     d = da.from_array(x, chunks=(4, 8))
 
-    assert_eq(
-        da.chunk.coarsen(np.sum, x, {0: 2, 1: 4}), da.coarsen(np.sum, d, {0: 2, 1: 4})
-    )
-    assert_eq(
-        da.chunk.coarsen(np.sum, x, {0: 2, 1: 4}), da.coarsen(da.sum, d, {0: 2, 1: 4})
-    )
+    assert_eq(da.chunk.coarsen(np.sum, x, {0: 2, 1: 4}), da.coarsen(np.sum, d, {0: 2, 1: 4}))
+    assert_eq(da.chunk.coarsen(np.sum, x, {0: 2, 1: 4}), da.coarsen(da.sum, d, {0: 2, 1: 4}))
     assert_eq(
         da.chunk.coarsen(np.mean, x, {0: 2, 1: 4}, dtype="float32"),
         da.coarsen(da.mean, d, {0: 2, 1: 4}, dtype="float32"),
@@ -2346,9 +2302,7 @@ def test_aligned_coarsen_chunks(chunks, divisor):
     # check that total number of elements is conserved
     assert sum(aligned_chunks) == sum(chunks)
     # check that valid chunks are not modified
-    assert [chunks[idx] for idx in valid_chunks] == [
-        aligned_chunks[idx] for idx in valid_chunks
-    ]
+    assert [chunks[idx] for idx in valid_chunks] == [aligned_chunks[idx] for idx in valid_chunks]
     # check that no chunks are 0
     assert (np.array(aligned_chunks) > 0).all()
     # check that at most one chunk was added
@@ -2376,9 +2330,7 @@ def test_insert():
         np.insert(x, [2, 3, 8, 8, -2, -2], -1, axis=0),
         da.insert(a, [2, 3, 8, 8, -2, -2], -1, axis=0),
     )
-    assert_eq(
-        np.insert(x, slice(1, 4), -1, axis=1), da.insert(a, slice(1, 4), -1, axis=1)
-    )
+    assert_eq(np.insert(x, slice(1, 4), -1, axis=1), da.insert(a, slice(1, 4), -1, axis=1))
     assert_eq(
         np.insert(x, [2] * 3 + [5] * 2, y, axis=0),
         da.insert(a, [2] * 3 + [5] * 2, b, axis=0),
@@ -2431,12 +2383,8 @@ def test_append():
         np.append(x, ((0,) * 10,) * 10, axis=None),
         da.append(a, ((0,) * 10,) * 10, axis=None),
     )
-    assert_eq(
-        np.append(x, ((0,) * 10,) * 10, axis=0), da.append(a, ((0,) * 10,) * 10, axis=0)
-    )
-    assert_eq(
-        np.append(x, ((0,) * 10,) * 10, axis=1), da.append(a, ((0,) * 10,) * 10, axis=1)
-    )
+    assert_eq(np.append(x, ((0,) * 10,) * 10, axis=0), da.append(a, ((0,) * 10,) * 10, axis=0))
+    assert_eq(np.append(x, ((0,) * 10,) * 10, axis=1), da.append(a, ((0,) * 10,) * 10, axis=1))
 
     # check AxisError
     with pytest.raises(AxisError):
@@ -2472,9 +2420,7 @@ def test_delete():
         da.delete(a, [2, 3, 8, 8], axis=0),
     )
     assert_eq(np.delete(x, slice(1, 4), axis=1), da.delete(a, slice(1, 4), axis=1))
-    assert_eq(
-        np.delete(x, slice(1, 10, -1), axis=1), da.delete(a, slice(1, 10, -1), axis=1)
-    )
+    assert_eq(np.delete(x, slice(1, 10, -1), axis=1), da.delete(a, slice(1, 10, -1), axis=1))
 
     assert_eq(np.delete(a, [4, 2], axis=0), da.delete(a, [4, 2], axis=0))
 
@@ -2637,18 +2583,14 @@ def test_einsum_chunksizes():
         assert_eq(np.einsum("aij,amn->ijmn", np_arr1, np_arr2), result)
 
     # regression test for GH11627
-    z = da.ones(
-        shape=(40000, 2, 10, 2, 10), dtype=np.float64, chunksize=(40000, 1, 5, 2, 10)
-    )
+    z = da.ones(shape=(40000, 2, 10, 2, 10), dtype=np.float64, chunksize=(40000, 1, 5, 2, 10))
     x = da.ones(shape=(2, 10, 10), dtype=np.float64, chunksize=(2, 10, 10))
     y = da.ones(shape=(2, 10, 10), dtype=np.float64, chunksize=(2, 10, 10))
     res = da.einsum("abcde,bfc,dfe->acef", z, x, y)
     assert res.numblocks == (1, 1, 1, 1)
 
 
-@pytest.mark.parametrize(
-    "optimize_opts", [(True, False), ("greedy", False), ("optimal", False)]
-)
+@pytest.mark.parametrize("optimize_opts", [(True, False), ("greedy", False), ("optimal", False)])
 def test_einsum_optimize(optimize_opts):
     sig = "ea,fb,abcd,gc,hd->efgh"
     input_sigs = sig.split("->")[0].split(",")
@@ -2673,9 +2615,7 @@ def test_einsum_order(order):
     input_sigs = sig.split("->")[0].split(",")
     np_inputs, da_inputs = _numpy_and_dask_inputs(input_sigs)
 
-    assert_eq(
-        np.einsum(sig, *np_inputs, order=order), da.einsum(sig, *np_inputs, order=order)
-    )
+    assert_eq(np.einsum(sig, *np_inputs, order=order), da.einsum(sig, *np_inputs, order=order))
 
 
 @pytest.mark.parametrize("casting", ["no", "equiv", "safe", "same_kind", "unsafe"])
@@ -2693,9 +2633,7 @@ def test_einsum_casting(casting):
 @pytest.mark.parametrize("split_every", [None, 2])
 def test_einsum_split_every(split_every):
     np_inputs, da_inputs = _numpy_and_dask_inputs("a")
-    assert_eq(
-        np.einsum("a", *np_inputs), da.einsum("a", *da_inputs, split_every=split_every)
-    )
+    assert_eq(np.einsum("a", *np_inputs), da.einsum("a", *da_inputs, split_every=split_every))
 
 
 def test_einsum_invalid_args():

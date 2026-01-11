@@ -58,9 +58,7 @@ class Linspace(Arange):
         return dsk
 
 
-def linspace(
-    start, stop, num=50, endpoint=True, retstep=False, chunks="auto", dtype=None
-):
+def linspace(start, stop, num=50, endpoint=True, retstep=False, chunks="auto", dtype=None):
     """
     Return `num` evenly spaced values over the closed interval [`start`,
     `stop`].

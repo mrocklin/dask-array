@@ -69,8 +69,7 @@ class Coarsen(ArrayExpr):
         axes = self.axes
         coarsen_dim = lambda dim, ax: int(dim // axes.get(ax, 1))
         return tuple(
-            tuple(coarsen_dim(bd, i) for bd in bds if coarsen_dim(bd, i) > 0)
-            for i, bds in enumerate(x.chunks)
+            tuple(coarsen_dim(bd, i) for bd in bds if coarsen_dim(bd, i) > 0) for i, bds in enumerate(x.chunks)
         )
 
     def _layer(self):

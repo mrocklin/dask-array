@@ -48,9 +48,7 @@ class RandomState:
 
     def __init__(self, seed=None, RandomState=None):
         self._numpy_state = np.random.RandomState(seed)
-        self._RandomState = (
-            array_creation_dispatch.RandomState if RandomState is None else RandomState
-        )
+        self._RandomState = array_creation_dispatch.RandomState if RandomState is None else RandomState
 
     @property
     def _backend(self):
@@ -91,17 +89,11 @@ class RandomState:
                 meta,
             ) = _choice_validate_params(self, a, size, replace, p, 0, chunks)
 
-            return new_collection(
-                RandomChoice(
-                    a_val, a_expr, chunks, meta, self._numpy_state, replace, p_expr
-                )
-            )
+            return new_collection(RandomChoice(a_val, a_expr, chunks, meta, self._numpy_state, replace, p_expr))
 
     @derived_from(np.random.RandomState, skipblocks=1)
     def exponential(self, scale=1.0, size=None, chunks="auto", **kwargs):
-        return _wrap_func(
-            self, "exponential", scale, size=size, chunks=chunks, **kwargs
-        )
+        return _wrap_func(self, "exponential", scale, size=size, chunks=chunks, **kwargs)
 
     @derived_from(np.random.RandomState, skipblocks=1)
     def f(self, dfnum, dfden, size=None, chunks="auto", **kwargs):
@@ -109,9 +101,7 @@ class RandomState:
 
     @derived_from(np.random.RandomState, skipblocks=1)
     def gamma(self, shape, scale=1.0, size=None, chunks="auto", **kwargs):
-        return _wrap_func(
-            self, "gamma", shape, scale, size=size, chunks=chunks, **kwargs
-        )
+        return _wrap_func(self, "gamma", shape, scale, size=size, chunks=chunks, **kwargs)
 
     @derived_from(np.random.RandomState, skipblocks=1)
     def geometric(self, p, size=None, chunks="auto", **kwargs):
@@ -119,9 +109,7 @@ class RandomState:
 
     @derived_from(np.random.RandomState, skipblocks=1)
     def gumbel(self, loc=0.0, scale=1.0, size=None, chunks="auto", **kwargs):
-        return _wrap_func(
-            self, "gumbel", loc, scale, size=size, chunks=chunks, **kwargs
-        )
+        return _wrap_func(self, "gumbel", loc, scale, size=size, chunks=chunks, **kwargs)
 
     @derived_from(np.random.RandomState, skipblocks=1)
     def hypergeometric(self, ngood, nbad, nsample, size=None, chunks="auto", **kwargs):
@@ -138,21 +126,15 @@ class RandomState:
 
     @derived_from(np.random.RandomState, skipblocks=1)
     def laplace(self, loc=0.0, scale=1.0, size=None, chunks="auto", **kwargs):
-        return _wrap_func(
-            self, "laplace", loc, scale, size=size, chunks=chunks, **kwargs
-        )
+        return _wrap_func(self, "laplace", loc, scale, size=size, chunks=chunks, **kwargs)
 
     @derived_from(np.random.RandomState, skipblocks=1)
     def logistic(self, loc=0.0, scale=1.0, size=None, chunks="auto", **kwargs):
-        return _wrap_func(
-            self, "logistic", loc, scale, size=size, chunks=chunks, **kwargs
-        )
+        return _wrap_func(self, "logistic", loc, scale, size=size, chunks=chunks, **kwargs)
 
     @derived_from(np.random.RandomState, skipblocks=1)
     def lognormal(self, mean=0.0, sigma=1.0, size=None, chunks="auto", **kwargs):
-        return _wrap_func(
-            self, "lognormal", mean, sigma, size=size, chunks=chunks, **kwargs
-        )
+        return _wrap_func(self, "lognormal", mean, sigma, size=size, chunks=chunks, **kwargs)
 
     @derived_from(np.random.RandomState, skipblocks=1)
     def logseries(self, p, size=None, chunks="auto", **kwargs):
@@ -173,27 +155,19 @@ class RandomState:
 
     @derived_from(np.random.RandomState, skipblocks=1)
     def negative_binomial(self, n, p, size=None, chunks="auto", **kwargs):
-        return _wrap_func(
-            self, "negative_binomial", n, p, size=size, chunks=chunks, **kwargs
-        )
+        return _wrap_func(self, "negative_binomial", n, p, size=size, chunks=chunks, **kwargs)
 
     @derived_from(np.random.RandomState, skipblocks=1)
     def noncentral_chisquare(self, df, nonc, size=None, chunks="auto", **kwargs):
-        return _wrap_func(
-            self, "noncentral_chisquare", df, nonc, size=size, chunks=chunks, **kwargs
-        )
+        return _wrap_func(self, "noncentral_chisquare", df, nonc, size=size, chunks=chunks, **kwargs)
 
     @derived_from(np.random.RandomState, skipblocks=1)
     def noncentral_f(self, dfnum, dfden, nonc, size=None, chunks="auto", **kwargs):
-        return _wrap_func(
-            self, "noncentral_f", dfnum, dfden, nonc, size=size, chunks=chunks, **kwargs
-        )
+        return _wrap_func(self, "noncentral_f", dfnum, dfden, nonc, size=size, chunks=chunks, **kwargs)
 
     @derived_from(np.random.RandomState, skipblocks=1)
     def normal(self, loc=0.0, scale=1.0, size=None, chunks="auto", **kwargs):
-        return _wrap_func(
-            self, "normal", loc, scale, size=size, chunks=chunks, **kwargs
-        )
+        return _wrap_func(self, "normal", loc, scale, size=size, chunks=chunks, **kwargs)
 
     @derived_from(np.random.RandomState, skipblocks=1)
     def pareto(self, a, size=None, chunks="auto", **kwargs):
@@ -220,15 +194,11 @@ class RandomState:
 
     @derived_from(np.random.RandomState, skipblocks=1)
     def randint(self, low, high=None, size=None, chunks="auto", dtype="l", **kwargs):
-        return _wrap_func(
-            self, "randint", low, high, size=size, chunks=chunks, dtype=dtype, **kwargs
-        )
+        return _wrap_func(self, "randint", low, high, size=size, chunks=chunks, dtype=dtype, **kwargs)
 
     @derived_from(np.random.RandomState, skipblocks=1)
     def random_integers(self, low, high=None, size=None, chunks="auto", **kwargs):
-        return _wrap_func(
-            self, "random_integers", low, high, size=size, chunks=chunks, **kwargs
-        )
+        return _wrap_func(self, "random_integers", low, high, size=size, chunks=chunks, **kwargs)
 
     @derived_from(np.random.RandomState, skipblocks=1)
     def random_sample(self, size=None, chunks="auto", **kwargs):
@@ -246,15 +216,11 @@ class RandomState:
 
     @derived_from(np.random.RandomState, skipblocks=1)
     def standard_exponential(self, size=None, chunks="auto", **kwargs):
-        return _wrap_func(
-            self, "standard_exponential", size=size, chunks=chunks, **kwargs
-        )
+        return _wrap_func(self, "standard_exponential", size=size, chunks=chunks, **kwargs)
 
     @derived_from(np.random.RandomState, skipblocks=1)
     def standard_gamma(self, shape, size=None, chunks="auto", **kwargs):
-        return _wrap_func(
-            self, "standard_gamma", shape, size=size, chunks=chunks, **kwargs
-        )
+        return _wrap_func(self, "standard_gamma", shape, size=size, chunks=chunks, **kwargs)
 
     @derived_from(np.random.RandomState, skipblocks=1)
     def standard_normal(self, size=None, chunks="auto", **kwargs):
@@ -270,21 +236,15 @@ class RandomState:
 
     @derived_from(np.random.RandomState, skipblocks=1)
     def triangular(self, left, mode, right, size=None, chunks="auto", **kwargs):
-        return _wrap_func(
-            self, "triangular", left, mode, right, size=size, chunks=chunks, **kwargs
-        )
+        return _wrap_func(self, "triangular", left, mode, right, size=size, chunks=chunks, **kwargs)
 
     @derived_from(np.random.RandomState, skipblocks=1)
     def uniform(self, low=0.0, high=1.0, size=None, chunks="auto", **kwargs):
-        return _wrap_func(
-            self, "uniform", low, high, size=size, chunks=chunks, **kwargs
-        )
+        return _wrap_func(self, "uniform", low, high, size=size, chunks=chunks, **kwargs)
 
     @derived_from(np.random.RandomState, skipblocks=1)
     def vonmises(self, mu, kappa, size=None, chunks="auto", **kwargs):
-        return _wrap_func(
-            self, "vonmises", mu, kappa, size=size, chunks=chunks, **kwargs
-        )
+        return _wrap_func(self, "vonmises", mu, kappa, size=size, chunks=chunks, **kwargs)
 
     @derived_from(np.random.RandomState, skipblocks=1)
     def wald(self, mean, scale, size=None, chunks="auto", **kwargs):

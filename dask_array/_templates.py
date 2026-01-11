@@ -26,6 +26,4 @@ def get_template(name: str) -> Template:
     try:
         return environment.get_template(name)
     except TemplateNotFound as e:
-        raise TemplateNotFound(
-            f"Unable to find {name} in {TEMPLATE_PATH}"
-        ) from e
+        raise TemplateNotFound(f"Unable to find {name} in {TEMPLATE_PATH}") from e

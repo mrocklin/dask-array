@@ -220,9 +220,7 @@ def test_slice_through_shuffle_on_shuffle_axis():
 
     # Expected: input sliced to [20:40], indexer adjusted
     adjusted_indexer = [[i] for i in range(20)]
-    expected = new_collection(
-        _shuffle(x[20:40, :].expr, adjusted_indexer, axis=0, name="shuffle")
-    )
+    expected = new_collection(_shuffle(x[20:40, :].expr, adjusted_indexer, axis=0, name="shuffle"))
 
     assert result.expr.simplify()._name == expected.expr.simplify()._name
     assert_eq(result, arr[20:40, :])

@@ -86,10 +86,7 @@ class Blocks(ArrayExpr):
     @functools.cached_property
     def chunks(self):
         """Compute chunks by selecting from the source array's chunks."""
-        return tuple(
-            tuple(np.array(c)[idx].tolist())
-            for c, idx in zip(self.array.chunks, self.index)
-        )
+        return tuple(tuple(np.array(c)[idx].tolist()) for c, idx in zip(self.array.chunks, self.index))
 
     def _layer(self) -> dict:
         """Generate the task graph layer.
@@ -97,9 +94,7 @@ class Blocks(ArrayExpr):
         Each output block is an alias to the corresponding input block.
         """
         # Pre-compute index mappings for each dimension
-        index_maps = [
-            np.arange(n)[idx] for n, idx in zip(self.array.numblocks, self.index)
-        ]
+        index_maps = [np.arange(n)[idx] for n, idx in zip(self.array.numblocks, self.index)]
 
         dsk = {}
         for out_key in product(*(range(len(c)) for c in self.chunks)):

@@ -5,6 +5,7 @@ import pytest
 import dask_array as da
 from dask_array._test_utils import assert_eq
 
+
 def test_transpose_integer_slice_2d():
     """x.T[0] should optimize to x[:, 0] (transpose eliminated)."""
     x = da.ones((3, 4), chunks=2)
@@ -112,18 +113,14 @@ def test_transpose_slice_task_count():
     opt_graph = dict(opt_result.__dask_graph__())
 
     # Optimized should have fewer tasks (no transpose layer)
-    assert len(opt_graph) < len(
-        unopt_graph
-    ), f"Optimized graph should be smaller: {len(opt_graph)} vs {len(unopt_graph)}"
+    assert len(opt_graph) < len(unopt_graph), (
+        f"Optimized graph should be smaller: {len(opt_graph)} vs {len(unopt_graph)}"
+    )
 
     # Specifically: unoptimized has ones(6) + transpose(6) + getitem(2) = 14
     # Optimized has ones(6) + getitem(2) = 8 (transpose eliminated)
-    assert (
-        len(opt_graph) == 8
-    ), f"Expected 8 tasks (6 ones + 2 getitem), got {len(opt_graph)}"
-    assert (
-        len(unopt_graph) == 14
-    ), f"Expected 14 unoptimized tasks, got {len(unopt_graph)}"
+    assert len(opt_graph) == 8, f"Expected 8 tasks (6 ones + 2 getitem), got {len(opt_graph)}"
+    assert len(unopt_graph) == 14, f"Expected 14 unoptimized tasks, got {len(unopt_graph)}"
 
 
 # --- Transpose through Elemwise Tests ---

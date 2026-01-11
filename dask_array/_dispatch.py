@@ -107,9 +107,7 @@ def _numel(x, **kwargs):
 
     prod = math.prod(shape[dim] for dim in axis)
     if keepdims is True:
-        new_shape = tuple(
-            shape[dim] if dim not in axis else 1 for dim in range(len(shape))
-        )
+        new_shape = tuple(shape[dim] if dim not in axis else 1 for dim in range(len(shape)))
     else:
         new_shape = tuple(shape[dim] for dim in range(len(shape)) if dim not in axis)
 

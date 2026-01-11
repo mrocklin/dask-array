@@ -108,9 +108,7 @@ def gradient(f, *varargs, axis=None, **kwargs):
     if len(varargs) == 1:
         varargs = len(axis) * varargs
     if len(varargs) != len(axis):
-        raise TypeError(
-            "Spacing must either be a single scalar, or a scalar / 1d-array per axis"
-        )
+        raise TypeError("Spacing must either be a single scalar, or a scalar / 1d-array per axis")
 
     if issubclass(f.dtype.type, (np.bool_, Integral)):
         f = f.astype(float)

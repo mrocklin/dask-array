@@ -28,9 +28,7 @@ class BroadcastTrick(ArrayExpr):
 
     @functools.cached_property
     def _meta(self):
-        return meta_from_array(
-            self.operand("meta"), ndim=self.ndim, dtype=self.operand("dtype")
-        )
+        return meta_from_array(self.operand("meta"), ndim=self.ndim, dtype=self.operand("dtype"))
 
     @functools.cached_property
     def _wrapped_func(self):
@@ -185,10 +183,7 @@ def wrap_func_shape_as_first_arg(*args, klass, **kwargs):
         shape = kwargs.pop("shape")
 
     if isinstance(shape, ArrayExpr):
-        raise TypeError(
-            "Dask array input not supported. "
-            "Please use tuple, list, or a 1D numpy array instead."
-        )
+        raise TypeError("Dask array input not supported. Please use tuple, list, or a 1D numpy array instead.")
 
     name = kwargs.pop("name", None)
     parsed = _parse_wrap_args(klass.func, args, kwargs, shape)
@@ -390,9 +385,7 @@ def full(shape, fill_value, *args, **kwargs):
     # np.isscalar has somewhat strange behavior:
     # https://docs.scipy.org/doc/numpy/reference/generated/numpy.isscalar.html
     if np.ndim(fill_value) != 0:
-        raise ValueError(
-            f"fill_value must be scalar. Received {type(fill_value).__name__} instead."
-        )
+        raise ValueError(f"fill_value must be scalar. Received {type(fill_value).__name__} instead.")
     if kwargs.get("dtype") is None:
         if hasattr(fill_value, "dtype"):
             kwargs["dtype"] = fill_value.dtype

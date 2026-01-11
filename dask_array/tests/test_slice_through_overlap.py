@@ -13,6 +13,7 @@ import pytest
 import dask_array as da
 from dask_array._test_utils import assert_eq
 
+
 def add_neighbors(x):
     """Add neighboring values along axis 0. Uses overlap data."""
     result = x.copy()
@@ -51,9 +52,7 @@ def test_slice_through_overlap_middle_slice():
 
     # Middle slice on axis 1 (no overlap)
     sliced = result[:, 30:70]
-    expected = x[:, 30:70].map_overlap(
-        add_neighbors, depth={0: 2, 1: 0}, boundary="none"
-    )
+    expected = x[:, 30:70].map_overlap(add_neighbors, depth={0: 2, 1: 0}, boundary="none")
 
     assert sliced.expr.simplify()._name == expected.expr.simplify()._name
 
@@ -87,9 +86,7 @@ def test_slice_on_overlap_axis_pushes_with_padding():
     # Slice on axis 0 (has overlap) - should push through with padded input
     # [:50] with depth=2 needs input [:52], then trim to [:50]
     sliced = result[:50, :]
-    expected = x[:52, :].map_overlap(
-        add_neighbors, depth={0: 2, 1: 0}, boundary="none"
-    )[:50, :]
+    expected = x[:52, :].map_overlap(add_neighbors, depth={0: 2, 1: 0}, boundary="none")[:50, :]
 
     assert sliced.expr.simplify()._name == expected.expr.simplify()._name
 
@@ -104,9 +101,7 @@ def test_slice_on_both_axes_one_has_overlap():
 
     # Axis 1 has no overlap: slice pushes directly
     # Axis 0 has depth=2: need padded input [:52], then trim to [:50]
-    expected = x[:52, :50].map_overlap(
-        add_neighbors, depth={0: 2, 1: 0}, boundary="none"
-    )[:50, :]
+    expected = x[:52, :50].map_overlap(add_neighbors, depth={0: 2, 1: 0}, boundary="none")[:50, :]
 
     assert sliced.expr.simplify()._name == expected.expr.simplify()._name
 
@@ -135,9 +130,7 @@ def test_slice_through_2d_overlap():
 
     # Slice on axis 1 with depth=1 needs input [:, :41], then trim to [:, :40]
     sliced = result[:, :40]
-    expected = x[:, :41].map_overlap(
-        add_neighbors_2d, depth={0: 1, 1: 1}, boundary="none"
-    )[:, :40]
+    expected = x[:, :41].map_overlap(add_neighbors_2d, depth={0: 1, 1: 1}, boundary="none")[:, :40]
 
     assert sliced.expr.simplify()._name == expected.expr.simplify()._name
 
@@ -152,9 +145,7 @@ def test_slice_through_2d_overlap_middle():
 
     # Middle slice on axis 1 (no overlap)
     sliced = result[:, 25:75]
-    expected = x[:, 25:75].map_overlap(
-        add_neighbors, depth={0: 2, 1: 0}, boundary="none"
-    )
+    expected = x[:, 25:75].map_overlap(add_neighbors, depth={0: 2, 1: 0}, boundary="none")
 
     assert sliced.expr.simplify()._name == expected.expr.simplify()._name
 
@@ -169,9 +160,7 @@ def test_slice_through_1d_overlap_on_3d_array():
 
     # Slice on axes 1 and 2 (neither has overlap)
     sliced = result[:, :3, :3]
-    expected = x[:, :3, :3].map_overlap(
-        add_neighbors, depth={0: 1, 1: 0, 2: 0}, boundary="none"
-    )
+    expected = x[:, :3, :3].map_overlap(add_neighbors, depth={0: 1, 1: 0, 2: 0}, boundary="none")
 
     assert sliced.expr.simplify()._name == expected.expr.simplify()._name
 
@@ -191,9 +180,7 @@ def test_slice_through_asymmetric_overlap():
 
     # Slice on axis 1 (no overlap)
     sliced = result[:, 2:6]
-    expected = x[:, 2:6].map_overlap(
-        add_neighbors, depth={0: (2, 1), 1: 0}, boundary="none"
-    )
+    expected = x[:, 2:6].map_overlap(add_neighbors, depth={0: (2, 1), 1: 0}, boundary="none")
 
     assert sliced.expr.simplify()._name == expected.expr.simplify()._name
 
@@ -208,9 +195,7 @@ def test_slice_on_asymmetric_overlap_axis_pushes():
     # Slice axis 0 with asymmetric depth (2, 1) - needs extra 1 on right
     # [:50] needs input [:51], then trim to [:50]
     sliced = result[:50, :]
-    expected = x[:51, :].map_overlap(
-        add_neighbors, depth={0: (2, 1), 1: 0}, boundary="none"
-    )[:50, :]
+    expected = x[:51, :].map_overlap(add_neighbors, depth={0: (2, 1), 1: 0}, boundary="none")[:50, :]
 
     assert sliced.expr.simplify()._name == expected.expr.simplify()._name
 
@@ -322,9 +307,7 @@ def test_map_overlap_no_trim_slice_pushes():
 
     # Slice on axis 1 (no overlap on axis 1) - pushes directly through
     sliced = result[:, :30]
-    expected = x[:, :30].map_overlap(
-        add_neighbors, depth={0: 2}, boundary="none", trim=False
-    )
+    expected = x[:, :30].map_overlap(add_neighbors, depth={0: 2}, boundary="none", trim=False)
 
     assert sliced.expr.simplify()._name == expected.expr.simplify()._name
 

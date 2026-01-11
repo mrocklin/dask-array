@@ -41,9 +41,7 @@ def ravel_multi_index(multi_index, dims, mode="raise", order="C"):
     if np.isscalar(dims):
         dims = (dims,)
     if is_dask_collection(dims) or any(is_dask_collection(d) for d in dims):
-        raise NotImplementedError(
-            f"Dask types are not supported in the `dims` argument: {dims!r}"
-        )
+        raise NotImplementedError(f"Dask types are not supported in the `dims` argument: {dims!r}")
 
     if hasattr(multi_index, "ndim") and multi_index.ndim > 0:
         # It's an array-like
@@ -53,9 +51,7 @@ def ravel_multi_index(multi_index, dims, mode="raise", order="C"):
         index_stack = stack(multi_index_arrs)
 
     if not np.isnan(index_stack.shape).any() and len(index_stack) != len(dims):
-        raise ValueError(
-            f"parameter multi_index must be a sequence of length {len(dims)}"
-        )
+        raise ValueError(f"parameter multi_index must be a sequence of length {len(dims)}")
     if not np.issubdtype(index_stack.dtype, np.signedinteger):
         raise TypeError("only int indices permitted")
     return index_stack.map_blocks(

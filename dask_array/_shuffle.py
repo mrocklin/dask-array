@@ -18,9 +18,7 @@ from dask_array._dispatch import concatenate_lookup, take_lookup
 from dask.base import tokenize
 
 
-def _calculate_new_chunksizes(
-    input_chunks, new_chunks, changeable_dimensions: set, maximum_chunk: int
-):
+def _calculate_new_chunksizes(input_chunks, new_chunks, changeable_dimensions: set, maximum_chunk: int):
     chunksize_tolerance = config.get("array.chunk-size-tolerance")
     maximum_chunk = max(maximum_chunk, 1)
 
@@ -37,9 +35,7 @@ def _calculate_new_chunksizes(
             # calculate what the max chunk size in this dimension is and split every
             # chunk that is larger than that. We split the increase factor evenly
             # between all dimensions that are not shuffled.
-            up_chunksize_limit_for_dim = max(new_chunks[i]) / (
-                chunksize_inc_factor ** (1 / n_changeable_dimensions)
-            )
+            up_chunksize_limit_for_dim = max(new_chunks[i]) / (chunksize_inc_factor ** (1 / n_changeable_dimensions))
             for c in input_chunks[i]:
                 if c > chunksize_tolerance * up_chunksize_limit_for_dim:
                     factor = math.ceil(c / up_chunksize_limit_for_dim)
@@ -80,9 +76,7 @@ def _rechunk_other_dimensions(x, longest_group: int, axis: int, chunks: Literal[
     # How large is the largest chunk in the input
     maximum_chunk = reduce(mul, map(max, x.chunks))
 
-    new_chunks = _calculate_new_chunksizes(
-        x.chunks, new_chunks, changeable_dimensions, maximum_chunk
-    )
+    new_chunks = _calculate_new_chunksizes(x.chunks, new_chunks, changeable_dimensions, maximum_chunk)
     new_chunks[axis] = x.chunks[axis]
     return x.rechunk(tuple(new_chunks))
 
@@ -92,14 +86,10 @@ def _validate_indexer(chunks, indexer, axis):
         raise ValueError("indexer must be a list of lists of positional indices")
 
     if not axis <= len(chunks):
-        raise ValueError(
-            f"Axis {axis} is out of bounds for array with {len(chunks)} axes"
-        )
+        raise ValueError(f"Axis {axis} is out of bounds for array with {len(chunks)} axes")
 
     if max(map(max, indexer)) >= sum(chunks[axis]):
-        raise IndexError(
-            f"Indexer contains out of bounds index. Dimension only has {sum(chunks[axis])} elements."
-        )
+        raise IndexError(f"Indexer contains out of bounds index. Dimension only has {sum(chunks[axis])} elements.")
 
 
 def shuffle(x, indexer: list[list[int]], axis: int, chunks: Literal["auto"] = "auto"):
@@ -161,9 +151,7 @@ def shuffle(x, indexer: list[list[int]], axis: int, chunks: Literal["auto"] = "a
     if np.isnan(x.shape).any():
         from dask_array._core_utils import unknown_chunk_message
 
-        raise ValueError(
-            f"Shuffling only allowed with known chunk sizes. {unknown_chunk_message}"
-        )
+        raise ValueError(f"Shuffling only allowed with known chunk sizes. {unknown_chunk_message}")
     assert isinstance(axis, int), "axis must be an integer"
     _validate_indexer(x.chunks, indexer, axis)
 
@@ -347,9 +335,7 @@ class Shuffle(ArrayExpr):
         chunk_boundaries = np.cumsum(chunks[axis])
 
         # Get existing chunk tuple locations
-        chunk_tuples = list(
-            product(*(range(len(c)) for i, c in enumerate(chunks) if i != axis))
-        )
+        chunk_tuples = list(product(*(range(len(c)) for i, c in enumerate(chunks) if i != axis)))
 
         intermediates: dict = dict()
         merges: dict = dict()
@@ -361,8 +347,7 @@ class Shuffle(ArrayExpr):
         taker_name = "shuffle-taker-"
 
         old_blocks = {
-            old_index: (self.array._name,) + old_index
-            for old_index in np.ndindex(tuple([len(c) for c in chunks]))
+            old_index: (self.array._name,) + old_index for old_index in np.ndindex(tuple([len(c) for c in chunks]))
         }
 
         for new_chunk_idx, new_chunk_taker in enumerate(self._new_chunks):
@@ -384,9 +369,7 @@ class Shuffle(ArrayExpr):
             for chunk_tuple in chunk_tuples:
                 merge_keys = []
 
-                for c, b_start, b_end in zip(
-                    source_chunk_nr, taker_boundary[:-1], taker_boundary[1:]
-                ):
+                for c, b_start, b_end in zip(source_chunk_nr, taker_boundary[:-1], taker_boundary[1:]):
                     # insert our axis chunk id into the chunk_tuple
                     chunk_key = convert_key(chunk_tuple, c, axis)
                     name = (split_name, next(split_name_suffixes))
@@ -398,17 +381,14 @@ class Shuffle(ArrayExpr):
                         taker_key = taker_cache[c]
                     else:
                         this_slice[axis] = (
-                            sorted_array[b_start:b_end]
-                            - (chunk_boundaries[c - 1] if c > 0 else 0)
+                            sorted_array[b_start:b_end] - (chunk_boundaries[c - 1] if c > 0 else 0)
                         ).astype(dtype)
                         if len(source_chunk_nr) == 1:
                             this_slice[axis] = this_slice[axis][np.argsort(sorter)]
 
                         taker_key = taker_name + tokenize(this_slice)
                         # low level fusion can't deal with arrays on first position
-                        intermediates[taker_key] = DataNode(
-                            taker_key, (1, tuple(this_slice))
-                        )
+                        intermediates[taker_key] = DataNode(taker_key, (1, tuple(this_slice)))
                         taker_cache[c] = taker_key
 
                     intermediates[name] = Task(

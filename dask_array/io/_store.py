@@ -211,9 +211,7 @@ def store(
         raise ValueError("All sources must be dask array objects")
 
     if len(sources) != len(targets):
-        raise ValueError(
-            f"Different number of sources [{len(sources)}] and targets [{len(targets)}]"
-        )
+        raise ValueError(f"Different number of sources [{len(sources)}] and targets [{len(targets)}]")
 
     if isinstance(regions, tuple) or regions is None:
         regions_list = [regions] * len(sources)

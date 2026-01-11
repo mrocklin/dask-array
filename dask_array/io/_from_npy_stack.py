@@ -44,10 +44,7 @@ class FromNpyStack(IO):
         axis = info["axis"]
 
         keys = list(product([self._name], *[range(len(c)) for c in chunks]))
-        values = [
-            (np.load, os.path.join(dirname, f"{i}.npy"), mmap_mode)
-            for i in range(len(chunks[axis]))
-        ]
+        values = [(np.load, os.path.join(dirname, f"{i}.npy"), mmap_mode) for i in range(len(chunks[axis]))]
         return dict(zip(keys, values))
 
 

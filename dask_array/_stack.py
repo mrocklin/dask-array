@@ -29,11 +29,7 @@ class Stack(ArrayExpr):
     @functools.cached_property
     def chunks(self):
         n = len(self.args)
-        return (
-            self.array.chunks[: self.axis]
-            + ((1,) * n,)
-            + self.array.chunks[self.axis :]
-        )
+        return self.array.chunks[: self.axis] + ((1,) * n,) + self.array.chunks[self.axis :]
 
     @functools.cached_property
     def _name(self):
@@ -45,18 +41,13 @@ class Stack(ArrayExpr):
         axis = self.axis
         ndim = self._meta.ndim - 1
 
-        inputs = [
-            (names[key[axis + 1]],) + key[1 : axis + 1] + key[axis + 2 :]
-            for key in keys
-        ]
+        inputs = [(names[key[axis + 1]],) + key[1 : axis + 1] + key[axis + 2 :] for key in keys]
         values = [
             Task(
                 key,
                 getitem,
                 TaskRef(inp),
-                (slice(None, None, None),) * axis
-                + (None,)
-                + (slice(None, None, None),) * (ndim - axis),
+                (slice(None, None, None),) * axis + (None,) + (slice(None, None, None),) * (ndim - axis),
             )
             for key, inp in zip(keys, inputs)
         ]
@@ -169,9 +160,7 @@ class Stack(ArrayExpr):
                 sliced_arrays.append(arr)
 
         # Compute new meta for the resulting stack
-        new_meta = np.stack(
-            [meta_from_array(new_collection(a)) for a in sliced_arrays], axis=axis
-        )
+        new_meta = np.stack([meta_from_array(new_collection(a)) for a in sliced_arrays], axis=axis)
 
         # Create new Stack with selected/sliced arrays
         return type(self)(
@@ -250,12 +239,7 @@ def stack(seq, axis=0, allow_unknown_chunksizes=False):
     if axis < 0:
         axis = ndim + axis + 1
     shape = tuple(
-        (
-            len(seq)
-            if i == axis
-            else (seq[0].shape[i] if i < axis else seq[0].shape[i - 1])
-        )
-        for i in range(meta.ndim)
+        (len(seq) if i == axis else (seq[0].shape[i] if i < axis else seq[0].shape[i - 1])) for i in range(meta.ndim)
     )
 
     seq2 = [a for a in seq if a.size]

@@ -17,6 +17,7 @@ import pytest
 import dask_array as da
 from dask_array._test_utils import assert_eq
 
+
 def test_coarse_slice_simple():
     """Slice selecting first output block only needs first input block.
 
@@ -85,9 +86,7 @@ def test_coarse_slice_partial_block():
     # Block 1 output is [20:40], block 2 output is [40:60]
     # We want [30:50], relative to start of block 1 (offset 20) = [10:30]
     coarse_input = x[10:30]  # input blocks 1-2
-    coarse_output = da.map_blocks(
-        double_elements, coarse_input, chunks=(20,), dtype=arr.dtype
-    )
+    coarse_output = da.map_blocks(double_elements, coarse_input, chunks=(20,), dtype=arr.dtype)
     expected = coarse_output[10:30]
 
     assert result.expr.simplify()._name == expected.expr.simplify()._name
@@ -134,9 +133,7 @@ def test_coarse_optimization_reduces_tasks():
     # With coarse optimization: ~10 input blocks + ~10 map_blocks + getitem overhead
     # Without optimization: 100 + 100 + slice
     # Should see significant reduction
-    assert (
-        sliced_tasks < full_tasks / 3
-    ), f"Expected significant task reduction: {sliced_tasks} < {full_tasks / 3}"
+    assert sliced_tasks < full_tasks / 3, f"Expected significant task reduction: {sliced_tasks} < {full_tasks / 3}"
 
 
 def test_coarse_slice_multi_input():

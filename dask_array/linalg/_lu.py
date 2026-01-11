@@ -103,9 +103,7 @@ class LU(ArrayExpr):
                             TaskRef((name_u, p, j)),
                         )
                         prevs.append(TaskRef(prev))
-                    target_h = Task(
-                        None, operator.sub, target_h, Task(None, sum, List(*prevs))
-                    )
+                    target_h = Task(None, operator.sub, target_h, Task(None, sum, List(*prevs)))
                 dsk[(name_lu, i, j)] = Task(
                     (name_lu, i, j),
                     _solve_triangular_lower,
@@ -126,9 +124,7 @@ class LU(ArrayExpr):
                             TaskRef((name_u, p, i)),
                         )
                         prevs.append(TaskRef(prev))
-                    target_v = Task(
-                        None, operator.sub, target_v, Task(None, sum, List(*prevs))
-                    )
+                    target_v = Task(None, operator.sub, target_v, Task(None, sum, List(*prevs)))
                 dsk[(name_lu, k, i)] = Task(
                     (name_lu, k, i),
                     np.transpose,

@@ -177,10 +177,7 @@ def reduction(
         try:
             wgt = broadcast_to(wgt, x.shape)
         except ValueError:
-            raise ValueError(
-                f"Weights with shape {wgt.shape} are not broadcastable "
-                f"to x with shape {x.shape}"
-            )
+            raise ValueError(f"Weights with shape {wgt.shape} are not broadcastable to x with shape {x.shape}")
 
         args += (wgt.expr, inds)
 
@@ -199,13 +196,9 @@ def reduction(
     )
     if meta is None and hasattr(x, "_meta"):
         try:
-            reduced_meta = compute_meta(
-                chunk, x.dtype, x._meta, axis=axis, keepdims=True, computing_meta=True
-            )
+            reduced_meta = compute_meta(chunk, x.dtype, x._meta, axis=axis, keepdims=True, computing_meta=True)
         except TypeError:
-            reduced_meta = compute_meta(
-                chunk, x.dtype, x._meta, axis=axis, keepdims=True
-            )
+            reduced_meta = compute_meta(chunk, x.dtype, x._meta, axis=axis, keepdims=True)
         except ValueError:
             reduced_meta = None
     else:
@@ -227,9 +220,7 @@ def reduction(
     if keepdims and output_size != 1:
         from dask_array._expr import ChunksOverride
 
-        final_chunks = tuple(
-            (output_size,) if i in axis else c for i, c in enumerate(result.chunks)
-        )
+        final_chunks = tuple((output_size,) if i in axis else c for i, c in enumerate(result.chunks))
         result = new_collection(ChunksOverride(result.expr, final_chunks))
 
     # Handle out= parameter
@@ -327,11 +318,7 @@ class PartialReduce(ArrayExpr):
 
     @cached_property
     def _name(self):
-        return (
-            (self.operand("name") or funcname(self.func))
-            + "-"
-            + self.deterministic_token
-        )
+        return (self.operand("name") or funcname(self.func)) + "-" + self.deterministic_token
 
     @cached_property
     def dtype(self):
@@ -343,11 +330,7 @@ class PartialReduce(ArrayExpr):
     @cached_property
     def chunks(self):
         chunks = [
-            (
-                tuple(1 for p in partition_all(self.split_every[i], c))
-                if i in self.split_every
-                else c
-            )
+            (tuple(1 for p in partition_all(self.split_every[i], c)) if i in self.split_every else c)
             for (i, c) in enumerate(self.array.chunks)
         ]
 
@@ -359,10 +342,7 @@ class PartialReduce(ArrayExpr):
 
     def _layer(self):
         x = self.array
-        parts = [
-            list(partition_all(self.split_every.get(i, 1), range(n)))
-            for (i, n) in enumerate(x.numblocks)
-        ]
+        parts = [list(partition_all(self.split_every.get(i, 1), range(n))) for (i, n) in enumerate(x.numblocks)]
         keys = product(*map(range, map(len, parts)))
         if not self.keepdims:
             out_axis = [i for i in range(x.ndim) if i not in self.split_every]
@@ -370,11 +350,7 @@ class PartialReduce(ArrayExpr):
             keys = map(getter, keys)
         dsk = {}
         for k, p in zip(keys, product(*parts)):
-            free = {
-                i: j[0]
-                for (i, j) in enumerate(p)
-                if len(j) == 1 and i not in self.split_every
-            }
+            free = {i: j[0] for (i, j) in enumerate(p) if len(j) == 1 and i not in self.split_every}
             dummy = dict(i for i in enumerate(p) if i[0] in self.split_every)
             g = lol_tuples((x.name,), range(x.ndim), free, dummy)
             dsk[(self._name,) + k] = (self.func, g)
@@ -384,9 +360,7 @@ class PartialReduce(ArrayExpr):
     @property
     def _meta(self):
         meta = self.array._meta
-        original_dtype = getattr(self.reduced_meta, "dtype", None) or getattr(
-            meta, "dtype", None
-        )
+        original_dtype = getattr(self.reduced_meta, "dtype", None) or getattr(meta, "dtype", None)
 
         if self.reduced_meta is not None:
             try:
@@ -488,10 +462,7 @@ class PartialReduce(ArrayExpr):
             full_index = index + (slice(None),) * (output_ndim - len(index))
 
         # Convert integers to size-1 slices to preserve dimensions
-        slice_index = tuple(
-            slice(idx, idx + 1) if isinstance(idx, Integral) else idx
-            for idx in full_index
-        )
+        slice_index = tuple(slice(idx, idx + 1) if isinstance(idx, Integral) else idx for idx in full_index)
         has_integers = any(isinstance(idx, Integral) for idx in full_index)
 
         # Build input index mapping output axes to input axes
@@ -531,12 +502,8 @@ class PartialReduce(ArrayExpr):
         if has_integers:
             from dask_array.slicing import SliceSlicesIntegers
 
-            extract_index = tuple(
-                0 if isinstance(idx, Integral) else slice(None) for idx in full_index
-            )
-            return SliceSlicesIntegers(
-                result, extract_index, slice_expr.allow_getitem_optimization
-            )
+            extract_index = tuple(0 if isinstance(idx, Integral) else slice(None) for idx in full_index)
+            return SliceSlicesIntegers(result, extract_index, slice_expr.allow_getitem_optimization)
 
         return result
 

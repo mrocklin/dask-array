@@ -7,7 +7,6 @@ imports from dask.array.* modules.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from functools import partial
 from numbers import Number
 
 import numpy as np
@@ -52,9 +51,7 @@ def _parse_wrap_args(func, args, kwargs, shape):
 
     chunks = normalize_chunks(chunks, shape, dtype=dtype)
 
-    name = name or funcname(func) + "-" + tokenize(
-        func, shape, chunks, dtype, args, kwargs
-    )
+    name = name or funcname(func) + "-" + tokenize(func, shape, chunks, dtype, args, kwargs)
 
     return {
         "shape": shape,
@@ -141,17 +138,9 @@ def expand_pad_value(array, pad_value):
     """
     if isinstance(pad_value, Number) or getattr(pad_value, "ndim", None) == 0:
         pad_value = array.ndim * ((pad_value, pad_value),)
-    elif (
-        isinstance(pad_value, Sequence)
-        and all(isinstance(pw, Number) for pw in pad_value)
-        and len(pad_value) == 1
-    ):
+    elif isinstance(pad_value, Sequence) and all(isinstance(pw, Number) for pw in pad_value) and len(pad_value) == 1:
         pad_value = array.ndim * ((pad_value[0], pad_value[0]),)
-    elif (
-        isinstance(pad_value, Sequence)
-        and len(pad_value) == 2
-        and all(isinstance(pw, Number) for pw in pad_value)
-    ):
+    elif isinstance(pad_value, Sequence) and len(pad_value) == 2 and all(isinstance(pw, Number) for pw in pad_value):
         pad_value = array.ndim * (tuple(pad_value),)
     elif (
         isinstance(pad_value, Sequence)
@@ -205,9 +194,7 @@ def get_pad_shapes_chunks(array, pad_width, axes, mode):
             if mode != "constant" or pad_width[d][i] == 0:
                 pad_chunks[i][d] = (pad_width[d][i],)
             else:
-                pad_chunks[i][d] = normalize_chunks(
-                    (max(pad_chunks[i][d]),), (pad_width[d][i],)
-                )[0]
+                pad_chunks[i][d] = normalize_chunks((max(pad_chunks[i][d]),), (pad_width[d][i],))[0]
 
     pad_shapes = [tuple(s) for s in pad_shapes]
     pad_chunks = [tuple(c) for c in pad_chunks]

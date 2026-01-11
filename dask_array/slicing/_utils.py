@@ -6,7 +6,6 @@ These are local copies to reduce dependency on dask.array.slicing.
 from __future__ import annotations
 
 import bisect
-import functools
 import math
 import warnings
 from numbers import Integral, Number
@@ -178,9 +177,7 @@ def replace_ellipsis(n, index):
     else:
         loc = isellipsis[0]
     extra_dimensions = n - (len(index) - sum(i is None for i in index) - 1)
-    return (
-        index[:loc] + (slice(None, None, None),) * extra_dimensions + index[loc + 1 :]
-    )
+    return index[:loc] + (slice(None, None, None),) * extra_dimensions + index[loc + 1 :]
 
 
 # ============================================================================
@@ -315,22 +312,17 @@ def check_index(axis, ind, dimension):
         if ind.dtype == bool:
             if ind.size != dimension:
                 raise IndexError(
-                    f"Boolean array with size {ind.size} is not long enough "
-                    f"for axis {axis} with size {dimension}"
+                    f"Boolean array with size {ind.size} is not long enough for axis {axis} with size {dimension}"
                 )
         elif (ind >= dimension).any() or (ind < -dimension).any():
-            raise IndexError(
-                f"Index is out of bounds for axis {axis} with size {dimension}"
-            )
+            raise IndexError(f"Index is out of bounds for axis {axis} with size {dimension}")
     elif isinstance(ind, slice):
         return
     elif ind is None:
         return
 
     elif ind >= dimension or ind < -dimension:
-        raise IndexError(
-            f"Index {ind} is out of bounds for axis {axis} with size {dimension}"
-        )
+        raise IndexError(f"Index {ind} is out of bounds for axis {axis} with size {dimension}")
 
 
 # ============================================================================
@@ -529,10 +521,7 @@ def new_blockdim(dim_shape, lengths, index):
         return [len(index)]
     assert not isinstance(index, Integral)
     pairs = sorted(_slice_1d(dim_shape, lengths, index).items(), key=itemgetter(0))
-    slices = [
-        slice(0, lengths[i], 1) if slc == slice(None, None, None) else slc
-        for i, slc in pairs
-    ]
+    slices = [slice(0, lengths[i], 1) if slc == slice(None, None, None) else slc for i, slc in pairs]
     if isinstance(index, slice) and index.step and index.step < 0:
         slices.reverse()
     return [int(math.ceil((1.0 * slc.stop - slc.start) / slc.step)) for slc in slices]
@@ -685,15 +674,11 @@ def parse_assignment_indices(indices, shape):
     # numpy or dask array.
     for index in indices:
         if index is True or index is False:
-            raise NotImplementedError(
-                "dask does not yet implement assignment to a scalar "
-                f"boolean index: {index!r}"
-            )
+            raise NotImplementedError(f"dask does not yet implement assignment to a scalar boolean index: {index!r}")
 
         if (is_arraylike(index) or is_dask_collection(index)) and not index.ndim:
             raise NotImplementedError(
-                "dask does not yet implement assignment to a scalar "
-                f"numpy or dask array index: {index!r}"
+                f"dask does not yet implement assignment to a scalar numpy or dask array index: {index!r}"
             )
 
     # Initialize output variables
@@ -761,17 +746,10 @@ def parse_assignment_indices(indices, shape):
                 )
 
             if index.ndim != 1:
-                raise IndexError(
-                    f"Incorrect shape ({index.shape}) of integer "
-                    f"indices for dimension with size {size}"
-                )
+                raise IndexError(f"Incorrect shape ({index.shape}) of integer indices for dimension with size {size}")
 
             index_size = index.size
-            if (
-                index.dtype == bool
-                and not math.isnan(index_size)
-                and index_size != size
-            ):
+            if index.dtype == bool and not math.isnan(index_size) and index_size != size:
                 raise IndexError(
                     "boolean index did not match indexed array along "
                     f"dimension {i}; dimension is {size} but "
@@ -882,9 +860,7 @@ def setitem(x, v, indices):
     try:
         x[tuple(indices)] = v
     except ValueError as e:
-        raise ValueError(
-            "shape mismatch: value array could not be broadcast to indexing result"
-        ) from e
+        raise ValueError("shape mismatch: value array could not be broadcast to indexing result") from e
 
     return x
 

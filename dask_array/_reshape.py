@@ -62,9 +62,7 @@ def reshape_rechunk(inshape, outshape, inchunks, disallow_dimension_expansion=Fa
         elif din < dout:  # (4, 4, 4) -> (64,)
             ileft = ii - 1
             mapper_in[ii] = oi
-            while (
-                ileft >= 0 and reduce(mul, inshape[ileft : ii + 1]) < dout
-            ):  # 4 < 64, 4*4 < 64, 4*4*4 == 64
+            while ileft >= 0 and reduce(mul, inshape[ileft : ii + 1]) < dout:  # 4 < 64, 4*4 < 64, 4*4*4 == 64
                 mapper_in[ileft] = oi
                 ileft -= 1
 
@@ -77,9 +75,7 @@ def reshape_rechunk(inshape, outshape, inchunks, disallow_dimension_expansion=Fa
             if all(len(inchunks[i]) == inshape[i] for i in range(ii)):
                 for i in range(ii + 1):
                     result_inchunks[i] = inchunks[i]
-                result_outchunks[oi] = inchunks[ii] * math.prod(
-                    map(len, inchunks[ileft:ii])
-                )
+                result_outchunks[oi] = inchunks[ii] * math.prod(map(len, inchunks[ileft:ii]))
             else:
                 for i in range(ileft + 1, ii + 1):  # need single-shape dimensions
                     result_inchunks[i] = (inshape[i],)  # chunks[i] = (4,)
@@ -88,13 +84,9 @@ def reshape_rechunk(inshape, outshape, inchunks, disallow_dimension_expansion=Fa
                 result_inchunks[ileft] = expand_tuple(inchunks[ileft], chunk_reduction)
 
                 max_in_chunk = _cal_max_chunk_size(inchunks, ileft, ii)
-                result_inchunks = _smooth_chunks(
-                    ileft, ii, max_in_chunk, result_inchunks
-                )
+                result_inchunks = _smooth_chunks(ileft, ii, max_in_chunk, result_inchunks)
                 # Build cross product of result_inchunks[ileft:ii+1]
-                result_outchunks[oi] = _calc_lower_dimension_chunks(
-                    result_inchunks, ileft, ii
-                )
+                result_outchunks[oi] = _calc_lower_dimension_chunks(result_inchunks, ileft, ii)
 
             oi -= 1
             ii = ileft - 1
@@ -121,9 +113,7 @@ def reshape_rechunk(inshape, outshape, inchunks, disallow_dimension_expansion=Fa
             max_in_chunk = _cal_max_chunk_size(inchunks, ii, ii)
             result_outchunks = _smooth_chunks(oleft, oi, max_in_chunk, result_outchunks)
             # Build cross product of result_outchunks[oleft:oi+1]
-            result_inchunks[ii] = _calc_lower_dimension_chunks(
-                result_outchunks, oleft, oi
-            )
+            result_inchunks[ii] = _calc_lower_dimension_chunks(result_outchunks, oleft, oi)
             oi = oleft - 1
             ii -= 1
 
@@ -296,9 +286,7 @@ class Reshape(ArrayExpr):
     @functools.cached_property
     def _reshape_chunks(self):
         """Compute input and output chunks for reshape."""
-        inchunks, outchunks, _, _ = reshape_rechunk(
-            self.array.shape, self._shape, self.array.chunks
-        )
+        inchunks, outchunks, _, _ = reshape_rechunk(self.array.shape, self._shape, self.array.chunks)
         return inchunks, outchunks
 
     @property
@@ -359,9 +347,7 @@ class Reshape(ArrayExpr):
 
         # Pad stripped index to output ndim
         out_ndim = len(out_shape)
-        full_index = list(stripped_index) + [slice(None)] * (
-            out_ndim - len(stripped_index)
-        )
+        full_index = list(stripped_index) + [slice(None)] * (out_ndim - len(stripped_index))
 
         # Find how many leading dimensions are preserved (same size in both shapes)
         preserved_dims = 0
@@ -376,10 +362,7 @@ class Reshape(ArrayExpr):
 
         # Check if slice only affects preserved dimensions
         # (non-preserved dims must all be slice(None))
-        if any(
-            isinstance(idx, Integral) or idx != slice(None)
-            for idx in full_index[preserved_dims:]
-        ):
+        if any(isinstance(idx, Integral) or idx != slice(None) for idx in full_index[preserved_dims:]):
             return None
 
         # Build the input slice (only on preserved dims, same indices)
@@ -419,14 +402,8 @@ class Reshape(ArrayExpr):
                 # Count how many real (non-None) indices come before this position
                 real_before = sum(1 for idx in index[:pos] if idx is not None)
                 # Account for integer indices that removed dimensions
-                ints_before = sum(
-                    1
-                    for idx in stripped_index[:real_before]
-                    if isinstance(idx, Integral)
-                )
-                axes.append(
-                    pos - len([p for p in none_positions if p < pos]) - ints_before
-                )
+                ints_before = sum(1 for idx in stripped_index[:real_before] if isinstance(idx, Integral))
+                axes.append(pos - len([p for p in none_positions if p < pos]) - ints_before)
 
             return expand_dims(new_collection(result), axis=tuple(axes)).expr
 
@@ -509,8 +486,7 @@ def reshape(x, shape, merge_chunks=True, limit=None):
     # Sanity checks
     if np.isnan(sum(x.shape)):
         raise ValueError(
-            f"Array chunk size or shape is unknown. shape: {x.shape}\n\n"
-            "Possible solution with x.compute_chunk_sizes()"
+            f"Array chunk size or shape is unknown. shape: {x.shape}\n\nPossible solution with x.compute_chunk_sizes()"
         )
     if reduce(mul, shape, 1) != x.size:
         raise ValueError("total size of new array must be unchanged")
@@ -569,10 +545,7 @@ class ReshapeBlockwise(ArrayExpr):
             return list(product(*(c for c in self._chunks)))
 
         mapper_in, one_dims = self._reshape_info
-        return [
-            self._convert_to_shape(c, mapper_in, one_dims)
-            for c in product(*(c for c in self.array.chunks))
-        ]
+        return [self._convert_to_shape(c, mapper_in, one_dims) for c in product(*(c for c in self.array.chunks))]
 
     @functools.cached_property
     def chunks(self):
@@ -582,18 +555,13 @@ class ReshapeBlockwise(ArrayExpr):
             return self._chunks
 
         mapper_in, one_dims = self._reshape_info
-        nr_out_chunks = self._convert_to_shape(
-            tuple(map(len, self.array.chunks)), mapper_in, one_dims
-        )
+        nr_out_chunks = self._convert_to_shape(tuple(map(len, self.array.chunks)), mapper_in, one_dims)
 
         # Build output chunks from per-block shapes
         output_chunks = []
         ctr = 1
         for i, nr_chunks_dim in enumerate(reversed(nr_out_chunks)):
-            dim_chunks = [
-                self._out_shapes[elem * ctr][len(nr_out_chunks) - i - 1]
-                for elem in range(nr_chunks_dim)
-            ]
+            dim_chunks = [self._out_shapes[elem * ctr][len(nr_out_chunks) - i - 1] for elem in range(nr_chunks_dim)]
             output_chunks.append(tuple(dim_chunks))
             ctr *= nr_chunks_dim
 
@@ -610,9 +578,7 @@ class ReshapeBlockwise(ArrayExpr):
         return tuple(reduce(mul, x) for x in output_shape)
 
     def _layer(self) -> dict:
-        in_keys = list(
-            product([self.array._name], *[range(len(c)) for c in self.array.chunks])
-        )
+        in_keys = list(product([self.array._name], *[range(len(c)) for c in self.array.chunks]))
         out_keys = list(product([self._name], *[range(len(c)) for c in self.chunks]))
 
         return {
@@ -682,8 +648,7 @@ def reshape_blockwise(x, shape, chunks=None):
     # Validate shape
     if np.isnan(sum(x.shape)):
         raise ValueError(
-            f"Array chunk size or shape is unknown. shape: {x.shape}\n\n"
-            "Possible solution with x.compute_chunk_sizes()"
+            f"Array chunk size or shape is unknown. shape: {x.shape}\n\nPossible solution with x.compute_chunk_sizes()"
         )
     if reduce(mul, shape, 1) != x.size:
         raise ValueError("total size of new array must be unchanged")
@@ -711,9 +676,7 @@ def reshape_blockwise(x, shape, chunks=None):
                 f"(restricted to first 5 entries)."
             )
     elif chunks is not None:
-        raise ValueError(
-            "Setting chunks is not allowed when reducing the number of dimensions."
-        )
+        raise ValueError("Setting chunks is not allowed when reducing the number of dimensions.")
 
     return new_collection(ReshapeBlockwise(x.expr, shape, chunks))
 

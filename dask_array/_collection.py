@@ -107,9 +107,7 @@ __all__ = [
 
 
 class Array(DaskMethodsMixin):
-    __dask_scheduler__ = staticmethod(
-        named_schedulers.get("threads", named_schedulers["sync"])
-    )
+    __dask_scheduler__ = staticmethod(named_schedulers.get("threads", named_schedulers["sync"]))
     __dask_optimize__ = staticmethod(lambda dsk, keys, **kwargs: dsk)
     __array_priority__ = 11  # higher than numpy.ndarray and numpy.matrix
 
@@ -299,9 +297,7 @@ class Array(DaskMethodsMixin):
 
         # `map_blocks` assigns numpy dtypes
         # cast chunk dimensions back to python int before returning
-        new_chunks = tuple(
-            tuple(int(chunk) for chunk in chunks) for chunks in compute(tuple(c))[0]
-        )
+        new_chunks = tuple(tuple(int(chunk) for chunk in chunks) for chunks in compute(tuple(c))[0])
 
         # In the expression system, wrap with ChunksOverride to set the new chunks
         from dask_array._expr import ChunksOverride
@@ -348,15 +344,13 @@ class Array(DaskMethodsMixin):
 
     def __repr__(self):
         name = self.name.rsplit("-", 1)[0]
-        return (
-            "dask.array<{}, shape={}, dtype={}, chunksize={}, chunktype={}.{}>".format(
-                name,
-                self.shape,
-                self.dtype,
-                self.chunksize,
-                type(self._meta).__module__.split(".")[0],
-                type(self._meta).__name__,
-            )
+        return "dask.array<{}, shape={}, dtype={}, chunksize={}, chunktype={}.{}>".format(
+            name,
+            self.shape,
+            self.dtype,
+            self.chunksize,
+            type(self._meta).__module__.split(".")[0],
+            type(self._meta).__name__,
         )
 
     def _repr_html_(self):
@@ -388,10 +382,7 @@ class Array(DaskMethodsMixin):
 
     def __bool__(self):
         if self.size > 1:
-            raise ValueError(
-                f"The truth value of a {self.__class__.__name__} is ambiguous. "
-                "Use a.any() or a.all()."
-            )
+            raise ValueError(f"The truth value of a {self.__class__.__name__} is ambiguous. Use a.any() or a.all().")
         return bool(self.compute())
 
     def _scalarfunc(self, cast_type):
@@ -417,14 +408,12 @@ class Array(DaskMethodsMixin):
 
         if kwargs:
             warnings.warn(
-                f"Extra keyword arguments {kwargs} are ignored and won't be "
-                "accepted in the future",
+                f"Extra keyword arguments {kwargs} are ignored and won't be accepted in the future",
                 FutureWarning,
             )
         if copy is False:
             warnings.warn(
-                "Can't acquire a memory view of a Dask array. "
-                "This will raise in the future.",
+                "Can't acquire a memory view of a Dask array. This will raise in the future.",
                 FutureWarning,
             )
         x = self.compute()
@@ -436,9 +425,7 @@ class Array(DaskMethodsMixin):
 
     def __getitem__(self, index):
         # Field access, e.g. x['a'] or x[['a', 'b']]
-        if isinstance(index, str) or (
-            isinstance(index, list) and index and all(isinstance(i, str) for i in index)
-        ):
+        if isinstance(index, str) or (isinstance(index, list) and index and all(isinstance(i, str) for i in index)):
             from dask_array._chunk import getitem
 
             if isinstance(index, str):
@@ -456,9 +443,7 @@ class Array(DaskMethodsMixin):
             if dt.shape:
                 new_axis = list(range(self.ndim, self.ndim + len(dt.shape)))
                 chunks = self.chunks + tuple((i,) for i in dt.shape)
-                return self.map_blocks(
-                    getitem, index, dtype=dt.base, chunks=chunks, new_axis=new_axis
-                )
+                return self.map_blocks(getitem, index, dtype=dt.base, chunks=chunks, new_axis=new_axis)
             else:
                 return self.map_blocks(getitem, index, dtype=dt)
 
@@ -510,8 +495,7 @@ class Array(DaskMethodsMixin):
 
         # Handle 1D integer array index case
         if isinstance(key, Array) and (
-            key.dtype.kind in "iu"
-            or (key.dtype == bool and key.ndim == 1 and self.ndim > 1)
+            key.dtype.kind in "iu" or (key.dtype == bool and key.ndim == 1 and self.ndim > 1)
         ):
             key = (key,)
 
@@ -527,10 +511,7 @@ class Array(DaskMethodsMixin):
             match |= np.isnan(left_shape) | np.isnan(right_shape)
 
             if not match.all():
-                raise IndexError(
-                    f"boolean index shape {key.shape} must match indexed array's "
-                    f"{self.shape}."
-                )
+                raise IndexError(f"boolean index shape {key.shape} must match indexed array's {self.shape}.")
 
             # If value has ndim > 0, they must be broadcastable to self.shape[idx].
             if value.ndim:
@@ -551,9 +532,7 @@ class Array(DaskMethodsMixin):
 
         from dask_array.slicing._utils import parse_assignment_indices
 
-        indices, implied_shape, _, implied_shape_positions = parse_assignment_indices(
-            key, self.shape
-        )
+        indices, implied_shape, _, implied_shape_positions = parse_assignment_indices(key, self.shape)
         value_shape = value.shape
 
         # Validate value shape vs implied shape (from setitem_array validation)
@@ -578,14 +557,11 @@ class Array(DaskMethodsMixin):
             # All extra leading dimensions must have size 1
             if value_shape[:value_offset] != (1,) * value_offset:
                 raise ValueError(
-                    "could not broadcast input array from shape"
-                    f"{value_shape} into shape {tuple(implied_shape)}"
+                    f"could not broadcast input array from shape{value_shape} into shape {tuple(implied_shape)}"
                 )
 
         # Check shape compatibility for each dimension
-        for _, (a, b, j) in enumerate(
-            zip(array_common_shape, value_common_shape, implied_positions)
-        ):
+        for _, (a, b, j) in enumerate(zip(array_common_shape, value_common_shape, implied_positions)):
             index = indices[j]
             if is_dask_collection(index) and getattr(index, "dtype", None) == bool:
                 # For dask boolean index, value size must not exceed index size
@@ -970,13 +946,9 @@ class Array(DaskMethodsMixin):
         if not isinstance(key, tuple):
             key = (key,)
         if any(k is None for k in key):
-            raise IndexError(
-                f"vindex does not support indexing with None (np.newaxis), got {key}"
-            )
+            raise IndexError(f"vindex does not support indexing with None (np.newaxis), got {key}")
         if all(isinstance(k, slice) for k in key):
-            if all(
-                k.indices(d) == slice(0, d).indices(d) for k, d in zip(key, self.shape)
-            ):
+            if all(k.indices(d) == slice(0, d).indices(d) for k, d in zip(key, self.shape)):
                 return self
             raise IndexError(
                 "vindex requires at least one non-slice to vectorize over "
@@ -987,9 +959,7 @@ class Array(DaskMethodsMixin):
             if math.prod(self.numblocks) == 1 and len(key) == 1 and self.ndim == 1:
                 idxr = key[0]
                 # we can broadcast in this case
-                return idxr.map_blocks(
-                    _numpy_vindex, self, dtype=self.dtype, chunks=idxr.chunks
-                )
+                return idxr.map_blocks(_numpy_vindex, self, dtype=self.dtype, chunks=idxr.chunks)
             else:
                 raise IndexError(
                     "vindex does not support indexing with dask objects. Call compute "
@@ -1218,9 +1188,7 @@ class Array(DaskMethodsMixin):
             out=out,
         )
 
-    def std(
-        self, axis=None, dtype=None, keepdims=False, ddof=0, split_every=None, out=None
-    ):
+    def std(self, axis=None, dtype=None, keepdims=False, ddof=0, split_every=None, out=None):
         """Returns the standard deviation of the array elements along given axis.
 
         Refer to :func:`dask.array.std` for full documentation.
@@ -1241,9 +1209,7 @@ class Array(DaskMethodsMixin):
             out=out,
         )
 
-    def var(
-        self, axis=None, dtype=None, keepdims=False, ddof=0, split_every=None, out=None
-    ):
+    def var(self, axis=None, dtype=None, keepdims=False, ddof=0, split_every=None, out=None):
         """Returns the variance of the array elements, along given axis.
 
         Refer to :func:`dask.array.var` for full documentation.
@@ -1378,9 +1344,7 @@ class Array(DaskMethodsMixin):
         """
         from dask_array.reductions import argmin
 
-        return argmin(
-            self, axis=axis, keepdims=keepdims, split_every=split_every, out=out
-        )
+        return argmin(self, axis=axis, keepdims=keepdims, split_every=split_every, out=out)
 
     def argmax(self, axis=None, *, keepdims=False, split_every=None, out=None):
         """Return indices of the maximum values along the given axis.
@@ -1393,9 +1357,7 @@ class Array(DaskMethodsMixin):
         """
         from dask_array.reductions import argmax
 
-        return argmax(
-            self, axis=axis, keepdims=keepdims, split_every=split_every, out=out
-        )
+        return argmax(self, axis=axis, keepdims=keepdims, split_every=split_every, out=out)
 
     def topk(self, k, axis=-1, split_every=None):
         """The top k elements of an array.
@@ -1508,18 +1470,13 @@ class Array(DaskMethodsMixin):
         # them to `map_blocks` if specified by user (different than defaults).
         extra = set(kwargs) - {"casting", "copy"}
         if extra:
-            raise TypeError(
-                f"astype does not take the following keyword arguments: {list(extra)}"
-            )
+            raise TypeError(f"astype does not take the following keyword arguments: {list(extra)}")
         casting = kwargs.get("casting", "unsafe")
         dtype = np.dtype(dtype)
         if self.dtype == dtype:
             return self
         elif not np.can_cast(self.dtype, dtype, casting=casting):
-            raise TypeError(
-                f"Cannot cast array from {self.dtype!r} to {dtype!r} "
-                f"according to the rule {casting!r}"
-            )
+            raise TypeError(f"Cannot cast array from {self.dtype!r} to {dtype!r} according to the rule {casting!r}")
         return elemwise(chunk.astype, self, dtype=dtype, astype_dtype=dtype, **kwargs)
 
     def map_blocks(self, func, *args, **kwargs):
@@ -1605,19 +1562,13 @@ class Array(DaskMethodsMixin):
             return i
 
         if order == "C":
-            chunks = self.chunks[:-1] + (
-                tuple(_ensure_int(c * mult) for c in self.chunks[-1]),
-            )
+            chunks = self.chunks[:-1] + (tuple(_ensure_int(c * mult) for c in self.chunks[-1]),)
         elif order == "F":
-            chunks = (
-                tuple(_ensure_int(c * mult) for c in self.chunks[0]),
-            ) + self.chunks[1:]
+            chunks = (tuple(_ensure_int(c * mult) for c in self.chunks[0]),) + self.chunks[1:]
         else:
             raise ValueError("Order must be one of 'C' or 'F'")
 
-        return self.map_blocks(
-            chunk.view, dtype, order=order, dtype=dtype, chunks=chunks
-        )
+        return self.map_blocks(chunk.view, dtype, order=order, dtype=dtype, chunks=chunks)
 
     def __array_ufunc__(self, numpy_ufunc, method, *inputs, **kwargs):
         out = kwargs.get("out", ())
@@ -1634,9 +1585,7 @@ class Array(DaskMethodsMixin):
             if numpy_ufunc.signature is not None:
                 from dask_array._gufunc import apply_gufunc
 
-                return apply_gufunc(
-                    numpy_ufunc, numpy_ufunc.signature, *inputs, **kwargs
-                )
+                return apply_gufunc(numpy_ufunc, numpy_ufunc.signature, *inputs, **kwargs)
             if numpy_ufunc.nout > 1:
                 from dask_array import _ufunc as ufunc
 
@@ -1669,9 +1618,7 @@ class Array(DaskMethodsMixin):
         """
         from dask_array._overlap import map_overlap
 
-        return map_overlap(
-            func, self, depth=depth, boundary=boundary, trim=trim, **kwargs
-        )
+        return map_overlap(func, self, depth=depth, boundary=boundary, trim=trim, **kwargs)
 
 
 # Import rechunk, reshape, ravel from their modules

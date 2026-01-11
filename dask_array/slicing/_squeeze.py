@@ -36,9 +36,7 @@ class Squeeze(ArrayExpr):
 
     @functools.cached_property
     def chunks(self):
-        return tuple(
-            c for i, c in enumerate(self.array.chunks) if i not in self._axis_set
-        )
+        return tuple(c for i, c in enumerate(self.array.chunks) if i not in self._axis_set)
 
     def _layer(self) -> dict:
         # Map from output chunk indices to input chunk indices

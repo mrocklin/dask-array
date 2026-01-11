@@ -14,6 +14,7 @@ import pytest
 import dask_array as da
 from dask_array._test_utils import assert_eq
 
+
 def total_chunks(arr):
     """Total number of chunks across all dimensions."""
     return math.prod(arr.numblocks)

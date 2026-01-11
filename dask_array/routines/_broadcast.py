@@ -45,9 +45,7 @@ def unify_chunks(*args, **kwargs):
     if not args:
         return {}, []
 
-    arginds = [
-        (asanyarray(a) if ind is not None else a, ind) for a, ind in partition(2, args)
-    ]
+    arginds = [(asanyarray(a) if ind is not None else a, ind) for a, ind in partition(2, args)]
 
     arrays, inds = zip(*arginds)
     if all(ind is None for ind in inds):

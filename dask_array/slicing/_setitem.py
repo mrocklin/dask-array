@@ -27,9 +27,7 @@ def setitem_array_expr(out_name, array, indices, value):
     value_ndim = len(value_shape)
 
     # Reformat input indices
-    indices, implied_shape, reverse, implied_shape_positions = parse_assignment_indices(
-        indices, array_shape
-    )
+    indices, implied_shape, reverse, implied_shape_positions = parse_assignment_indices(indices, array_shape)
 
     # Empty slices can only be assigned size 1 values
     if 0 in implied_shape and value_shape and max(value_shape) > 1:
@@ -53,16 +51,13 @@ def setitem_array_expr(out_name, array, indices, value):
         offset = 0
         if value_shape[:value_offset] != (1,) * value_offset:
             raise ValueError(
-                "could not broadcast input array from shape"
-                f"{value_shape} into shape {tuple(implied_shape)}"
+                f"could not broadcast input array from shape{value_shape} into shape {tuple(implied_shape)}"
             )
 
     base_value_indices = []
     non_broadcast_dimensions = []
 
-    for i, (a, b, j) in enumerate(
-        zip(array_common_shape, value_common_shape, implied_shape_positions)
-    ):
+    for i, (a, b, j) in enumerate(zip(array_common_shape, value_common_shape, implied_shape_positions)):
         index = indices[j]
         if is_dask_collection(index) and index.dtype == bool:
             if math.isnan(b) or b <= index.size:
@@ -94,10 +89,7 @@ def setitem_array_expr(out_name, array, indices, value):
     # Translate chunks tuple to array locations
     chunks = array.chunks
     cumdims = [cached_cumsum(bds, initial_zero=True) for bds in chunks]
-    array_locations = [
-        [(s, s + dim) for s, dim in zip(starts, shapes)]
-        for starts, shapes in zip(cumdims, chunks)
-    ]
+    array_locations = [[(s, s + dim) for s, dim in zip(starts, shapes)] for starts, shapes in zip(cumdims, chunks)]
     array_locations = product(*array_locations)
 
     in_keys = list(flatten(array.__dask_keys__()))
@@ -173,9 +165,7 @@ def setitem_array_expr(out_name, array, indices, value):
                 is_bool = index.dtype == bool
                 block_index = block_index_from_1d_index(index, loc0, loc1, is_bool)
                 if is_bool:
-                    block_index_size = block_index_shape_from_1d_bool_index(
-                        index, loc0, loc1
-                    )
+                    block_index_size = block_index_shape_from_1d_bool_index(index, loc0, loc1)
                     n_preceding = n_preceding_from_1d_bool_index(index, loc0)
                 else:
                     block_index_size = None

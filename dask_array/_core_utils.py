@@ -69,11 +69,7 @@ tensordot_lookup = Dispatch("tensordot")
 def getter(a, b, asarray=True, lock=None):
     if isinstance(b, tuple) and any(x is None for x in b):
         b2 = tuple(x for x in b if x is not None)
-        b3 = tuple(
-            None if x is None else slice(None, None)
-            for x in b
-            if not isinstance(x, Integral)
-        )
+        b3 = tuple(None if x is None else slice(None, None) for x in b if not isinstance(x, Integral))
         return getter(a, b2, asarray=asarray, lock=lock)[b3]
 
     if lock:
@@ -135,10 +131,7 @@ def slices_from_chunks(chunks):
       (slice(2, 4, None), slice(6, 9, None))]
     """
     cumdims = [cached_cumsum(bds, initial_zero=True) for bds in chunks]
-    slices = [
-        [slice(s, s + dim) for s, dim in zip(starts, shapes)]
-        for starts, shapes in zip(cumdims, chunks)
-    ]
+    slices = [[slice(s, s + dim) for s, dim in zip(starts, shapes)] for starts, shapes in zip(cumdims, chunks)]
     return list(product(*slices))
 
 
@@ -165,11 +158,7 @@ def graph_from_arraylike(
 
     chunks = normalize_chunks(chunks, shape, dtype=dtype)
 
-    if (
-        has_keyword(getitem, "asarray")
-        and has_keyword(getitem, "lock")
-        and (not asarray or lock)
-    ):
+    if has_keyword(getitem, "asarray") and has_keyword(getitem, "lock") and (not asarray or lock):
         kwargs = {"asarray": asarray, "lock": lock}
     else:
         # Common case, drop extra parameters
@@ -178,9 +167,7 @@ def graph_from_arraylike(
     if inline_array:
         # Embed the array directly in each task
         graph = {}
-        for idx, slc in zip(
-            product(*[range(len(c)) for c in chunks]), slices_from_chunks(chunks)
-        ):
+        for idx, slc in zip(product(*[range(len(c)) for c in chunks]), slices_from_chunks(chunks)):
             key = (name,) + idx
             if kwargs:
                 graph[key] = (getitem, arr, slc, kwargs.get("asarray", True), kwargs.get("lock", None))
@@ -191,12 +178,16 @@ def graph_from_arraylike(
         # Store array separately and reference it
         original_name = f"original-{name}"
         graph = {original_name: arr}
-        for idx, slc in zip(
-            product(*[range(len(c)) for c in chunks]), slices_from_chunks(chunks)
-        ):
+        for idx, slc in zip(product(*[range(len(c)) for c in chunks]), slices_from_chunks(chunks)):
             key = (name,) + idx
             if kwargs:
-                graph[key] = (getitem, TaskRef(original_name), slc, kwargs.get("asarray", True), kwargs.get("lock", None))
+                graph[key] = (
+                    getitem,
+                    TaskRef(original_name),
+                    slc,
+                    kwargs.get("asarray", True),
+                    kwargs.get("lock", None),
+                )
             else:
                 graph[key] = (getitem, TaskRef(original_name), slc)
         return graph
@@ -252,9 +243,7 @@ def _concatenate2(arrays, axes=None):
         return arrays
     if len(axes) > 1:
         arrays = [_concatenate2(a, axes=axes[1:]) for a in arrays]
-    concatenate = concatenate_lookup.dispatch(
-        type(max(arrays, key=lambda x: getattr(x, "__array_priority__", 0)))
-    )
+    concatenate = concatenate_lookup.dispatch(type(max(arrays, key=lambda x: getattr(x, "__array_priority__", 0))))
     if isinstance(arrays[0], dict):
         # Handle concatenation of `dict`s, used as a replacement for structured
         # arrays when that's not supported by the array library (e.g., CuPy).
@@ -304,11 +293,7 @@ def apply_infer_dtype(func, args, kwargs, funcname, suggest_dtype="dtype", nout=
 
     # make sure that every arg is an evaluated array
     args = [
-        (
-            np.zeros_like(meta_from_array(x), shape=((1,) * x.ndim), dtype=x.dtype)
-            if is_arraylike(x)
-            else x
-        )
+        (np.zeros_like(meta_from_array(x), shape=((1,) * x.ndim), dtype=x.dtype) if is_arraylike(x) else x)
         for x in args
     ]
     try:
@@ -318,11 +303,7 @@ def apply_infer_dtype(func, args, kwargs, funcname, suggest_dtype="dtype", nout=
         exc_type, exc_value, exc_traceback = sys.exc_info()
         tb = "".join(traceback.format_tb(exc_traceback))
         suggest = (
-            (
-                f"Please specify the dtype explicitly using the `{suggest_dtype}` kwarg.\n\n"
-            )
-            if suggest_dtype
-            else ""
+            (f"Please specify the dtype explicitly using the `{suggest_dtype}` kwarg.\n\n") if suggest_dtype else ""
         )
         msg = (
             f"`dtype` inference failed in `{funcname}`.\n\n"
@@ -386,8 +367,7 @@ def apply_and_enforce(*args, **kwargs):
     if getattr(out, "ndim", 0) != expected_ndim:
         out_ndim = getattr(out, "ndim", 0)
         raise ValueError(
-            f"Dimension mismatch: expected output of {func} "
-            f"to have dims = {expected_ndim}.  Got {out_ndim} instead."
+            f"Dimension mismatch: expected output of {func} to have dims = {expected_ndim}.  Got {out_ndim} instead."
         )
     return out
 
@@ -457,29 +437,20 @@ def blockdims_from_blockshape(shape, chunks):
     if shape is None:
         raise TypeError("Must supply shape= keyword argument")
     if np.isnan(sum(shape)) or np.isnan(sum(chunks)):
-        raise ValueError(
-            f"Array chunk sizes are unknown. shape: {shape}, chunks: {chunks}{unknown_chunk_message}"
-        )
+        raise ValueError(f"Array chunk sizes are unknown. shape: {shape}, chunks: {chunks}{unknown_chunk_message}")
     if not all(map(is_integer, chunks)):
         raise ValueError("chunks can only contain integers.")
     if not all(map(is_integer, shape)):
         raise ValueError("shape can only contain integers.")
     shape = tuple(map(int, shape))
     chunks = tuple(map(int, chunks))
-    return tuple(
-        ((bd,) * (d // bd) + ((d % bd,) if d % bd else ()) if d else (0,))
-        for d, bd in zip(shape, chunks)
-    )
+    return tuple(((bd,) * (d // bd) + ((d % bd,) if d % bd else ()) if d else (0,)) for d, bd in zip(shape, chunks))
 
 
 def _convert_int_chunk_to_tuple(shape, chunks):
     return sum(
         (
-            (
-                blockdims_from_blockshape((s,), (c,))
-                if not isinstance(c, (tuple, list))
-                else (c,)
-            )
+            (blockdims_from_blockshape((s,), (c,)) if not isinstance(c, (tuple, list)) else (c,))
             for s, c in zip(shape, chunks)
         ),
         (),
@@ -544,9 +515,7 @@ def auto_chunks(chunks, shape, limit, dtype, previous_chunks=None):
         # rioxarray is passing ((1, ), (x,)) for shapes like (100, 5x),
         # so add this compat code for now
         # https://github.com/corteva/rioxarray/pull/820
-        previous_chunks = (
-            c[0] if isinstance(c, tuple) and len(c) == 1 else c for c in previous_chunks
-        )
+        previous_chunks = (c[0] if isinstance(c, tuple) and len(c) == 1 else c for c in previous_chunks)
         previous_chunks = _convert_int_chunk_to_tuple(shape, previous_chunks)
     chunks = list(chunks)
 
@@ -564,28 +533,19 @@ def auto_chunks(chunks, shape, limit, dtype, previous_chunks=None):
 
     if dtype.hasobject:
         raise NotImplementedError(
-            "Can not use auto rechunking with object dtype. "
-            "We are unable to estimate the size in bytes of object data"
+            "Can not use auto rechunking with object dtype. We are unable to estimate the size in bytes of object data"
         )
 
     for x in tuple(chunks) + tuple(shape):
-        if (
-            isinstance(x, Number)
-            and np.isnan(x)
-            or isinstance(x, tuple)
-            and np.isnan(x).any()
-        ):
+        if isinstance(x, Number) and np.isnan(x) or isinstance(x, tuple) and np.isnan(x).any():
             raise ValueError(
-                "Can not perform automatic rechunking with unknown "
-                f"(nan) chunk sizes.{unknown_chunk_message}"
+                f"Can not perform automatic rechunking with unknown (nan) chunk sizes.{unknown_chunk_message}"
             )
 
     limit = max(1, limit)
     chunksize_tolerance = config.get("array.chunk-size-tolerance")
 
-    largest_block = math.prod(
-        cs if isinstance(cs, Number) else max(cs) for cs in chunks if cs != "auto"
-    )
+    largest_block = math.prod(cs if isinstance(cs, Number) else max(cs) for cs in chunks if cs != "auto")
 
     if previous_chunks:
         # Base ideal ratio on the median chunk size of the previous chunks
@@ -657,9 +617,7 @@ def auto_chunks(chunks, shape, limit, dtype, previous_chunks=None):
             # recompute how much multiplier we have left, repeat
             if multiplier_remaining or reduce_case:
                 last_multiplier = multiplier
-                multiplier = _compute_multiplier(
-                    limit, dtype, largest_block, median_chunks
-                )
+                multiplier = _compute_multiplier(limit, dtype, largest_block, median_chunks)
                 if multiplier != last_multiplier:
                     multiplier_remaining = True
 
@@ -687,9 +645,7 @@ def auto_chunks(chunks, shape, limit, dtype, previous_chunks=None):
 
 
 @functools.lru_cache
-def normalize_chunks_cached(
-    chunks, shape=None, limit=None, dtype=None, previous_chunks=None
-):
+def normalize_chunks_cached(chunks, shape=None, limit=None, dtype=None, previous_chunks=None):
     """Cached version of normalize_chunks.
 
     .. note::
@@ -699,9 +655,7 @@ def normalize_chunks_cached(
 
     See :func:`normalize_chunks` for further documentation.
     """
-    return normalize_chunks(
-        chunks, shape=shape, limit=limit, dtype=dtype, previous_chunks=previous_chunks
-    )
+    return normalize_chunks(chunks, shape=shape, limit=limit, dtype=dtype, previous_chunks=previous_chunks)
 
 
 def normalize_chunks(chunks, shape=None, limit=None, dtype=None, previous_chunks=None):
@@ -813,19 +767,11 @@ def normalize_chunks(chunks, shape=None, limit=None, dtype=None, previous_chunks
     if not chunks and shape and all(s == 0 for s in shape):
         chunks = ((0,),) * len(shape)
 
-    if (
-        shape
-        and len(shape) == 1
-        and len(chunks) > 1
-        and all(isinstance(c, (Number, str)) for c in chunks)
-    ):
+    if shape and len(shape) == 1 and len(chunks) > 1 and all(isinstance(c, (Number, str)) for c in chunks):
         chunks = (chunks,)
 
     if shape and len(chunks) != len(shape):
-        raise ValueError(
-            "Chunks and shape must be of the same length/dimension. "
-            f"Got chunks={chunks}, shape={shape}"
-        )
+        raise ValueError(f"Chunks and shape must be of the same length/dimension. Got chunks={chunks}, shape={shape}")
     if -1 in chunks or None in chunks:
         chunks = tuple(s if c == -1 or c is None else c for c, s in zip(chunks, shape))
 
@@ -837,10 +783,7 @@ def normalize_chunks(chunks, shape=None, limit=None, dtype=None, previous_chunks
             if limit is None:
                 limit = parsed
             elif parsed != limit:
-                raise ValueError(
-                    "Only one consistent value of limit or chunk is allowed."
-                    f"Used {parsed} != {limit}"
-                )
+                raise ValueError(f"Only one consistent value of limit or chunk is allowed.Used {parsed} != {limit}")
     # Substitute byte limits with 'auto' now that limit is set.
     chunks = tuple("auto" if isinstance(c, str) and c != "auto" else c for c in chunks)
 
@@ -855,24 +798,16 @@ def normalize_chunks(chunks, shape=None, limit=None, dtype=None, previous_chunks
     for c in chunks:
         if not c:
             raise ValueError(
-                "Empty tuples are not allowed in chunks. Express "
-                "zero length dimensions with 0(s) in chunks"
+                "Empty tuples are not allowed in chunks. Express zero length dimensions with 0(s) in chunks"
             )
 
     if not allints and shape is not None:
-        if not all(
-            c == s or (math.isnan(c) or math.isnan(s))
-            for c, s in zip(map(sum, chunks), shape)
-        ):
-            raise ValueError(
-                f"Chunks do not add up to shape. Got chunks={chunks}, shape={shape}"
-            )
+        if not all(c == s or (math.isnan(c) or math.isnan(s)) for c, s in zip(map(sum, chunks), shape)):
+            raise ValueError(f"Chunks do not add up to shape. Got chunks={chunks}, shape={shape}")
     if allints or isinstance(sum(sum(_) for _ in chunks), int):
         # Fastpath for when we already know chunks contains only integers
         return tuple(tuple(ch) for ch in chunks)
-    return tuple(
-        tuple(int(x) if not math.isnan(x) else np.nan for x in c) for c in chunks
-    )
+    return tuple(tuple(int(x) if not math.isnan(x) else np.nan for x in c) for c in chunks)
 
 
 def common_blockdim(blockdims):
@@ -907,9 +842,7 @@ def common_blockdim(blockdims):
 
     if np.isnan(sum(map(sum, blockdims))):
         raise ValueError(
-            f"Arrays' chunk sizes ({blockdims}) are unknown.\n\n"
-            "A possible solution:\n"
-            "  x.compute_chunk_sizes()"
+            f"Arrays' chunk sizes ({blockdims}) are unknown.\n\nA possible solution:\n  x.compute_chunk_sizes()"
         )
 
     if len(set(map(sum, non_trivial_dims))) > 1:
@@ -961,9 +894,7 @@ def is_scalar_for_elemwise(arg):
     # the second half of shape_condition is essentially just to ensure that
     # dask series / frame are treated as scalars in elemwise.
     maybe_shape = getattr(arg, "shape", None)
-    shape_condition = not isinstance(maybe_shape, Iterable) or any(
-        is_dask_collection(x) for x in maybe_shape
-    )
+    shape_condition = not isinstance(maybe_shape, Iterable) or any(is_dask_collection(x) for x in maybe_shape)
 
     return (
         np.isscalar(arg)
@@ -1005,15 +936,13 @@ def broadcast_shapes(*shapes):
             # All non-trivial sizes must match each other
             if len(set(non_trivial)) > 1:
                 raise ValueError(
-                    "operands could not be broadcast together with "
-                    "shapes {}".format(" ".join(map(str, shapes)))
+                    "operands could not be broadcast together with shapes {}".format(" ".join(map(str, shapes)))
                 )
         else:
             dim = 0 if 0 in sizes else np.max(sizes).item()
             if any(i not in [-1, 0, 1, dim] for i in sizes):
                 raise ValueError(
-                    "operands could not be broadcast together with "
-                    "shapes {}".format(" ".join(map(str, shapes)))
+                    "operands could not be broadcast together with shapes {}".format(" ".join(map(str, shapes)))
                 )
         out.append(dim)
     return tuple(reversed(out))
@@ -1044,14 +973,12 @@ def handle_out(out, result):
             out = None
     if not (out is None or isinstance(out, Array)):
         raise NotImplementedError(
-            f"The out parameter is not fully supported."
-            f" Received type {type(out).__name__}, expected Dask Array"
+            f"The out parameter is not fully supported. Received type {type(out).__name__}, expected Dask Array"
         )
     if isinstance(out, Array):
         if out.shape != result.shape:
             raise ValueError(
-                "Mismatched shapes between result and out parameter. "
-                f"out={out.shape}, result={result.shape}"
+                f"Mismatched shapes between result and out parameter. out={out.shape}, result={result.shape}"
             )
         # For expression-based arrays, we need to update the expression
         out._expr = result._expr
@@ -1197,8 +1124,7 @@ def concatenate3(arrays):
     )
 
     if not all(
-        NDARRAY_ARRAY_FUNCTION
-        is getattr(type(arr), "__array_function__", NDARRAY_ARRAY_FUNCTION)
+        NDARRAY_ARRAY_FUNCTION is getattr(type(arr), "__array_function__", NDARRAY_ARRAY_FUNCTION)
         for arr in dask_core.flatten(arrays, container=(list, tuple))
     ):
         try:
@@ -1225,9 +1151,7 @@ def concatenate3(arrays):
 
     result = np.empty(shape=shape, dtype=dtype(deepfirst(arrays)))
 
-    for idx, arr in zip(
-        slices_from_chunks(chunks), dask_core.flatten(arrays, container=(list, tuple))
-    ):
+    for idx, arr in zip(slices_from_chunks(chunks), dask_core.flatten(arrays, container=(list, tuple))):
         if hasattr(arr, "ndim"):
             while arr.ndim < ndim:
                 arr = arr[None, ...]

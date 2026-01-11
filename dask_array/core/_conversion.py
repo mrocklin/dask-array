@@ -166,9 +166,7 @@ def from_array(
     # Check for both array-expr and legacy dask arrays
     is_legacy = type(x).__module__ == "dask.array.core" and type(x).__name__ == "Array"
     if isinstance(x, Array) or is_legacy:
-        raise ValueError(
-            "Array is already a dask array. Use 'asarray' or 'rechunk' instead."
-        )
+        raise ValueError("Array is already a dask array. Use 'asarray' or 'rechunk' instead.")
 
     # Handle xarray DataArray wrapping a dask array
     try:
@@ -176,8 +174,7 @@ def from_array(
 
         if isinstance(x, xr.DataArray) and x.chunks is not None:
             if isinstance(x.data, Array) or (
-                type(x.data).__module__ == "dask.array.core"
-                and type(x.data).__name__ == "Array"
+                type(x.data).__module__ == "dask.array.core" and type(x.data).__name__ == "Array"
             ):
                 return x.data
     except ImportError:
@@ -232,9 +229,7 @@ def from_array(
     )
 
 
-def asarray(
-    a, allow_unknown_chunksizes=False, dtype=None, order=None, *, like=None, **kwargs
-):
+def asarray(a, allow_unknown_chunksizes=False, dtype=None, order=None, *, like=None, **kwargs):
     """Convert the input to a dask array.
 
     Parameters
@@ -300,9 +295,7 @@ def asarray(
             # Lazy import to avoid circular dependency
             from dask_array.stacking import stack
 
-            return _as_dtype(
-                stack(a, allow_unknown_chunksizes=allow_unknown_chunksizes), dtype
-            )
+            return _as_dtype(stack(a, allow_unknown_chunksizes=allow_unknown_chunksizes), dtype)
         elif not isinstance(getattr(a, "shape", None), Iterable):
             a = np.asarray(a, dtype=dtype, order=order)
     else:
@@ -314,9 +307,7 @@ def asarray(
         if isinstance(a, Array):
             # Use partial to pass dtype to asarray_safe, not to map_blocks
             # (map_blocks' dtype parameter controls output metadata, not the function call)
-            return a.map_blocks(
-                partial(asarray_safe, like=like_meta, dtype=dtype, order=order)
-            )
+            return a.map_blocks(partial(asarray_safe, like=like_meta, dtype=dtype, order=order))
         else:
             a = asarray_safe(a, like=like_meta, dtype=dtype, order=order)
 
@@ -402,9 +393,7 @@ def asanyarray(a, dtype=None, order=None, *, like=None, inline_array=False):
         if isinstance(a, Array):
             # Use partial to pass dtype to asanyarray_safe, not to map_blocks
             # (map_blocks' dtype parameter controls output metadata, not the function call)
-            return a.map_blocks(
-                partial(asanyarray_safe, like=like_meta, dtype=dtype, order=order)
-            )
+            return a.map_blocks(partial(asanyarray_safe, like=like_meta, dtype=dtype, order=order))
         else:
             a = asanyarray_safe(a, like=like_meta, dtype=dtype, order=order)
 

@@ -44,10 +44,7 @@ def slice_with_bool_dask_array(x, index):
     )
     from dask_array._expr import ChunksOverride
 
-    out_index = [
-        slice(None) if isinstance(ind, Array) and ind.dtype == bool else ind
-        for ind in index
-    ]
+    out_index = [slice(None) if isinstance(ind, Array) and ind.dtype == bool else ind for ind in index]
 
     # Case 1: Full-dimensional boolean mask
     if len(index) == 1 and index[0].ndim == x.ndim:
@@ -71,9 +68,7 @@ def slice_with_bool_dask_array(x, index):
         return new_collection(result), out_index
 
     # Case 2: 1D boolean arrays on specific dimensions
-    if any(
-        isinstance(ind, Array) and ind.dtype == bool and ind.ndim != 1 for ind in index
-    ):
+    if any(isinstance(ind, Array) and ind.dtype == bool and ind.ndim != 1 for ind in index):
         raise NotImplementedError(
             "Slicing with dask.array of bools only permitted when "
             "the indexer has only one dimension or when "
@@ -81,10 +76,7 @@ def slice_with_bool_dask_array(x, index):
             "array"
         )
 
-    indexes = [
-        ind if isinstance(ind, Array) and ind.dtype == bool else slice(None)
-        for ind in index
-    ]
+    indexes = [ind if isinstance(ind, Array) and ind.dtype == bool else slice(None) for ind in index]
 
     # Track which dimension indices have boolean arrays
     dsk_ind = []
@@ -117,8 +109,7 @@ def slice_with_bool_dask_array(x, index):
     # For boolean indexing, override chunks on boolean-indexed dimensions
     # with nan values since the output size is unknown
     new_chunks = tuple(
-        tuple(np.nan for _ in range(len(c))) if dim in dsk_ind else c
-        for dim, c in enumerate(out.chunks)
+        tuple(np.nan for _ in range(len(c))) if dim in dsk_ind else c for dim, c in enumerate(out.chunks)
     )
     result = ChunksOverride(out.expr, new_chunks)
     return new_collection(result), tuple(out_index)

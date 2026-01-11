@@ -459,12 +459,8 @@ def test_dask_svd_self_consistent(m, n):
 @pytest.mark.parametrize("iterator", ["power", "QR"])
 def test_svd_compressed_compute(iterator):
     x = da.ones((100, 100), chunks=(10, 10))
-    u, s, v = da.linalg.svd_compressed(
-        x, k=2, iterator=iterator, n_power_iter=1, compute=True, seed=123
-    )
-    uu, ss, vv = da.linalg.svd_compressed(
-        x, k=2, iterator=iterator, n_power_iter=1, seed=123
-    )
+    u, s, v = da.linalg.svd_compressed(x, k=2, iterator=iterator, n_power_iter=1, compute=True, seed=123)
+    uu, ss, vv = da.linalg.svd_compressed(x, k=2, iterator=iterator, n_power_iter=1, seed=123)
 
     assert len(v.dask) < len(vv.dask)
     assert_eq(v, vv)
@@ -477,9 +473,7 @@ def test_svd_compressed(iterator):
     a = da.random.default_rng().random((m, n), chunks=(m, n))
 
     # calculate approximation and true singular values
-    u, s, vt = svd_compressed(
-        a, 2 * r, iterator=iterator[0], n_power_iter=iterator[1], seed=4321
-    )  # worst case
+    u, s, vt = svd_compressed(a, 2 * r, iterator=iterator[0], n_power_iter=iterator[1], seed=4321)  # worst case
     s_true = scipy.linalg.svd(a.compute(), compute_uv=False)
 
     # compute the difference with original matrix
@@ -499,9 +493,7 @@ def test_svd_compressed(iterator):
     assert_eq(np.eye(r, r), da.dot(vt[:r, :], vt[:r, :].T))  # v must be orthonormal
 
 
-@pytest.mark.parametrize(
-    "input_dtype, output_dtype", [(np.float32, np.float32), (np.float64, np.float64)]
-)
+@pytest.mark.parametrize("input_dtype, output_dtype", [(np.float32, np.float32), (np.float64, np.float64)])
 def test_svd_compressed_dtype_preservation(input_dtype, output_dtype):
     x = da.random.default_rng().random((50, 50), chunks=(50, 50)).astype(input_dtype)
     u, s, vt = svd_compressed(x, 1, seed=4321)
@@ -861,9 +853,7 @@ def test_lstsq(nrow, ncol, chunk, iscomplex):
     A[:, 1] = A[:, 2]
     dA = da.from_array(A, (chunk, ncol))
     db = da.from_array(b, chunk)
-    x, r, rank, s = np.linalg.lstsq(
-        A, b, rcond=np.finfo(np.double).eps * max(nrow, ncol)
-    )
+    x, r, rank, s = np.linalg.lstsq(A, b, rcond=np.finfo(np.double).eps * max(nrow, ncol))
     assert rank == ncol - 1
     dx, dr, drank, ds = da.linalg.lstsq(dA, db)
     assert drank.compute() == rank
@@ -977,9 +967,7 @@ def test_svd_supported_array_shapes(chunks, shape):
 
 
 def test_svd_incompatible_chunking():
-    with pytest.raises(
-        NotImplementedError, match="Array must be chunked in one dimension only"
-    ):
+    with pytest.raises(NotImplementedError, match="Array must be chunked in one dimension only"):
         x = da.random.default_rng().random((10, 10), chunks=(5, 5))
         da.linalg.svd(x)
 
@@ -1071,9 +1059,7 @@ def test_norm_any_slice(shape, chunks, norm, keepdims):
             assert_eq(a_r, d_r)
 
 
-@pytest.mark.parametrize(
-    "shape, chunks, axis", [[(5,), (2,), None], [(5,), (2,), 0], [(5,), (2,), (0,)]]
-)
+@pytest.mark.parametrize("shape, chunks, axis", [[(5,), (2,), None], [(5,), (2,), 0], [(5,), (2,), (0,)]])
 @pytest.mark.parametrize("norm", [0, 2, -2, 0.5])
 @pytest.mark.parametrize("keepdims", [False, True])
 def test_norm_1dim(shape, chunks, axis, norm, keepdims):

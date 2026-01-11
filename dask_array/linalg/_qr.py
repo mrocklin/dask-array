@@ -313,22 +313,16 @@ class UnstackQInner(ArrayExpr):
                 cs_key = (self._name + "-cs", i)
                 cs_key_prev = (self._name + "-cs", i - 1)
                 bs_key = (self._name + "-bs", i)
-                dsk[cs_key] = Task(
-                    cs_key, _cumsum_part, TaskRef(cs_key_prev), TaskRef(bs_key)
-                )
+                dsk[cs_key] = Task(cs_key, _cumsum_part, TaskRef(cs_key_prev), TaskRef(bs_key))
 
             for i in range(numblocks):
                 cs_key = (self._name + "-cs", i)
                 slice_key = (self._name + "-slice", i)
-                dsk[slice_key] = Task(
-                    slice_key, _make_slice, TaskRef(cs_key), TaskRef(n_key)
-                )
+                dsk[slice_key] = Task(slice_key, _make_slice, TaskRef(cs_key), TaskRef(n_key))
 
                 out_key = (self._name, i, 0)
                 in_key = (self.q_inner._name, 0, 0)
-                dsk[out_key] = Task(
-                    out_key, _getitem_with_slice, TaskRef(in_key), TaskRef(slice_key)
-                )
+                dsk[out_key] = Task(out_key, _getitem_with_slice, TaskRef(in_key), TaskRef(slice_key))
 
         return dsk
 

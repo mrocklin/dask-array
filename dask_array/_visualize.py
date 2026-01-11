@@ -49,13 +49,9 @@ class ExprTable:
         if self._html_cache is None:
             from rich.console import Console
 
-            console = Console(
-                file=io.StringIO(), record=True, width=120, force_jupyter=False
-            )
+            console = Console(file=io.StringIO(), record=True, width=120, force_jupyter=False)
             console.print(self._table)
-            self._html_cache = console.export_html(
-                inline_styles=True, code_format="<pre>{code}</pre>"
-            )
+            self._html_cache = console.export_html(inline_styles=True, code_format="<pre>{code}</pre>")
         return self._html_cache
 
     def __repr__(self):
@@ -63,9 +59,7 @@ class ExprTable:
         if self._text_cache is None:
             from rich.console import Console
 
-            console = Console(
-                file=io.StringIO(), force_terminal=True, force_jupyter=False, width=120
-            )
+            console = Console(file=io.StringIO(), force_terminal=True, force_jupyter=False, width=120)
             console.print(self._table)
             self._text_cache = console.file.getvalue().rstrip()
         return self._text_cache
@@ -162,9 +156,7 @@ def _get_nbytes(node) -> float:
 
 
 # Operations where we prefer showing the _name prefix as the primary name
-_USE_LABEL_AS_NAME = frozenset(
-    {"Blockwise", "PartialReduce", "Elemwise", "Random", "SliceSlicesIntegers"}
-)
+_USE_LABEL_AS_NAME = frozenset({"Blockwise", "PartialReduce", "Elemwise", "Random", "SliceSlicesIntegers"})
 
 
 def expr_table(expr, color: bool = True) -> ExprTable:
@@ -204,9 +196,7 @@ def expr_table(expr, color: bool = True) -> ExprTable:
     node_bytes = [_get_nbytes(node) for node, _ in nodes_and_prefixes]
     row_emphasis = _compute_row_emphasis(node_bytes)
 
-    for (node, prefix), nbytes, emphasize in zip(
-        nodes_and_prefixes, node_bytes, row_emphasis
-    ):
+    for (node, prefix), nbytes, emphasize in zip(nodes_and_prefixes, node_bytes, row_emphasis):
         display_name = _get_op_display_name(node, _USE_LABEL_AS_NAME)
         data_style = None if color and emphasize else "dim"
 

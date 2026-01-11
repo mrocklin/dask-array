@@ -25,9 +25,7 @@ def _zarr_v3() -> bool:
         return Version(zarr.__version__).major >= 3
 
 
-def _setup_zarr_store(
-    url: str, storage_options: dict[str, object] | None = None, **kwargs: object
-):
+def _setup_zarr_store(url: str, storage_options: dict[str, object] | None = None, **kwargs: object):
     """
     Set up a Zarr store for reading or writing, handling both Zarr v2 and v3.
 
@@ -62,9 +60,7 @@ def _setup_zarr_store(
     if storage_options is not None:
         if _zarr_v3():
             read_only = kwargs.pop("read_only", kwargs.pop("mode", "a") == "r")
-            store = storage.FsspecStore.from_url(
-                url, read_only=read_only, storage_options=storage_options
-            )
+            store = storage.FsspecStore.from_url(url, read_only=read_only, storage_options=storage_options)
         else:
             store = storage.FSStore(url, **storage_options)
     else:
@@ -194,9 +190,7 @@ def _check_regular_chunks(chunkset):
     return True
 
 
-def _write_dask_to_existing_zarr(
-    url, arr, region, zarr_mem_store_types, compute, return_stored
-):
+def _write_dask_to_existing_zarr(url, arr, region, zarr_mem_store_types, compute, return_stored):
     """Write dask array to existing zarr store.
 
     Parameters
@@ -235,10 +229,7 @@ def _write_dask_to_existing_zarr(
         except (ImportError, ValueError):
             pass
         else:
-            raise RuntimeError(
-                "Cannot store into in memory Zarr Array using "
-                "the distributed scheduler."
-            )
+            raise RuntimeError("Cannot store into in memory Zarr Array using the distributed scheduler.")
     zarr_write_chunks = _get_zarr_write_chunks(z)
     dask_write_chunks = normalize_chunks(
         chunks="auto",
@@ -249,14 +240,9 @@ def _write_dask_to_existing_zarr(
 
     if region is not None:
         index = normalize_index(region, z.shape)
-        dask_write_chunks = tuple(
-            tuple(new_blockdim(s, c, r))
-            for s, c, r in zip(z.shape, dask_write_chunks, index)
-        )
+        dask_write_chunks = tuple(tuple(new_blockdim(s, c, r)) for s, c, r in zip(z.shape, dask_write_chunks, index))
 
-    for ax, (dw, zw) in enumerate(
-        zip(dask_write_chunks, zarr_write_chunks, strict=True)
-    ):
+    for ax, (dw, zw) in enumerate(zip(dask_write_chunks, zarr_write_chunks, strict=True)):
         if len(dw) >= 1:
             nominal_dask_chunk_size = dw[0]
             if not nominal_dask_chunk_size % zw == 0:
@@ -287,9 +273,7 @@ def _write_dask_to_existing_zarr(
     else:
         regions = None
 
-    return arr.store(
-        z, lock=False, regions=regions, compute=compute, return_stored=return_stored
-    )
+    return arr.store(z, lock=False, regions=regions, compute=compute, return_stored=return_stored)
 
 
 def to_zarr(
@@ -391,15 +375,13 @@ def to_zarr(
 
     if np.isnan(arr.shape).any():
         raise ValueError(
-            "Saving a dask array with unknown chunk sizes is not "
-            f"currently supported by Zarr.{unknown_chunk_message}"
+            f"Saving a dask array with unknown chunk sizes is not currently supported by Zarr.{unknown_chunk_message}"
         )
 
     zarr_array_kwargs = {} if zarr_array_kwargs is None else dict(zarr_array_kwargs)
     if component is not None and "name" in zarr_array_kwargs:
         raise ValueError(
-            "Cannot specify both 'component' and 'name' in zarr_array_kwargs. Please use 'name' in "
-            "zarr_array_kwargs"
+            "Cannot specify both 'component' and 'name' in zarr_array_kwargs. Please use 'name' in zarr_array_kwargs"
         )
 
     if kwargs:
@@ -421,9 +403,7 @@ def to_zarr(
         zarr_mem_store_types = (dict, zarr.storage.MemoryStore, zarr.storage.KVStore)
 
     if isinstance(url, zarr.Array):
-        return _write_dask_to_existing_zarr(
-            url, arr, region, zarr_mem_store_types, compute, return_stored
-        )
+        return _write_dask_to_existing_zarr(url, arr, region, zarr_mem_store_types, compute, return_stored)
 
     if not _check_regular_chunks(arr.chunks):
         warnings.warn(

@@ -102,9 +102,7 @@ class CumReduction(ArrayExpr):
         if self._dtype is not None:
             return np.dtype(self._dtype)
         # Infer dtype from the function
-        return getattr(
-            self.func(np.ones((0,), dtype=self.array.dtype)), "dtype", object
-        )
+        return getattr(self.func(np.ones((0,), dtype=self.array.dtype)), "dtype", object)
 
     @cached_property
     def _meta(self):
@@ -151,10 +149,7 @@ class CumReduction(ArrayExpr):
         except ValueError:
             try:
                 # Workaround for numpy ufunc.accumulate
-                if (
-                    isinstance(func.__self__, np.ufunc)
-                    and func.__name__ == "accumulate"
-                ):
+                if isinstance(func.__self__, np.ufunc) and func.__name__ == "accumulate":
                     use_dtype = True
             except AttributeError:
                 pass
@@ -179,17 +174,11 @@ class CumReduction(ArrayExpr):
 
         # For each position along the axis, we need to track the cumulative
         # last values from all previous blocks
-        indices = list(
-            product(
-                *[range(nb) if i != axis else [0] for i, nb in enumerate(x.numblocks)]
-            )
-        )
+        indices = list(product(*[range(nb) if i != axis else [0] for i, nb in enumerate(x.numblocks)]))
 
         # Initialize "extra" values (cumulative sums of previous blocks) to identity
         for ind in indices:
-            shape = tuple(
-                x.chunks[i][ii] if i != axis else 1 for i, ii in enumerate(ind)
-            )
+            shape = tuple(x.chunks[i][ii] if i != axis else 1 for i, ii in enumerate(ind))
             dsk[(self._name, "extra") + ind] = (
                 apply,
                 np.full_like,
@@ -202,14 +191,7 @@ class CumReduction(ArrayExpr):
         # For subsequent blocks, add the cumulative total from previous blocks
         for i in range(1, n):
             last_indices = indices
-            indices = list(
-                product(
-                    *[
-                        range(nb) if ii != axis else [i]
-                        for ii, nb in enumerate(x.numblocks)
-                    ]
-                )
-            )
+            indices = list(product(*[range(nb) if ii != axis else [i] for ii, nb in enumerate(x.numblocks)]))
             for old, ind in zip(last_indices, indices):
                 this_extra = (self._name, "extra") + ind
                 # Combine previous extra with the last element of the previous block
@@ -245,9 +227,7 @@ class CumReductionBlelloch(ArrayExpr):
     def dtype(self):
         if self._dtype is not None:
             return np.dtype(self._dtype)
-        return getattr(
-            self.func(np.ones((0,), dtype=self.array.dtype)), "dtype", object
-        )
+        return getattr(self.func(np.ones((0,), dtype=self.array.dtype)), "dtype", object)
 
     @cached_property
     def _meta(self):
@@ -284,14 +264,7 @@ class CumReductionBlelloch(ArrayExpr):
 
         # Build indices for each position along the axis
         full_indices = [
-            list(
-                product(
-                    *[
-                        range(nb) if j != axis else [i]
-                        for j, nb in enumerate(x.numblocks)
-                    ]
-                )
-            )
+            list(product(*[range(nb) if j != axis else [i] for j, nb in enumerate(x.numblocks)]))
             for i in range(x.numblocks[axis])
         ]
 
@@ -311,9 +284,7 @@ class CumReductionBlelloch(ArrayExpr):
             while stride2 <= n_vals:
                 for i in range(stride2 - 1, n_vals, stride2):
                     new_vals = []
-                    for index, left_val, right_val in zip(
-                        indices[i], prefix_vals[i - stride], prefix_vals[i]
-                    ):
+                    for index, left_val, right_val in zip(indices[i], prefix_vals[i - stride], prefix_vals[i]):
                         key = base_key + index + (level, i)
                         dsk[key] = (binop, left_val, right_val)
                         new_vals.append(key)
@@ -328,9 +299,7 @@ class CumReductionBlelloch(ArrayExpr):
             while stride > 0:
                 for i in range(stride2 + stride - 1, n_vals, stride2):
                     new_vals = []
-                    for index, left_val, right_val in zip(
-                        indices[i], prefix_vals[i - stride], prefix_vals[i]
-                    ):
+                    for index, left_val, right_val in zip(indices[i], prefix_vals[i - stride], prefix_vals[i]):
                         key = base_key + index + (level, i)
                         dsk[key] = (binop, left_val, right_val)
                         new_vals.append(key)
@@ -381,16 +350,12 @@ def _cumreduction_expr(func, binop, ident, x, axis, dtype, out, method, preop):
 
     if method == "blelloch":
         if preop is None:
-            raise TypeError(
-                'cumreduction with "blelloch" method requires `preop=` argument'
-            )
+            raise TypeError('cumreduction with "blelloch" method requires `preop=` argument')
         expr = CumReductionBlelloch(x.expr, func, preop, binop, axis, dtype)
     elif method == "sequential":
         expr = CumReduction(x.expr, func, binop, ident, axis, dtype)
     else:
-        raise ValueError(
-            f'Invalid method for cumreduction. Expected "sequential" or "blelloch". Got: {method!r}'
-        )
+        raise ValueError(f'Invalid method for cumreduction. Expected "sequential" or "blelloch". Got: {method!r}')
 
     result = new_collection(expr)
     return _handle_out(out, result)
@@ -554,6 +519,4 @@ def cumreduction(
     preop=None,
 ):
     """Generic cumulative reduction. See dask.array.reductions.cumreduction."""
-    return _cumreduction_expr(
-        func, binop, ident, x, axis, dtype, out=out, method=method, preop=preop
-    )
+    return _cumreduction_expr(func, binop, ident, x, axis, dtype, out=out, method=method, preop=preop)

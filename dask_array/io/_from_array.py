@@ -59,10 +59,7 @@ class FromArray(IO):
         if region is None:
             return self.array.shape
         # Compute shape from region slices
-        return tuple(
-            len(range(*slc.indices(dim_size)))
-            for slc, dim_size in zip(region, self.array.shape)
-        )
+        return tuple(len(range(*slc.indices(dim_size))) for slc, dim_size in zip(region, self.array.shape))
 
     @functools.cached_property
     def chunks(self):
@@ -70,11 +67,7 @@ class FromArray(IO):
         # Pass previous_chunks from underlying array (h5py, zarr) for alignment
         previous_chunks = getattr(self.array, "chunks", None)
         # Handle zarr 3.x shards attribute for write alignment
-        if (
-            hasattr(self.array, "shards")
-            and self.array.shards is not None
-            and self.operand("_chunks") == "auto"
-        ):
+        if hasattr(self.array, "shards") and self.array.shards is not None and self.operand("_chunks") == "auto":
             previous_chunks = self.array.shards
         return normalize_chunks(
             self.operand("_chunks"),
@@ -109,15 +102,9 @@ class FromArray(IO):
 
         # If region is set, offset all slices by the region start
         if region is not None:
-            region_starts = tuple(
-                slc.indices(dim_size)[0]
-                for slc, dim_size in zip(region, self.array.shape)
-            )
+            region_starts = tuple(slc.indices(dim_size)[0] for slc, dim_size in zip(region, self.array.shape))
             slices = [
-                tuple(
-                    slice(s.start + offset, s.stop + offset, s.step)
-                    for s, offset in zip(slc, region_starts)
-                )
+                tuple(slice(s.start + offset, s.stop + offset, s.step) for s, offset in zip(slc, region_starts))
                 for slc in slices
             ]
 
@@ -132,9 +119,7 @@ class FromArray(IO):
         elif is_ndarray and is_single_block and not lock:
             # Single block - slice with region (or full array) and copy
             if region is not None:
-                dsk = {
-                    (self._name,) + (0,) * self.array.ndim: self.array[region].copy()
-                }
+                dsk = {(self._name,) + (0,) * self.array.ndim: self.array[region].copy()}
             else:
                 dsk = {(self._name,) + (0,) * self.array.ndim: self.array.copy()}
         else:
@@ -148,24 +133,14 @@ class FromArray(IO):
             # For non-numpy arrays with region, we need custom graph generation
             # to apply the offset slices
             if region is not None:
-                keys = list(
-                    product([self._name], *(range(len(bds)) for bds in self.chunks))
-                )
+                keys = list(product([self._name], *(range(len(bds)) for bds in self.chunks)))
                 if self.inline_array:
-                    dsk = {
-                        k: (getitem, self.array, slc, self.asarray_arg, lock)
-                        for k, slc in zip(keys, slices)
-                    }
+                    dsk = {k: (getitem, self.array, slc, self.asarray_arg, lock) for k, slc in zip(keys, slices)}
                 else:
                     # Put array in graph once, reference by key
                     arr_key = ("array-" + self._name,)
                     dsk = {arr_key: self.array}
-                    dsk.update(
-                        {
-                            k: (getitem, arr_key, slc, self.asarray_arg, lock)
-                            for k, slc in zip(keys, slices)
-                        }
-                    )
+                    dsk.update({k: (getitem, arr_key, slc, self.asarray_arg, lock) for k, slc in zip(keys, slices)})
             else:
                 dsk = graph_from_arraylike(
                     self.array,
@@ -194,9 +169,7 @@ class FromArray(IO):
         else:
             lock_token = lock
 
-        operands = [
-            lock_token if p == "lock" else self.operand(p) for p in self._parameters
-        ]
+        operands = [lock_token if p == "lock" else self.operand(p) for p in self._parameters]
         return _tokenize_deterministic(type(self), *operands)
 
     def _simplify_up(self, parent, dependents):
@@ -229,10 +202,7 @@ class FromArray(IO):
         if any(not isinstance(idx, (slice, Integral)) for idx in index):
             return None
         # Don't push non-unit step slices - _layer doesn't handle them correctly
-        if any(
-            isinstance(idx, slice) and idx.step is not None and idx.step != 1
-            for idx in index
-        ):
+        if any(isinstance(idx, slice) and idx.step is not None and idx.step != 1 for idx in index):
             return None
 
         source = self.array
@@ -246,19 +216,14 @@ class FromArray(IO):
         has_integers = any(isinstance(idx, Integral) for idx in full_index)
 
         # Convert integers to 1-element slices for region calculation
-        region_index = tuple(
-            slice(idx, idx + 1) if isinstance(idx, Integral) else idx
-            for idx in full_index
-        )
+        region_index = tuple(slice(idx, idx + 1) if isinstance(idx, Integral) else idx for idx in full_index)
 
         # Compute new region by combining with existing region
         if old_region is not None:
             # Compose slices: new slice is relative to old region
             new_region = tuple(
                 _compose_slices(old_slc, new_slc, dim_size)
-                for old_slc, new_slc, dim_size in zip(
-                    old_region, region_index, source.shape
-                )
+                for old_slc, new_slc, dim_size in zip(old_region, region_index, source.shape)
             )
         else:
             new_region = region_index
@@ -266,9 +231,7 @@ class FromArray(IO):
         # Compute new chunks - use same chunk sizes but clipped to new shape
         new_chunks = tuple(
             _compute_sliced_chunks(dim_chunks, slc, dim_size)
-            for dim_chunks, slc, dim_size in zip(
-                old_chunks, region_index, self._effective_shape
-            )
+            for dim_chunks, slc, dim_size in zip(old_chunks, region_index, self._effective_shape)
         )
 
         # Create new FromArray with region (deferred slice)
@@ -288,9 +251,7 @@ class FromArray(IO):
         # If integers were present, apply them to extract elements
         if has_integers:
             # Build index with 0s for integer dims (they're now size-1)
-            extract_index = tuple(
-                0 if isinstance(idx, Integral) else slice(None) for idx in full_index
-            )
+            extract_index = tuple(0 if isinstance(idx, Integral) else slice(None) for idx in full_index)
             return SliceSlicesIntegers(new_io, extract_index, False)
 
         return new_io

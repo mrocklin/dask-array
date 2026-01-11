@@ -37,9 +37,7 @@ class Cholesky(ArrayExpr):
         from dask_array._utils import array_safe
 
         arr_meta = meta_from_array(self.array._meta)
-        cho = np.linalg.cholesky(
-            array_safe([[1, 2], [2, 5]], dtype=self.array.dtype, like=arr_meta)
-        )
+        cho = np.linalg.cholesky(array_safe([[1, 2], [2, 5]], dtype=self.array.dtype, like=arr_meta))
         return meta_from_array(self.array._meta, dtype=cho.dtype)
 
     @functools.cached_property
@@ -87,13 +85,9 @@ class Cholesky(ArrayExpr):
                                 TaskRef((name_upper, p, i)),
                             )
                             prevs.append(TaskRef(prev))
-                        target = Task(
-                            None, operator.sub, target, Task(None, sum, List(*prevs))
-                        )
+                        target = Task(None, operator.sub, target, Task(None, sum, List(*prevs)))
                     dsk[(name, i, i)] = Task((name, i, i), _cholesky_lower, target)
-                    dsk[(name_upper, i, i)] = Task(
-                        (name_upper, i, i), np.transpose, TaskRef((name, i, i))
-                    )
+                    dsk[(name_upper, i, i)] = Task((name_upper, i, i), np.transpose, TaskRef((name, i, i)))
                 else:
                     target = TaskRef((self.array._name, j, i))
                     if j > 0:
@@ -107,18 +101,14 @@ class Cholesky(ArrayExpr):
                                 TaskRef((name_upper, p, i)),
                             )
                             prevs.append(TaskRef(prev))
-                        target = Task(
-                            None, operator.sub, target, Task(None, sum, List(*prevs))
-                        )
+                        target = Task(None, operator.sub, target, Task(None, sum, List(*prevs)))
                     dsk[(name_upper, j, i)] = Task(
                         (name_upper, j, i),
                         _solve_triangular_lower,
                         TaskRef((name, j, j)),
                         target,
                     )
-                    dsk[(name, i, j)] = Task(
-                        (name, i, j), np.transpose, TaskRef((name_upper, j, i))
-                    )
+                    dsk[(name, i, j)] = Task((name, i, j), np.transpose, TaskRef((name_upper, j, i)))
 
         return dsk
 
@@ -206,9 +196,7 @@ def _cholesky(a):
 
     xdim, ydim = a.shape
     if xdim != ydim:
-        raise ValueError(
-            "Input must be a square matrix to perform cholesky decomposition"
-        )
+        raise ValueError("Input must be a square matrix to perform cholesky decomposition")
     if len(set(a.chunks[0] + a.chunks[1])) != 1:
         msg = (
             "All chunks must be a square matrix to perform cholesky decomposition. "

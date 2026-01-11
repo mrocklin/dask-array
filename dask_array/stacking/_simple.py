@@ -15,9 +15,7 @@ def vstack(tup, allow_unknown_chunksizes=False):
     from dask_array.manipulation._expand import atleast_2d
 
     if isinstance(tup, Array):
-        raise NotImplementedError(
-            "``vstack`` expects a sequence of arrays as the first argument"
-        )
+        raise NotImplementedError("``vstack`` expects a sequence of arrays as the first argument")
 
     tup = tuple(atleast_2d(x) for x in tup)
     return concatenate(tup, axis=0, allow_unknown_chunksizes=allow_unknown_chunksizes)
@@ -34,18 +32,12 @@ def hstack(tup, allow_unknown_chunksizes=False):
     from dask_array._collection import Array, concatenate
 
     if isinstance(tup, Array):
-        raise NotImplementedError(
-            "``hstack`` expects a sequence of arrays as the first argument"
-        )
+        raise NotImplementedError("``hstack`` expects a sequence of arrays as the first argument")
 
     if all(x.ndim == 1 for x in tup):
-        return concatenate(
-            tup, axis=0, allow_unknown_chunksizes=allow_unknown_chunksizes
-        )
+        return concatenate(tup, axis=0, allow_unknown_chunksizes=allow_unknown_chunksizes)
     else:
-        return concatenate(
-            tup, axis=1, allow_unknown_chunksizes=allow_unknown_chunksizes
-        )
+        return concatenate(tup, axis=1, allow_unknown_chunksizes=allow_unknown_chunksizes)
 
 
 def dstack(tup, allow_unknown_chunksizes=False):
@@ -60,9 +52,7 @@ def dstack(tup, allow_unknown_chunksizes=False):
     from dask_array.manipulation._expand import atleast_3d
 
     if isinstance(tup, Array):
-        raise NotImplementedError(
-            "``dstack`` expects a sequence of arrays as the first argument"
-        )
+        raise NotImplementedError("``dstack`` expects a sequence of arrays as the first argument")
 
     tup = tuple(atleast_3d(x) for x in tup)
     return concatenate(tup, axis=2, allow_unknown_chunksizes=allow_unknown_chunksizes)

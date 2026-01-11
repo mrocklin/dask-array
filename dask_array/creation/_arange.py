@@ -36,9 +36,7 @@ class Arange(ArrayExpr):
 
     @functools.cached_property
     def chunks(self):
-        return normalize_chunks(
-            self.operand("chunks"), (self.num_rows,), dtype=self.dtype
-        )
+        return normalize_chunks(self.operand("chunks"), (self.num_rows,), dtype=self.dtype)
 
     def _layer(self) -> dict:
         dsk = {}
@@ -67,9 +65,7 @@ class Arange(ArrayExpr):
 _arange_sentinel = object()
 
 
-def arange(
-    start=_arange_sentinel, stop=None, step=1, *, chunks="auto", like=None, dtype=None
-):
+def arange(start=_arange_sentinel, stop=None, step=1, *, chunks="auto", like=None, dtype=None):
     """
     Return evenly spaced values from `start` to `stop` with step size `step`.
 

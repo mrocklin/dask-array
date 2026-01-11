@@ -114,7 +114,6 @@ def indices(dimensions, dtype=int, chunks="auto"):
 
 @derived_from(np)
 def fromfunction(func, chunks="auto", shape=None, dtype=None, **kwargs):
-
     from dask_array._collection import blockwise
     from dask_array._core_utils import normalize_chunks
 

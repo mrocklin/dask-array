@@ -59,9 +59,7 @@ class Transpose(Blockwise):
         # Map output block_id to input block_id using inverse permutation
         # For axes=(1,0), output block (i,j) needs input block (j,i)
         input_block_id = self._input_block_id(self.array, block_id)
-        return Task(
-            key, self.func, TaskRef((self.array._name, *input_block_id)), **self.kwargs
-        )
+        return Task(key, self.func, TaskRef((self.array._name, *input_block_id)), **self.kwargs)
 
     def _input_block_id(self, dep, block_id: tuple[int, ...]) -> tuple[int, ...]:
         """Map output block_id to input block_id using inverse permutation."""
@@ -105,10 +103,7 @@ class Transpose(Blockwise):
             return None
 
         # Transpose each array input
-        new_args = [
-            arg if is_scalar_for_elemwise(arg) else Transpose(arg, axes)
-            for arg in elemwise.elemwise_args
-        ]
+        new_args = [arg if is_scalar_for_elemwise(arg) else Transpose(arg, axes) for arg in elemwise.elemwise_args]
 
         # Transpose where/out if they are arrays
         new_where = elemwise.where
@@ -155,9 +150,7 @@ class Transpose(Blockwise):
 
         from dask_array._shuffle import Shuffle
 
-        shuffled_input = Shuffle(
-            self.array, shuffle_expr.indexer, input_axis, shuffle_expr.operand("name")
-        )
+        shuffled_input = Shuffle(self.array, shuffle_expr.indexer, input_axis, shuffle_expr.operand("name"))
         return Transpose(shuffled_input, axes)
 
     def _accept_slice(self, slice_expr):
@@ -198,9 +191,7 @@ class Transpose(Blockwise):
         # Integer indices remove dimensions - compute new axes for remaining dims
         # Track which input dimensions remain (those not indexed by integers)
         remaining_input_dims = [
-            in_axis
-            for out_axis, in_axis in enumerate(axes)
-            if not isinstance(full_index[out_axis], Integral)
+            in_axis for out_axis, in_axis in enumerate(axes) if not isinstance(full_index[out_axis], Integral)
         ]
 
         if len(remaining_input_dims) <= 1:
@@ -272,10 +263,7 @@ def moveaxis(a, source, destination):
     source = normalize_axis_tuple(source, a.ndim, "source")
     destination = normalize_axis_tuple(destination, a.ndim, "destination")
     if len(source) != len(destination):
-        raise ValueError(
-            "`source` and `destination` arguments must have "
-            "the same number of elements"
-        )
+        raise ValueError("`source` and `destination` arguments must have the same number of elements")
 
     order = [n for n in range(a.ndim) if n not in source]
 

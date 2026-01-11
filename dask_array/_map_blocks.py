@@ -322,10 +322,7 @@ def map_blocks(
     if drop_axis:
         ndim_out = len(out_ind)
         if any(i < -ndim_out or i >= ndim_out for i in drop_axis):
-            raise ValueError(
-                f"drop_axis out of range (drop_axis={drop_axis}, "
-                f"but output is {ndim_out}d)."
-            )
+            raise ValueError(f"drop_axis out of range (drop_axis={drop_axis}, but output is {ndim_out}d).")
         drop_axis = [i % ndim_out for i in drop_axis]
         out_ind = tuple(x for i, x in enumerate(out_ind) if i not in drop_axis)
     if new_axis is None and chunks is not None and len(out_ind) < len(chunks):
@@ -346,9 +343,7 @@ def map_blocks(
 
     if chunks is not None:
         if len(chunks) != len(out_ind):
-            raise ValueError(
-                f"Provided chunks have {len(chunks)} dims; expected {len(out_ind)} dims"
-            )
+            raise ValueError(f"Provided chunks have {len(chunks)} dims; expected {len(out_ind)} dims")
         adjust_chunks = dict(zip(out_ind, chunks))
     else:
         adjust_chunks = None
@@ -357,9 +352,7 @@ def map_blocks(
     # when some input indices are not in the output (contracted dimensions).
     # When there's no actual contraction, we can set concatenate=False to enable fusion.
     out_ind_set = set(out_ind)
-    needs_concatenate = any(
-        i not in out_ind_set for _, ind in argpairs if ind is not None for i in ind
-    )
+    needs_concatenate = any(i not in out_ind_set for _, ind in argpairs if ind is not None for i in ind)
 
     if enforce_ndim:
         out = blockwise(
@@ -405,10 +398,7 @@ def map_blocks(
     if has_keyword(func, "_overlap_trim_info"):
         # Internal for map overlap to reduce size of graph
         num_chunks = out.numblocks
-        block_id_dict = {
-            block_id: (block_id, num_chunks)
-            for block_id in product(*(range(len(c)) for c in out.chunks))
-        }
+        block_id_dict = {block_id: (block_id, num_chunks) for block_id in product(*(range(len(c)) for c in out.chunks))}
         extra_argpairs.append((ArrayValuesDep(out.chunks, block_id_dict), out_ind))
         extra_names.append("_overlap_trim_info")
 
@@ -426,18 +416,12 @@ def map_blocks(
                     # We concatenate along dropped axes, so we need to treat them
                     # as if there is only a single chunk.
                     starts[i] = [
-                        (
-                            cached_cumsum(arg.chunks[j], initial_zero=True)
-                            if ind in out_ind
-                            else [0, arg.shape[j]]
-                        )
+                        (cached_cumsum(arg.chunks[j], initial_zero=True) if ind in out_ind else [0, arg.shape[j]])
                         for j, ind in enumerate(in_ind)
                     ]
                     num_chunks[i] = tuple(len(s) - 1 for s in starts[i])
                 else:
-                    starts[i] = [
-                        cached_cumsum(c, initial_zero=True) for c in arg.chunks
-                    ]
+                    starts[i] = [cached_cumsum(c, initial_zero=True) for c in arg.chunks]
                     num_chunks[i] = arg.numblocks
         out_starts = [cached_cumsum(c, initial_zero=True) for c in out.chunks]
 
@@ -452,30 +436,21 @@ def map_blocks(
                 # broadcast, but any dimension with only one chunk can be
                 # treated as broadcast.
                 arr_k = tuple(
-                    location.get(ind, 0) if num_chunks[i][j] > 1 else 0
-                    for j, ind in enumerate(argpairs[i][1])
+                    location.get(ind, 0) if num_chunks[i][j] > 1 else 0 for j, ind in enumerate(argpairs[i][1])
                 )
                 info[i] = {
                     "shape": shape,
                     "num-chunks": num_chunks[i],
-                    "array-location": [
-                        (starts[i][ij][j], starts[i][ij][j + 1])
-                        for ij, j in enumerate(arr_k)
-                    ],
+                    "array-location": [(starts[i][ij][j], starts[i][ij][j + 1]) for ij, j in enumerate(arr_k)],
                     "chunk-location": arr_k,
                 }
 
             info[None] = {
                 "shape": out.shape,
                 "num-chunks": out.numblocks,
-                "array-location": [
-                    (out_starts[ij][j], out_starts[ij][j + 1])
-                    for ij, j in enumerate(block_id)
-                ],
+                "array-location": [(out_starts[ij][j], out_starts[ij][j + 1]) for ij, j in enumerate(block_id)],
                 "chunk-location": block_id,
-                "chunk-shape": tuple(
-                    out.chunks[ij][j] for ij, j in enumerate(block_id)
-                ),
+                "chunk-shape": tuple(out.chunks[ij][j] for ij, j in enumerate(block_id)),
                 "dtype": dtype,
             }
             block_info_dict[block_id] = info
@@ -508,9 +483,7 @@ def map_blocks(
     # instead of returning an Array with DataFrame blocks
     from dask.utils import is_dataframe_like, is_index_like, is_series_like
 
-    if meta is not None and (
-        is_dataframe_like(meta) or is_series_like(meta) or is_index_like(meta)
-    ):
+    if meta is not None and (is_dataframe_like(meta) or is_series_like(meta) or is_index_like(meta)):
         try:
             from dask.dataframe.dask_expr._array import MapBlocksToDataFrame
             from dask.dataframe.dask_expr._collection import new_collection

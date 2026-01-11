@@ -104,9 +104,7 @@ def test_from_array():
     assert d.chunks == ((5, 5), (5, 5))
 
 
-@pytest.mark.xfail(
-    reason="Requires dask core to recognize 'dask_array' module in is_dask_collection"
-)
+@pytest.mark.xfail(reason="Requires dask core to recognize 'dask_array' module in is_dask_collection")
 def test_is_dask_collection_doesnt_materialize():
     class ArrayTest(Array):
         def __dask_graph__(self):
@@ -167,9 +165,7 @@ def test_transpose_optimize():
 
     # Explicit axes composition
     c = da.from_array(np.random.random((3, 4, 5)), chunks=(1, 2, 3))
-    d = c.transpose((2, 0, 1)).transpose(
-        (1, 2, 0)
-    )  # Should compose to (0, 1, 2) = identity
+    d = c.transpose((2, 0, 1)).transpose((1, 2, 0))  # Should compose to (0, 1, 2) = identity
     assert_eq(d, c)
 
 

@@ -8,6 +8,8 @@ from dask_array._core_utils import PerformanceWarning
 def _array_expr_enabled():
     """Always True for standalone dask-array package."""
     return True
+
+
 from dask_array import fft, random
 from dask_array._collection import (
     Array,

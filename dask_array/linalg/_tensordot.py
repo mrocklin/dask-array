@@ -199,9 +199,7 @@ def _matmul(a, b):
     try:
         import cupy
 
-        if hasattr(a, "__cuda_array_interface__") or hasattr(
-            b, "__cuda_array_interface__"
-        ):
+        if hasattr(a, "__cuda_array_interface__") or hasattr(b, "__cuda_array_interface__"):
             xp = cupy
     except ImportError:
         pass
@@ -248,9 +246,7 @@ def _sum_wo_cat(a, axis=None, dtype=None):
 
         return squeeze(a, axis=axis)
 
-    return reduction(
-        a, _chunk_sum, _chunk_sum, axis=axis, dtype=dtype, concatenate=False
-    )
+    return reduction(a, _chunk_sum, _chunk_sum, axis=axis, dtype=dtype, concatenate=False)
 
 
 @derived_from(np)

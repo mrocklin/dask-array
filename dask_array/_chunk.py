@@ -1,4 +1,5 @@
 """A set of NumPy functions to apply per chunk"""
+
 from __future__ import annotations
 
 import itertools
@@ -124,10 +125,7 @@ def coarsen(reduction, x, axes, trim_excess=False, **kwargs):
             axes[i] = 1
 
     if trim_excess:
-        ind = tuple(
-            slice(0, -(d % axes[i])) if d % axes[i] else slice(None, None)
-            for i, d in enumerate(x.shape)
-        )
+        ind = tuple(slice(0, -(d % axes[i])) if d % axes[i] else slice(None, None) for i, d in enumerate(x.shape))
         x = x[ind]
 
     # (10, 10) -> (5, 2, 5, 2)
@@ -228,11 +226,7 @@ def topk_aggregate(a, k, axis, keepdims):
     a = np.sort(a, axis=axis)
     if k < 0:
         return a
-    return a[
-        tuple(
-            slice(None, None, -1) if i == axis else slice(None) for i in range(a.ndim)
-        )
-    ]
+    return a[tuple(slice(None, None, -1) if i == axis else slice(None) for i in range(a.ndim))]
 
 
 def argtopk_preprocess(a, idx):
@@ -257,9 +251,7 @@ def argtopk(a_plus_idx, k, axis, keepdims):
     if isinstance(a_plus_idx, list):
         a_plus_idx = list(flatten(a_plus_idx))
         a = np.concatenate([ai for ai, _ in a_plus_idx], axis)
-        idx = np.concatenate(
-            [np.broadcast_to(idxi, ai.shape) for ai, idxi in a_plus_idx], axis
-        )
+        idx = np.concatenate([np.broadcast_to(idxi, ai.shape) for ai, idxi in a_plus_idx], axis)
     else:
         a, idx = a_plus_idx
 
@@ -287,11 +279,7 @@ def argtopk_aggregate(a_plus_idx, k, axis, keepdims):
     idx = np.take_along_axis(idx, idx2, axis)
     if k < 0:
         return idx
-    return idx[
-        tuple(
-            slice(None, None, -1) if i == axis else slice(None) for i in range(idx.ndim)
-        )
-    ]
+    return idx[tuple(slice(None, None, -1) if i == axis else slice(None) for i in range(idx.ndim))]
 
 
 def getitem(obj, index):
@@ -318,10 +306,7 @@ def getitem(obj, index):
     try:
         result = obj[index]
     except IndexError as e:
-        raise ValueError(
-            "Array chunk size or shape is unknown. "
-            "Possible solution with x.compute_chunk_sizes()"
-        ) from e
+        raise ValueError("Array chunk size or shape is unknown. Possible solution with x.compute_chunk_sizes()") from e
 
     try:
         if not result.flags.owndata and obj.size >= 2 * result.size:
@@ -457,8 +442,4 @@ def slice_with_int_dask_array_aggregate(idx, chunk_outputs, x_chunks, axis):
 
     # np.take does not support slice indices
     # return np.take(chunk_outputs, idx_final, axis)
-    return chunk_outputs[
-        tuple(
-            idx_final if i == axis else slice(None) for i in range(chunk_outputs.ndim)
-        )
-    ]
+    return chunk_outputs[tuple(idx_final if i == axis else slice(None) for i in range(chunk_outputs.ndim))]

@@ -31,10 +31,7 @@ class FromGraph(ArrayExpr):
         if not is_hlg:
             layer_keys = {k for k in layer if isinstance(k, tuple)}
             if layer_keys and not (layer_keys & our_keys):
-                return {
-                    (self._name, *k[1:]) if isinstance(k, tuple) else k: v
-                    for k, v in layer.items()
-                }
+                return {(self._name, *k[1:]) if isinstance(k, tuple) else k: v for k, v in layer.items()}
 
         # HLG case (e.g., from BlockView): contains tasks and dependencies.
         # Rename output keys and preserve dependency structure.

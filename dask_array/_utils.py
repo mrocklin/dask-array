@@ -111,22 +111,11 @@ def meta_from_array(x, ndim=None, dtype=None):
         x = x(shape=(0,) * (ndim or 0), dtype=dtype)
 
     if isinstance(x, (list, tuple)):
-        ndims = [
-            (
-                0
-                if isinstance(a, numbers.Number)
-                else a.ndim if hasattr(a, "ndim") else len(a)
-            )
-            for a in x
-        ]
+        ndims = [(0 if isinstance(a, numbers.Number) else a.ndim if hasattr(a, "ndim") else len(a)) for a in x]
         a = [a if nd == 0 else meta_from_array(a, nd) for a, nd in zip(x, ndims)]
         return a if isinstance(x, list) else tuple(x)
 
-    if (
-        not hasattr(x, "shape")
-        or not hasattr(x, "dtype")
-        or not isinstance(x.shape, tuple)
-    ):
+    if not hasattr(x, "shape") or not hasattr(x, "dtype") or not isinstance(x.shape, tuple):
         return x
 
     if ndim is None:
@@ -312,19 +301,10 @@ def compute_meta(func, _dtype, *args, **kwargs):
         warnings.simplefilter("ignore", category=RuntimeWarning)
 
         args_meta = [
-            (
-                x._meta
-                if isinstance(x, ArrayExpr)
-                else meta_from_array(x) if is_arraylike(x) else x
-            )
-            for x in args
+            (x._meta if isinstance(x, ArrayExpr) else meta_from_array(x) if is_arraylike(x) else x) for x in args
         ]
         kwargs_meta = {
-            k: (
-                v._meta
-                if isinstance(v, ArrayExpr)
-                else meta_from_array(v) if is_arraylike(v) else v
-            )
+            k: (v._meta if isinstance(v, ArrayExpr) else meta_from_array(v) if is_arraylike(v) else v)
             for k, v in kwargs.items()
         }
 
@@ -352,9 +332,7 @@ def compute_meta(func, _dtype, *args, **kwargs):
                     return None
             except ValueError as e:
                 # min/max functions have no identity, just use the same input type when there's only one
-                if len(
-                    args_meta
-                ) == 1 and "zero-size array to reduction operation" in str(e):
+                if len(args_meta) == 1 and "zero-size array to reduction operation" in str(e):
                     meta = args_meta[0]
                 else:
                     return None

@@ -151,17 +151,11 @@ class LinspaceDelayed(ArrayExpr):
             _to_ref(self.num_bins),
             TaskList(_to_ref(self.range_start), _to_ref(self.range_stop)),
         )
-        return {
-            (self._name, 0): Task((self._name, 0), _linspace_from_range, bins_range)
-        }
+        return {(self._name, 0): Task((self._name, 0), _linspace_from_range, bins_range)}
 
     @property
     def _dependencies(self):
-        return [
-            v
-            for v in (self.range_start, self.range_stop, self.num_bins)
-            if isinstance(v, ArrayExpr)
-        ]
+        return [v for v in (self.range_start, self.range_stop, self.num_bins) if isinstance(v, ArrayExpr)]
 
 
 def histogram(a, bins=None, range=None, normed=False, weights=None, density=None):
@@ -226,27 +220,20 @@ def histogram(a, bins=None, range=None, normed=False, weights=None, density=None
     if range is not None:
         try:
             if len(range) != 2:
-                raise ValueError(
-                    f"range must be a sequence or array of length 2, but got {len(range)} items"
-                )
+                raise ValueError(f"range must be a sequence or array of length 2, but got {len(range)} items")
             if isinstance(range, (Array, np.ndarray)) and range.shape != (2,):
                 raise ValueError(
                     f"range must be a 1-dimensional array of two items, but got an array of shape {range.shape}"
                 )
         except TypeError:
-            raise TypeError(
-                f"Expected a sequence or array for range, not {range}"
-            ) from None
+            raise TypeError(f"Expected a sequence or array for range, not {range}") from None
 
     # Handle delayed bins/range
     range_has_dask = range is not None and any(is_dask_collection(r) for r in range)
     bins_is_dask_array = isinstance(bins, Array)
 
     if is_dask_collection(bins) and not bins_is_dask_array:
-        raise NotImplementedError(
-            "Delayed bins (non-Array) not yet supported in array-expr. "
-            "Use a dask Array instead."
-        )
+        raise NotImplementedError("Delayed bins (non-Array) not yet supported in array-expr. Use a dask Array instead.")
 
     # Extract range values
     range_start = range[0] if range is not None else None
@@ -273,9 +260,7 @@ def histogram(a, bins=None, range=None, normed=False, weights=None, density=None
                 nbins_expr = int(bins)
 
             # Create linspace expression for bin edges
-            linspace_expr = LinspaceDelayed(
-                nbins_expr, range_start_expr, range_stop_expr
-            )
+            linspace_expr = LinspaceDelayed(nbins_expr, range_start_expr, range_stop_expr)
             bins_edges = new_collection(linspace_expr)
 
             hist_expr = HistogramBinned(
@@ -291,9 +276,7 @@ def histogram(a, bins=None, range=None, normed=False, weights=None, density=None
             if not isinstance(bins, Array):
                 bins = asarray(bins)
             if bins.ndim != 1:
-                raise ValueError(
-                    f"bins must be a 1-dimensional array or sequence, got shape {bins.ndim}D"
-                )
+                raise ValueError(f"bins must be a 1-dimensional array or sequence, got shape {bins.ndim}D")
 
             # Rechunk bins to a single chunk for numpy.histogram
             bins_rechunked = bins.rechunk(-1)
@@ -331,9 +314,7 @@ def histogram(a, bins=None, range=None, normed=False, weights=None, density=None
         if not isinstance(bins, np.ndarray):
             bins = np.asarray(bins)
         if bins.ndim != 1:
-            raise ValueError(
-                f"bins must be a 1-dimensional array or sequence, got shape {bins.shape}"
-            )
+            raise ValueError(f"bins must be a 1-dimensional array or sequence, got shape {bins.shape}")
 
     # Create the histogram expression (concrete bins)
     hist_expr = HistogramBinned(
@@ -373,9 +354,7 @@ def _block_histogramdd_multiarg(*args):
     """
     bins, range_, weights = args[-3:]
     sample = args[:-3]
-    return np.histogramdd(sample, bins=bins, range=range_, weights=weights)[0][
-        np.newaxis
-    ]
+    return np.histogramdd(sample, bins=bins, range=range_, weights=weights)[0][np.newaxis]
 
 
 class HistogramDDBinned(ArrayExpr):
@@ -512,9 +491,7 @@ def histogramdd(sample, bins, range=None, normed=None, weights=None, density=Non
         dc_bins = dc_bins or any(is_dask_collection(b) for b in bins)
     dc_range = any(is_dask_collection(r) for r in range) if range is not None else False
     if dc_bins or dc_range:
-        raise NotImplementedError(
-            "Passing dask collections to bins=... or range=... is not supported."
-        )
+        raise NotImplementedError("Passing dask collections to bins=... or range=... is not supported.")
 
     # Determine sample structure
     if hasattr(sample, "shape"):
@@ -533,36 +510,26 @@ def histogramdd(sample, bins, range=None, normed=None, weights=None, density=Non
             if sample[i].chunks != sample[0].chunks:
                 raise ValueError("All coordinate arrays must be chunked identically.")
     else:
-        raise ValueError(
-            "Incompatible sample. Must be a 2D array or a sequence of 1D arrays."
-        )
+        raise ValueError("Incompatible sample. Must be a 2D array or a sequence of 1D arrays.")
 
     # Validate weights
     if weights is not None:
         if rectangular_sample and weights.chunks[0] != sample.chunks[0]:
             raise ValueError(
-                "Input array and weights must have the same shape "
-                "and chunk structure along the first dimension."
+                "Input array and weights must have the same shape and chunk structure along the first dimension."
             )
         elif not rectangular_sample and weights.numblocks[0] != n_chunks:
-            raise ValueError(
-                "Input arrays and weights must have the same shape "
-                "and chunk structure."
-            )
+            raise ValueError("Input arrays and weights must have the same shape and chunk structure.")
 
     # Validate bins
     if isinstance(bins, (list, tuple)):
         if len(bins) != D:
-            raise ValueError(
-                "The dimension of bins must be equal to the dimension of the sample."
-            )
+            raise ValueError("The dimension of bins must be equal to the dimension of the sample.")
 
     # Validate range
     if range is not None:
         if len(range) != D:
-            raise ValueError(
-                "range argument requires one entry, a min max pair, per dimension."
-            )
+            raise ValueError("range argument requires one entry, a min max pair, per dimension.")
         if not all(len(r) == 2 for r in range):
             raise ValueError("range argument should be a sequence of pairs")
 
@@ -571,11 +538,7 @@ def histogramdd(sample, bins, range=None, normed=None, weights=None, density=Non
         bins = (bins,) * D
 
     # Compute edges
-    if (
-        all(isinstance(b, int) for b in bins)
-        and range is not None
-        and all(len(r) == 2 for r in range)
-    ):
+    if all(isinstance(b, int) for b in bins) and range is not None and all(len(r) == 2 for r in range):
         edges = [np.linspace(r[0], r[1], b + 1) for b, r in zip(bins, range)]
     else:
         edges = [np.asarray(b) for b in bins]

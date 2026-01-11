@@ -33,11 +33,7 @@ class Concatenate(ArrayExpr):
     @functools.cached_property
     def chunks(self):
         bds = [a.chunks for a in self.args]
-        chunks = (
-            bds[0][: self.axis]
-            + (sum((bd[self.axis] for bd in bds), ()),)
-            + bds[0][self.axis + 1 :]
-        )
+        chunks = bds[0][: self.axis] + (sum((bd[self.axis] for bd in bds), ()),) + bds[0][self.axis + 1 :]
         return chunks
 
     @functools.cached_property
@@ -90,10 +86,7 @@ class Concatenate(ArrayExpr):
 
         # Shuffle each input
         arrays = self.args
-        shuffled_arrays = [
-            Shuffle(a, shuffle_expr.indexer, shuffle_axis, shuffle_expr.operand("name"))
-            for a in arrays
-        ]
+        shuffled_arrays = [Shuffle(a, shuffle_expr.indexer, shuffle_axis, shuffle_expr.operand("name")) for a in arrays]
 
         return type(self)(
             shuffled_arrays[0],
@@ -282,9 +275,7 @@ def concatenate(seq, axis=0, allow_unknown_chunksizes=False):
         axis = 0
 
     seq_metas = [meta_from_array(s) for s in seq]
-    _concatenate = concatenate_lookup.dispatch(
-        type(max(seq_metas, key=lambda x: getattr(x, "__array_priority__", 0)))
-    )
+    _concatenate = concatenate_lookup.dispatch(type(max(seq_metas, key=lambda x: getattr(x, "__array_priority__", 0))))
     meta = _concatenate(seq_metas, axis=axis)
 
     # Promote types to match meta
@@ -292,10 +283,7 @@ def concatenate(seq, axis=0, allow_unknown_chunksizes=False):
 
     # Find output array shape
     ndim = len(seq[0].shape)
-    shape = tuple(
-        sum(a.shape[i] for a in seq) if i == axis else seq[0].shape[i]
-        for i in range(ndim)
-    )
+    shape = tuple(sum(a.shape[i] for a in seq) if i == axis else seq[0].shape[i] for i in range(ndim))
 
     # Drop empty arrays
     seq2 = [a for a in seq if a.size]
@@ -305,10 +293,7 @@ def concatenate(seq, axis=0, allow_unknown_chunksizes=False):
     if axis < 0:
         axis = ndim + axis
     if axis >= ndim:
-        msg = (
-            "Axis must be less than than number of dimensions"
-            "\nData has %d dimensions, but got axis=%d"
-        )
+        msg = "Axis must be less than than number of dimensions\nData has %d dimensions, but got axis=%d"
         raise ValueError(msg % (ndim, axis))
 
     n = len(seq2)
@@ -321,8 +306,7 @@ def concatenate(seq, axis=0, allow_unknown_chunksizes=False):
         return seq2[0]
 
     if not allow_unknown_chunksizes and not all(
-        i == axis or all(x.shape[i] == seq2[0].shape[i] for x in seq2)
-        for i in range(ndim)
+        i == axis or all(x.shape[i] == seq2[0].shape[i] for x in seq2) for i in range(ndim)
     ):
         if any(map(np.isnan, seq2[0].shape)):
             raise ValueError(

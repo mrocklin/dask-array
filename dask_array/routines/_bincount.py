@@ -61,9 +61,7 @@ class BincountChunked(ArrayExpr):
         for i in range(len(self.x.chunks[0])):
             key = (self._name, i, 0)
             x_ref = TaskRef((self.x._name, i))
-            w_ref = (
-                TaskRef((self.weights._name, i)) if self.weights is not None else None
-            )
+            w_ref = TaskRef((self.weights._name, i)) if self.weights is not None else None
             dsk[key] = Task(key, _bincount_chunk, x_ref, w_ref, minlen)
         return dsk
 
@@ -98,9 +96,7 @@ def bincount(x, weights=None, minlength=0, split_every=None):
     else:
         output_size = minlength
 
-    chunked_counts = new_collection(
-        BincountChunked(x, weights, minlength, output_size, meta_provided=meta)
-    )
+    chunked_counts = new_collection(BincountChunked(x, weights, minlength, output_size, meta_provided=meta))
 
     if minlength > 0:
         return chunked_counts.sum(axis=0)

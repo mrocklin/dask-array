@@ -59,9 +59,7 @@ def searchsorted(a, v, side="left", sorter=None):
         raise ValueError("Input array a must be one dimensional")
 
     if sorter is not None:
-        raise NotImplementedError(
-            "da.searchsorted with a sorter argument is not supported"
-        )
+        raise NotImplementedError("da.searchsorted with a sorter argument is not supported")
 
     # call np.searchsorted for each pair of blocks in a and v
     meta = np.searchsorted(a._meta, v._meta)

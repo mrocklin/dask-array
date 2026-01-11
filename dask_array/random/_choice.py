@@ -40,9 +40,7 @@ def _choice_validate_params(state, a, size, replace, p, axis, chunks):
     if isinstance(a, Integral):
         if isinstance(state, Generator):
             if state._backend_name == "cupy":
-                raise NotImplementedError(
-                    "`choice` not supported for cupy-backed `Generator`."
-                )
+                raise NotImplementedError("`choice` not supported for cupy-backed `Generator`.")
             meta = state._backend.random.default_rng().choice(1, size=(), p=None)
         elif isinstance(state, RandomState):
             # On windows the output dtype differs if p is provided or
@@ -94,11 +92,7 @@ def _choice_validate_params(state, a, size, replace, p, axis, chunks):
 
     chunks = normalize_chunks(chunks, size, dtype=np.float64)
     if not replace and len(chunks[0]) > 1:
-        err_msg = (
-            "replace=False is not currently supported for "
-            "dask.array.choice with multi-chunk output "
-            "arrays"
-        )
+        err_msg = "replace=False is not currently supported for dask.array.choice with multi-chunk output arrays"
         raise NotImplementedError(err_msg)
 
     # For int a, return the int value; for array a, return None (use a_expr)

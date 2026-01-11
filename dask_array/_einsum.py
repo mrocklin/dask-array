@@ -33,9 +33,7 @@ def chunk_einsum(*operands, **kwargs):
     return chunk.reshape(chunk.shape + (1,) * ncontract_inds)
 
 
-def _calculate_new_chunksizes(
-    old_chunks, new_chunks, changeable_dimensions, target_size
-):
+def _calculate_new_chunksizes(old_chunks, new_chunks, changeable_dimensions, target_size):
     """Calculate new chunk sizes for einsum rechunking."""
     from dask_array._shuffle import _calculate_new_chunksizes as _calc
 
@@ -81,10 +79,7 @@ def _parse_einsum_input(operands, asarray):
                 elif isinstance(s, int):
                     subscripts += einsum_symbols[s]
                 else:
-                    raise TypeError(
-                        "For this input type lists must contain "
-                        "either int or Ellipsis"
-                    )
+                    raise TypeError("For this input type lists must contain either int or Ellipsis")
             if num != last:
                 subscripts += ","
 
@@ -96,10 +91,7 @@ def _parse_einsum_input(operands, asarray):
                 elif isinstance(s, int):
                     subscripts += einsum_symbols[s]
                 else:
-                    raise TypeError(
-                        "For this input type lists must contain "
-                        "either int or Ellipsis"
-                    )
+                    raise TypeError("For this input type lists must contain either int or Ellipsis")
     # Check for proper "->"
     if ("-" in subscripts) or (">" in subscripts):
         invalid = (subscripts.count("-") > 1) or (subscripts.count(">") > 1)
@@ -186,9 +178,7 @@ def _parse_einsum_input(operands, asarray):
 
     # Make sure number operands is equivalent to the number of terms
     if len(input_subscripts.split(",")) != len(operands):
-        raise ValueError(
-            "Number of einsum subscripts must be equal to the number of operands."
-        )
+        raise ValueError("Number of einsum subscripts must be equal to the number of operands.")
 
     return (input_subscripts, output_subscript, operands)
 
@@ -235,9 +225,7 @@ def einsum(*operands, dtype=None, optimize=False, split_every=None, **kwargs):
         # Calculate the increase in chunk size compared to the largest input chunk
         max_chunk_sizes, max_chunk_size_input = {}, 1
         for op, input in zip(ops, inputs):
-            max_chunk_size_input = max(
-                math.prod(map(cached_max, op.chunks)), max_chunk_size_input
-            )
+            max_chunk_size_input = max(math.prod(map(cached_max, op.chunks)), max_chunk_size_input)
             max_chunk_sizes.update(
                 {
                     inp: max(cached_max(op.chunks[i]), max_chunk_sizes.get(inp, 1))
@@ -247,9 +235,7 @@ def einsum(*operands, dtype=None, optimize=False, split_every=None, **kwargs):
             )
 
         max_chunk_size_output = math.prod(max_chunk_sizes.values())
-        factor = max_chunk_size_output / (
-            max_chunk_size_input * config.get("array.chunk-size-tolerance")
-        )
+        factor = max_chunk_size_output / (max_chunk_size_input * config.get("array.chunk-size-tolerance"))
 
         # Rechunk inputs to make input chunks smaller to avoid an increase in
         # output chunks
@@ -286,8 +272,6 @@ def einsum(*operands, dtype=None, optimize=False, split_every=None, **kwargs):
     # Now reduce over any extra contraction dimensions
     if ncontract_inds > 0:
         size = len(outputs)
-        return result.sum(
-            axis=list(range(size, size + ncontract_inds)), split_every=split_every
-        )
+        return result.sum(axis=list(range(size, size + ncontract_inds)), split_every=split_every)
 
     return result

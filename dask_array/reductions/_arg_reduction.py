@@ -24,9 +24,7 @@ class ArgChunk(ArrayExpr):
 
     @cached_property
     def _name(self):
-        return "arg-chunk-" + _tokenize_deterministic(
-            self.array, self.chunk_func, self.axis, self.ravel
-        )
+        return "arg-chunk-" + _tokenize_deterministic(self.array, self.chunk_func, self.axis, self.ravel)
 
     @cached_property
     def _meta(self):
@@ -43,10 +41,7 @@ class ArgChunk(ArrayExpr):
     @cached_property
     def chunks(self):
         # After the chunk step, each block is reduced to size 1 along the axis
-        return tuple(
-            (1,) * len(c) if i in self.axis else c
-            for (i, c) in enumerate(self.array.chunks)
-        )
+        return tuple((1,) * len(c) if i in self.axis else c for (i, c) in enumerate(self.array.chunks))
 
     def _layer(self):
         x = self.array
@@ -54,9 +49,7 @@ class ArgChunk(ArrayExpr):
         ravel = self.ravel
 
         keys = list(product(*map(range, x.numblocks)))
-        offsets = list(
-            product(*(accumulate(operator.add, bd[:-1], 0) for bd in x.chunks))
-        )
+        offsets = list(product(*(accumulate(operator.add, bd[:-1], 0) for bd in x.chunks)))
         if ravel:
             offset_info = list(zip(offsets, repeat(x.shape)))
         else:
@@ -73,9 +66,7 @@ class ArgChunk(ArrayExpr):
         return dsk
 
 
-def arg_reduction(
-    x, chunk, combine, agg, axis=None, keepdims=False, split_every=None, out=None
-):
+def arg_reduction(x, chunk, combine, agg, axis=None, keepdims=False, split_every=None, out=None):
     """Generic function for arg reductions in array-expr.
 
     Parameters

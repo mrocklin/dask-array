@@ -43,9 +43,7 @@ from dask_array._test_utils import assert_eq, same_keys
 @pytest.mark.parametrize("name", [None, "my-name"])
 @pytest.mark.parametrize("order", ["C", "F"])
 @pytest.mark.parametrize("dtype", ["i4"])
-def test_arr_like(
-    funcname, shape, cast_shape, dtype, cast_chunks, chunks, name, order, backend
-):
+def test_arr_like(funcname, shape, cast_shape, dtype, cast_chunks, chunks, name, order, backend):
     backend_lib = pytest.importorskip(backend)
     with dask.config.set({"array.backend": backend}):
         np_func = getattr(backend_lib, funcname)
@@ -156,12 +154,12 @@ def test_linspace(endpoint):
     darr = da.linspace(1.4, 4.9, endpoint=endpoint, chunks=5, num=13, dtype=int)
     nparr = np.linspace(1.4, 4.9, num=13, endpoint=endpoint, dtype=int)
     assert_eq(darr, nparr)
-    assert sorted(
+    assert sorted(da.linspace(1.4, 4.9, endpoint=endpoint, chunks=5, num=13).dask) == sorted(
         da.linspace(1.4, 4.9, endpoint=endpoint, chunks=5, num=13).dask
-    ) == sorted(da.linspace(1.4, 4.9, endpoint=endpoint, chunks=5, num=13).dask)
-    assert sorted(
+    )
+    assert sorted(da.linspace(6, 49, endpoint=endpoint, chunks=5, dtype=float).dask) == sorted(
         da.linspace(6, 49, endpoint=endpoint, chunks=5, dtype=float).dask
-    ) == sorted(da.linspace(6, 49, endpoint=endpoint, chunks=5, dtype=float).dask)
+    )
 
     x = da.array([0.2, 6.4, 3.0, 1.6])
     nparr = np.linspace(0, 2, 8, endpoint=endpoint)
@@ -218,12 +216,8 @@ def test_arange():
     darr = da.arange(2, 13, chunks=5, dtype=int)
     nparr = np.arange(2, 13, dtype=int)
     assert_eq(darr, nparr)
-    assert sorted(da.arange(2, 13, chunks=5).dask) == sorted(
-        da.arange(2, 13, chunks=5).dask
-    )
-    assert sorted(da.arange(77, chunks=13, dtype=float).dask) == sorted(
-        da.arange(77, chunks=13, dtype=float).dask
-    )
+    assert sorted(da.arange(2, 13, chunks=5).dask) == sorted(da.arange(2, 13, chunks=5).dask)
+    assert sorted(da.arange(77, chunks=13, dtype=float).dask) == sorted(da.arange(77, chunks=13, dtype=float).dask)
 
     # 0 size output
     darr = da.arange(0, 1, -0.5, chunks=20)
@@ -315,8 +309,7 @@ def test_arange_very_large_args(start, stop, step, chunks):
 
 
 @pytest.mark.xfail(
-    reason="Casting floats to ints is not supported since edge "
-    "behavior is not specified or guaranteed by NumPy."
+    reason="Casting floats to ints is not supported since edge behavior is not specified or guaranteed by NumPy."
 )
 def test_arange_cast_float_int_step():
     darr = da.arange(3.3, -9.1, -0.25, chunks=3, dtype="i8")
@@ -569,9 +562,7 @@ def test_diag_extraction(k):
     assert_eq(da.diag(d, k), np.diag(y, k))
 
 
-@pytest.mark.xfail(
-    da._array_expr_enabled(), reason="data_producer not implemented in array-expr"
-)
+@pytest.mark.xfail(da._array_expr_enabled(), reason="data_producer not implemented in array-expr")
 def test_creation_data_producers():
     x = np.arange(64).reshape((8, 8))
     d = da.from_array(x, chunks=(4, 4))
@@ -804,9 +795,7 @@ def test_tile_empty_array(shape, chunks, reps):
     assert_eq(np.tile(x, reps), da.tile(d, reps))
 
 
-@pytest.mark.parametrize(
-    "shape", [(3,), (2, 3), (3, 4, 3), (3, 2, 3), (4, 3, 2, 4), (2, 2)]
-)
+@pytest.mark.parametrize("shape", [(3,), (2, 3), (3, 4, 3), (3, 2, 3), (4, 3, 2, 4), (2, 2)])
 @pytest.mark.parametrize("reps", [(2,), (1, 2), (2, 1), (2, 2), (2, 3, 2), (3, 2)])
 def test_tile_np_kroncompare_examples(shape, reps):
     x = np.random.random(shape)
@@ -930,9 +919,7 @@ def test_pad_constant_values(np_a, pad_value):
 
 
 @pytest.mark.parametrize("dtype", [np.uint8, np.int16, np.float32, bool])
-@pytest.mark.parametrize(
-    "pad_widths", [2, (2,), (2, 3), ((2, 3),), ((3, 1), (0, 0), (2, 0))]
-)
+@pytest.mark.parametrize("pad_widths", [2, (2,), (2, 3), ((2, 3),), ((3, 1), (0, 0), (2, 0))])
 @pytest.mark.parametrize(
     "mode",
     [
@@ -966,9 +953,7 @@ def test_pad_constant_values(np_a, pad_value):
         ),
         pytest.param(
             "empty",
-            marks=pytest.mark.skip(
-                reason="Empty leads to undefined values, which may be different"
-            ),
+            marks=pytest.mark.skip(reason="Empty leads to undefined values, which may be different"),
         ),
     ],
 )
@@ -1006,9 +991,7 @@ def test_pad_udf(kwargs):
 
 def test_pad_constant_chunksizes():
     array = da.ones((10, 10), chunks=(1, 1))
-    result = da.pad(
-        array, ((0, 16 - 10), (0, 0)), mode="constant", constant_values=0
-    )
+    result = da.pad(array, ((0, 16 - 10), (0, 0)), mode="constant", constant_values=0)
     assert tuple(map(max, result.chunks)) == (1, 1)
     assert_eq(
         result,
@@ -1074,11 +1057,7 @@ def test_from_array_getitem_fused():
         dsk = collections_to_expr([result]).__dask_graph__()
         # Ensure that slices are merged properly
         key = [k for k in dsk if "array-getitem" in k[0]][0]
-        key_2 = [
-            k
-            for k, v in dsk[key].args[0].items()
-            if "getitem" in k[0] and not isinstance(v, Alias)
-        ][0]
+        key_2 = [k for k, v in dsk[key].args[0].items() if "getitem" in k[0] and not isinstance(v, Alias)][0]
         assert dsk[key].args[0][key_2].args[1] == ((slice(2, 4), slice(0, None)))
 
 

@@ -22,9 +22,7 @@ _DIMENSION_NAME = r"\w+"
 _CORE_DIMENSION_LIST = f"(?:{_DIMENSION_NAME}(?:,{_DIMENSION_NAME})*,?)?"
 _ARGUMENT = rf"\({_CORE_DIMENSION_LIST}\)"
 _INPUT_ARGUMENTS = f"(?:{_ARGUMENT}(?:,{_ARGUMENT})*,?)?"
-_OUTPUT_ARGUMENTS = (
-    f"{_ARGUMENT}(?:,{_ARGUMENT})*"  # Use `'{0:}(?:,{0:})*,?'` if gufunc-
-)
+_OUTPUT_ARGUMENTS = f"{_ARGUMENT}(?:,{_ARGUMENT})*"  # Use `'{0:}(?:,{0:})*,?'` if gufunc-
 # signature should be allowed for length 1 tuple returns
 _SIGNATURE = f"^{_INPUT_ARGUMENTS}->{_OUTPUT_ARGUMENTS}$"
 
@@ -49,13 +47,8 @@ def _parse_gufunc_signature(signature):
     if not re.match(_SIGNATURE, signature):
         raise ValueError(f"Not a valid gufunc signature: {signature}")
     in_txt, out_txt = signature.split("->")
-    ins = [
-        tuple(re.findall(_DIMENSION_NAME, arg)) for arg in re.findall(_ARGUMENT, in_txt)
-    ]
-    outs = [
-        tuple(re.findall(_DIMENSION_NAME, arg))
-        for arg in re.findall(_ARGUMENT, out_txt)
-    ]
+    ins = [tuple(re.findall(_DIMENSION_NAME, arg)) for arg in re.findall(_ARGUMENT, in_txt)]
+    outs = [tuple(re.findall(_DIMENSION_NAME, arg)) for arg in re.findall(_ARGUMENT, out_txt)]
     outs = outs[0] if ((len(outs) == 1) and (out_txt[-1] != ",")) else outs
     return ins, outs
 
@@ -86,9 +79,7 @@ def _validate_normalize_axes(axes, axis, keepdims, input_coredimss, output_cored
     nout = 1 if not isinstance(output_coredimss, list) else len(output_coredimss)
 
     if axes is not None and axis is not None:
-        raise ValueError(
-            "Only one of `axis` or `axes` keyword arguments should be given"
-        )
+        raise ValueError("Only one of `axis` or `axes` keyword arguments should be given")
     if axes and not isinstance(axes, list):
         raise ValueError("`axes` has to be of type list")
 
@@ -108,14 +99,10 @@ def _validate_normalize_axes(axes, axis, keepdims, input_coredimss, output_cored
         if filtered_core_dims:
             cd0 = filtered_core_dims[0]
             if len(cd0) != 1:
-                raise ValueError(
-                    "`axis` can be used only, if one core dimension is present"
-                )
+                raise ValueError("`axis` can be used only, if one core dimension is present")
             for cd in filtered_core_dims:
                 if cd0 != cd:
-                    raise ValueError(
-                        "To use `axis`, all core dimensions have to be equal"
-                    )
+                    raise ValueError("To use `axis`, all core dimensions have to be equal")
 
     # Expand defaults or axis
     if axes is None:
@@ -127,22 +114,14 @@ def _validate_normalize_axes(axes, axis, keepdims, input_coredimss, output_cored
         raise ValueError("`axes` argument has to be a list")
     axes = [(a,) if isinstance(a, int) else a for a in axes]
 
-    if (
-        (nr_outputs_with_coredims == 0)
-        and (nin != len(axes))
-        and (nin + nout != len(axes))
-    ) or ((nr_outputs_with_coredims > 0) and (nin + nout != len(axes))):
-        raise ValueError(
-            "The number of `axes` entries is not equal the number of input and output arguments"
-        )
+    if ((nr_outputs_with_coredims == 0) and (nin != len(axes)) and (nin + nout != len(axes))) or (
+        (nr_outputs_with_coredims > 0) and (nin + nout != len(axes))
+    ):
+        raise ValueError("The number of `axes` entries is not equal the number of input and output arguments")
 
     # Treat outputs
     output_axes = axes[nin:]
-    output_axes = (
-        output_axes
-        if output_axes
-        else [tuple(range(-len(ocd), 0)) for ocd in output_coredimss]
-    )
+    output_axes = output_axes if output_axes else [tuple(range(-len(ocd), 0)) for ocd in output_coredimss]
     input_axes = axes[:nin]
 
     # Assert we have as many axes as output core dimensions
@@ -163,9 +142,7 @@ def _validate_normalize_axes(axes, axis, keepdims, input_coredimss, output_cored
         icd0 = input_coredimss[0]
         for icd in input_coredimss:
             if icd0 != icd:
-                raise ValueError(
-                    "To use `keepdims`, all core dimensions have to be equal"
-                )
+                raise ValueError("To use `keepdims`, all core dimensions have to be equal")
         iax0 = input_axes[0]
         output_axes = [iax0 for _ in output_coredimss]
 
@@ -303,9 +280,7 @@ def apply_gufunc(
 
     ## Consolidate onto `meta`
     if meta is not None and output_dtypes is not None:
-        raise ValueError(
-            "Only one of `meta` and `output_dtypes` should be given (`meta` is preferred)."
-        )
+        raise ValueError("Only one of `meta` and `output_dtypes` should be given (`meta` is preferred).")
     if meta is None:
         if output_dtypes is None:
             ## Infer `output_dtypes`
@@ -313,16 +288,10 @@ def apply_gufunc(
                 tempfunc = np.vectorize(func, signature=signature)
             else:
                 tempfunc = func
-            output_dtypes = apply_infer_dtype(
-                tempfunc, args, kwargs, "apply_gufunc", "output_dtypes", nout
-            )
+            output_dtypes = apply_infer_dtype(tempfunc, args, kwargs, "apply_gufunc", "output_dtypes", nout)
 
         ## Turn `output_dtypes` into `meta`
-        if (
-            nout is None
-            and isinstance(output_dtypes, (tuple, list))
-            and len(output_dtypes) == 1
-        ):
+        if nout is None and isinstance(output_dtypes, (tuple, list)) and len(output_dtypes) == 1:
             output_dtypes = output_dtypes[0]
         sample = args[0] if args else None
         if nout is None:
@@ -367,9 +336,7 @@ def apply_gufunc(
         output_sizes = {}
 
     ## Axes
-    input_axes, output_axes = _validate_normalize_axes(
-        axes, axis, keepdims, input_coredimss, output_coredimss
-    )
+    input_axes, output_axes = _validate_normalize_axes(axes, axis, keepdims, input_coredimss, output_coredimss)
 
     # Main code:
     ## Cast all input arrays to dask
@@ -395,17 +362,11 @@ def apply_gufunc(
     input_chunkss = [a.chunks for a in args]
     num_loopdims = [len(s) - len(cd) for s, cd in zip(input_shapes, input_coredimss)]
     max_loopdims = max(num_loopdims) if num_loopdims else None
-    core_input_shapes = [
-        dict(zip(icd, s[n:]))
-        for s, n, icd in zip(input_shapes, num_loopdims, input_coredimss)
-    ]
+    core_input_shapes = [dict(zip(icd, s[n:])) for s, n, icd in zip(input_shapes, num_loopdims, input_coredimss)]
     core_shapes = merge(*core_input_shapes)
     core_shapes.update(output_sizes)
 
-    loop_input_dimss = [
-        tuple(f"__loopdim{d}__" for d in range(max_loopdims - n, max_loopdims))
-        for n in num_loopdims
-    ]
+    loop_input_dimss = [tuple(f"__loopdim{d}__" for d in range(max_loopdims - n, max_loopdims)) for n in num_loopdims]
     input_dimss = [l + c for l, c in zip(loop_input_dimss, input_coredimss)]
 
     loop_output_dims = max(loop_input_dimss, key=len) if loop_input_dimss else tuple()
@@ -437,13 +398,9 @@ def apply_gufunc(
                     "that this may increase memory usage significantly."
                 )
             #### Check if loop dimensions consist of same chunksizes, when they have sizes > 1
-            relevant_chunksizes = list(
-                unique(c for s, c in zip(sizes, chunksizes) if s > 1)
-            )
+            relevant_chunksizes = list(unique(c for s, c in zip(sizes, chunksizes) if s > 1))
             if len(relevant_chunksizes) > 1:
-                raise ValueError(
-                    f"Dimension `'{dim}'` with different chunksize present"
-                )
+                raise ValueError(f"Dimension `'{dim}'` with different chunksize present")
 
     ## Apply function - use blockwise here
     arginds = list(concat(zip(args, input_dimss)))
@@ -451,25 +408,21 @@ def apply_gufunc(
     ### Use existing `blockwise` but only with loopdims to enforce
     ### concatenation for coredims that appear also at the output
     ### Modifying `blockwise` could improve things here.
-    tmp = blockwise(
-        func, loop_output_dims, *arginds, concatenate=True, meta=meta, **kwargs
-    )
+    tmp = blockwise(func, loop_output_dims, *arginds, concatenate=True, meta=meta, **kwargs)
 
     # NOTE: we likely could just use `meta` instead of `tmp._meta`,
     # but we use it and validate it anyway just to be sure nothing odd has happened.
     metas = tmp._meta
     if nout is None:
-        assert not isinstance(
-            metas, (list, tuple)
-        ), f"meta changed from single output to multiple output during blockwise: {meta} -> {metas}"
+        assert not isinstance(metas, (list, tuple)), (
+            f"meta changed from single output to multiple output during blockwise: {meta} -> {metas}"
+        )
         metas = (metas,)
     else:
-        assert isinstance(
-            metas, (list, tuple)
-        ), f"meta changed from multiple output to single output during blockwise: {meta} -> {metas}"
-        assert (
-            len(metas) == nout
-        ), f"Number of outputs changed from {nout} to {len(metas)} during blockwise"
+        assert isinstance(metas, (list, tuple)), (
+            f"meta changed from multiple output to single output during blockwise: {meta} -> {metas}"
+        )
+        assert len(metas) == nout, f"Number of outputs changed from {nout} to {len(metas)} during blockwise"
 
     ## Prepare output shapes
     loop_output_shape = tmp.shape
@@ -562,17 +515,13 @@ class GUfuncLeafExpr(ArrayExpr):
 
     @functools.cached_property
     def chunks(self):
-        output_chunks = self.loop_output_chunks + tuple(
-            self.core_shapes[d] for d in self.ocd
-        )
+        output_chunks = self.loop_output_chunks + tuple(self.core_shapes[d] for d in self.ocd)
         return normalize_chunks(output_chunks, self._shape, dtype=self._meta.dtype)
 
     def _layer(self):
         core_chunkinds = len(self.ocd) * (0,)
         leaf_dsk = {
-            (self._name,)
-            + key[1:]
-            + core_chunkinds: ((getitem, key, self.i) if self.nout else key)
+            (self._name,) + key[1:] + core_chunkinds: ((getitem, key, self.i) if self.nout else key)
             for key in list(flatten(self.array.__dask_keys__()))
         }
         return leaf_dsk

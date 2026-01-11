@@ -174,11 +174,7 @@ def blockwise(
             "Repeated elements not allowed in output index",
             [k for k, v in toolz.frequencies(out_ind).items() if v > 1],
         )
-    new = (
-        set(out_ind)
-        - {a for arg in args[1::2] if arg is not None for a in arg}
-        - set(new_axes or ())
-    )
+    new = set(out_ind) - {a for arg in args[1::2] if arg is not None for a in arg} - set(new_axes or ())
     if new:
         raise ValueError("Unknown dimension", new)
 
@@ -291,8 +287,7 @@ def _normalize_out(out):
             out = None
     if not (out is None or isinstance(out, Array)):
         raise NotImplementedError(
-            f"The out parameter is not fully supported."
-            f" Received type {type(out).__name__}, expected Dask Array"
+            f"The out parameter is not fully supported. Received type {type(out).__name__}, expected Dask Array"
         )
     return out
 
@@ -308,8 +303,7 @@ def _handle_out(out, result):
     if isinstance(out, Array):
         if out.shape != result.shape:
             raise ValueError(
-                "Mismatched shapes between result and out parameter. "
-                f"out={out.shape}, result={result.shape}"
+                f"Mismatched shapes between result and out parameter. out={out.shape}, result={result.shape}"
             )
         # Modify the out array in-place by replacing its expression
         out._expr = result._expr

@@ -39,9 +39,7 @@ def apply_along_axis(func1d, axis, arr, *args, dtype=None, shape=None, **kwargs)
             dtype = test_result.dtype
 
     # Rechunk so that func1d is applied over the full axis.
-    arr = arr.rechunk(
-        arr.chunks[:axis] + (arr.shape[axis : axis + 1],) + arr.chunks[axis + 1 :]
-    )
+    arr = arr.rechunk(arr.chunks[:axis] + (arr.shape[axis : axis + 1],) + arr.chunks[axis + 1 :])
 
     # Map func1d over the data to get the result
     # Adds other axes as needed.
@@ -81,9 +79,6 @@ def apply_over_axes(func, a, axes):
         if result.ndim == (a.ndim - 1):
             result = result[sl[:i] + (None,)]
         elif result.ndim != a.ndim:
-            raise ValueError(
-                "func must either preserve dimensionality of the input"
-                " or reduce it by one."
-            )
+            raise ValueError("func must either preserve dimensionality of the input or reduce it by one.")
 
     return result

@@ -39,9 +39,7 @@ def repeat(a, repeats, axis=None):
                 slices.append(slice(ls_start, ls_stop))
 
     all_slice = slice(None, None, None)
-    slices = [
-        (all_slice,) * axis + (s,) + (all_slice,) * (a.ndim - axis - 1) for s in slices
-    ]
+    slices = [(all_slice,) * axis + (s,) + (all_slice,) * (a.ndim - axis - 1) for s in slices]
 
     slabs = [a[slc] for slc in slices]
 
@@ -51,9 +49,7 @@ def repeat(a, repeats, axis=None):
         assert len(chunks[axis]) == 1
         chunks[axis] = (chunks[axis][0] * repeats,)
         chunks = tuple(chunks)
-        result = slab.map_blocks(
-            np.repeat, repeats, axis=axis, chunks=chunks, dtype=slab.dtype
-        )
+        result = slab.map_blocks(np.repeat, repeats, axis=axis, chunks=chunks, dtype=slab.dtype)
         out.append(result)
 
     return concatenate(out, axis=axis)

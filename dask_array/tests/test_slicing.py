@@ -13,6 +13,7 @@ np = pytest.importorskip("numpy")
 import dask
 import dask_array as da
 from dask_array._chunk import getitem
+
 local_getitem = getitem  # alias for tests that check internal implementation
 from dask_array.slicing import normalize_index
 from dask_array.slicing._utils import (
@@ -237,12 +238,8 @@ def test_slice_array_2d():
             TaskRef(("x", 0, 0)),
             (slice(13, 20, 2), slice(10, 20, 1)),
         ),
-        ("y", 0, 1): Task(
-            ("y", 0, 1), getitem, TaskRef(("x", 0, 1)), (slice(13, 20, 2), slice(None))
-        ),
-        ("y", 0, 2): Task(
-            ("y", 0, 2), getitem, TaskRef(("x", 0, 2)), (slice(13, 20, 2), slice(None))
-        ),
+        ("y", 0, 1): Task(("y", 0, 1), getitem, TaskRef(("x", 0, 1)), (slice(13, 20, 2), slice(None))),
+        ("y", 0, 2): Task(("y", 0, 2), getitem, TaskRef(("x", 0, 2)), (slice(13, 20, 2), slice(None))),
     }
 
     result, chunks = slice_array(
@@ -293,11 +290,7 @@ def test_slice_optimizations():
 def test_slicing_with_singleton_indices():
     result, chunks = slice_array("y", "x", ([5, 5], [5, 5]), (slice(0, 5), 8))
 
-    expected = {
-        ("y", 0): Task(
-            ("y", 0), getitem, TaskRef(("x", 0, 1)), (slice(None, None, None), 3)
-        )
-    }
+    expected = {("y", 0): Task(("y", 0), getitem, TaskRef(("x", 0, 1)), (slice(None, None, None), 3))}
 
     assert expected == result
 
@@ -356,9 +349,7 @@ def test_slicing_chunks():
     result, chunks = slice_array("y", "x", ([5, 5], [5, 5]), (1, np.array([2, 0, 3])))
     assert chunks == ((3,),)
 
-    result, chunks = slice_array(
-        "y", "x", ([5, 5], [5, 5]), (slice(0, 7), np.array([2, 0, 3]))
-    )
+    result, chunks = slice_array("y", "x", ([5, 5], [5, 5]), (slice(0, 7), np.array([2, 0, 3])))
     assert chunks == ((5, 2), (3,))
 
     result, chunks = slice_array("y", "x", ([5, 5], [5, 5]), (slice(0, 7), 1))
@@ -472,12 +463,8 @@ def test_slicing_with_negative_step_flops_keys():
 
     assert y.chunks == ((5, 3),)
 
-    assert y.dask[(y.name, 0)] == Task(
-        (y.name, 0), local_getitem, TaskRef((x.name, 1)), (slice(-1, -6, -1),)
-    )
-    assert y.dask[(y.name, 1)] == Task(
-        (y.name, 1), local_getitem, TaskRef((x.name, 0)), (slice(-1, -4, -1),)
-    )
+    assert y.dask[(y.name, 0)] == Task((y.name, 0), local_getitem, TaskRef((x.name, 1)), (slice(-1, -6, -1),))
+    assert y.dask[(y.name, 1)] == Task((y.name, 1), local_getitem, TaskRef((x.name, 0)), (slice(-1, -4, -1),))
 
 
 def test_empty_slice():
@@ -661,9 +648,7 @@ def test_index_with_int_dask_array(x_chunks, idx_chunks, request):
     # - pick from different chunks of x out of order
     # - a chunk of x contains no matches
     # - only one chunk of x
-    x = np.array(
-        [[10, 20, 30, 40, 50], [60, 70, 80, 90, 100], [110, 120, 130, 140, 150]]
-    )
+    x = np.array([[10, 20, 30, 40, 50], [60, 70, 80, 90, 100], [110, 120, 130, 140, 150]])
     idx = np.array([3, 0, 1])
     expect = np.array([[40, 10, 20], [90, 60, 70], [140, 110, 120]])
 
@@ -713,18 +698,14 @@ def test_index_with_int_dask_array_indexerror(chunks):
         a[idx].compute()
 
 
-@pytest.mark.parametrize(
-    "dtype", ["int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64"]
-)
+@pytest.mark.parametrize("dtype", ["int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64"])
 def test_index_with_int_dask_array_dtypes(dtype):
     a = da.from_array([10, 20, 30, 40], chunks=-1)
     idx = da.from_array(np.array([1, 2]).astype(dtype), chunks=1)
     assert_eq(a[idx], np.array([20, 30]))
 
 
-@pytest.mark.skip(
-    reason="Test uses legacy dask.array.Array constructor; not applicable to dask_array standalone"
-)
+@pytest.mark.skip(reason="Test uses legacy dask.array.Array constructor; not applicable to dask_array standalone")
 def test_index_with_int_dask_array_nocompute():
     """Test that when the indices are a dask array
     they are not accidentally computed
@@ -774,9 +755,7 @@ def test_cull():
 
 
 @pytest.mark.parametrize("shape", [(2,), (2, 3), (2, 3, 5)])
-@pytest.mark.parametrize(
-    "index", [(Ellipsis,), (None, Ellipsis), (Ellipsis, None), (None, Ellipsis, None)]
-)
+@pytest.mark.parametrize("index", [(Ellipsis,), (None, Ellipsis), (Ellipsis, None), (None, Ellipsis, None)])
 def test_slicing_with_Nones(shape, index):
     x = np.random.default_rng().random(shape)
     d = da.from_array(x, chunks=shape)
@@ -881,9 +860,7 @@ def test_getitem_avoids_large_chunks():
         a = np.arange(2 * 128 * 128, dtype="int64").reshape(2, 128, 128)
         indexer = [0] + [1] * 11
         arr = da.from_array(a, chunks=(1, 8, 8))
-        result = arr[
-            indexer
-        ]  # small chunks within the chunk-size limit should NOT raise PerformanceWarning
+        result = arr[indexer]  # small chunks within the chunk-size limit should NOT raise PerformanceWarning
         expected = a[indexer]
         assert_eq(result, expected)
 
@@ -994,9 +971,7 @@ def test_make_blockwise_sorted_slice():
 
 
 @pytest.mark.filterwarnings("ignore:Slicing:dask.array.core.PerformanceWarning")
-@pytest.mark.parametrize(
-    "size, chunks", [((100, 2), (50, 2)), ((100, 2), (37, 1)), ((100,), (55,))]
-)
+@pytest.mark.parametrize("size, chunks", [((100, 2), (50, 2)), ((100, 2), (37, 1)), ((100,), (55,))])
 def test_shuffle_slice(size, chunks):
     x = da.random.default_rng().integers(0, 1000, size=size, chunks=chunks)
     index = np.arange(len(x))

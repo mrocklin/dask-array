@@ -72,16 +72,12 @@ def block(arrays, allow_unknown_chunksizes=False):
     first_axis = ndim - list_ndim
 
     # Make all the elements the same dimension
-    arrays = rec.map_reduce(
-        arrays, f_map=lambda xi: atleast_nd(xi, ndim), f_reduce=list
-    )
+    arrays = rec.map_reduce(arrays, f_map=lambda xi: atleast_nd(xi, ndim), f_reduce=list)
 
     # Concatenate innermost lists on the right, outermost on the left
     return rec.map_reduce(
         arrays,
-        f_reduce=lambda xs, axis: concatenate(
-            list(xs), axis=axis, allow_unknown_chunksizes=allow_unknown_chunksizes
-        ),
+        f_reduce=lambda xs, axis: concatenate(list(xs), axis=axis, allow_unknown_chunksizes=allow_unknown_chunksizes),
         f_kwargs=lambda axis: dict(axis=(axis + 1)),
         axis=first_axis,
     )

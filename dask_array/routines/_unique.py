@@ -72,12 +72,8 @@ class UniqueChunked(ArrayExpr):
         for i in range(len(self.x.chunks[0])):
             key = (self._name, i)
             x_ref = TaskRef((self.x._name, i))
-            idx_ref = (
-                TaskRef((self.indices._name, i)) if self.indices is not None else None
-            )
-            cnt_ref = (
-                TaskRef((self.counts._name, i)) if self.counts is not None else None
-            )
+            idx_ref = TaskRef((self.indices._name, i)) if self.indices is not None else None
+            cnt_ref = TaskRef((self.counts._name, i)) if self.counts is not None else None
             dsk[key] = Task(key, _unique_internal, x_ref, idx_ref, cnt_ref, False)
         return dsk
 
@@ -124,9 +120,7 @@ class UniqueAggregate(ArrayExpr):
         return f"unique-aggregate-{self.deterministic_token}"
 
     def _layer(self):
-        chunk_keys = [
-            (self.chunked._name, i) for i in range(len(self.chunked.chunks[0]))
-        ]
+        chunk_keys = [(self.chunked._name, i) for i in range(len(self.chunked.chunks[0]))]
         key = (self._name, 0)
         chunks_list = List(*[TaskRef(k) for k in chunk_keys])
         dsk = {key: Task(key, _unique_aggregate_func, chunks_list, self.return_inverse)}
@@ -137,9 +131,7 @@ class UniqueAggregate(ArrayExpr):
         return [self.chunked]
 
 
-def unique_no_structured_arr(
-    ar, return_index=False, return_inverse=False, return_counts=False
-):
+def unique_no_structured_arr(ar, return_index=False, return_inverse=False, return_counts=False):
     """Simplified version of unique for arrays that don't support structured arrays."""
     from dask_array._blockwise import Blockwise
     from dask_array._expr import ChunksOverride
@@ -154,9 +146,7 @@ def unique_no_structured_arr(
     ar = ravel(ar)
     out = Blockwise(np.unique, "i", ar, "i", dtype=ar.dtype)
     chunked = new_collection(out)
-    chunked = new_collection(
-        ChunksOverride(chunked.expr, ((np.nan,) * len(ar.chunks[0]),))
-    )
+    chunked = new_collection(ChunksOverride(chunked.expr, ((np.nan,) * len(ar.chunks[0]),)))
 
     def _unique_agg(arrays, axis, keepdims):
         if not isinstance(arrays, list):
@@ -212,11 +202,7 @@ def unique(ar, return_index=False, return_inverse=False, return_counts=False):
         out_dtype,
     )
 
-    final_dtype = (
-        out_dtype
-        if not return_inverse
-        else np.dtype(list(out_dtype.descr) + [("inverse", np.intp)])
-    )
+    final_dtype = out_dtype if not return_inverse else np.dtype(list(out_dtype.descr) + [("inverse", np.intp)])
     aggregated = new_collection(UniqueAggregate(chunked, return_inverse, final_dtype))
 
     result = [aggregated["values"]]

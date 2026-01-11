@@ -58,7 +58,6 @@ def _clean_header(header):
 
 
 class ArrayExpr(SingletonExpr):
-
     # Whether this expression can be fused with other blockwise operations.
     # Override to True in subclasses that support fusion (Blockwise, Random, etc.)
     _is_blockwise_fusable = False
@@ -184,10 +183,7 @@ class ArrayExpr(SingletonExpr):
         if not self.chunks:
             raise TypeError("len() of unsized object")
         if np.isnan(self.chunks[0]).any():
-            msg = (
-                "Cannot call len() on object with unknown chunk size."
-                f"{unknown_chunk_message}"
-            )
+            msg = f"Cannot call len() on object with unknown chunk size.{unknown_chunk_message}"
             raise ValueError(msg)
         return int(sum(self.chunks[0]))
 
@@ -202,9 +198,7 @@ class ArrayExpr(SingletonExpr):
                 return List(TaskRef((name,)))
             ind = len(args)
             if ind + 1 == len(numblocks):
-                result = List(
-                    *(TaskRef((name,) + args + (i,)) for i in range(numblocks[ind]))
-                )
+                result = List(*(TaskRef((name,) + args + (i,)) for i in range(numblocks[ind])))
             else:
                 result = List(*(keys(*(args + (i,))) for i in range(numblocks[ind])))
             return result
@@ -253,22 +247,13 @@ class ArrayExpr(SingletonExpr):
         # Pre-resolve chunks to check for no-op and avoid singleton caching issues
         resolved_chunks = chunks
         if isinstance(chunks, dict):
-            normalized_dict = {
-                validate_axis(k, self.ndim): v for k, v in chunks.items()
-            }
+            normalized_dict = {validate_axis(k, self.ndim): v for k, v in chunks.items()}
             resolved_chunks = tuple(
-                (
-                    normalized_dict[i]
-                    if i in normalized_dict and normalized_dict[i] is not None
-                    else self.chunks[i]
-                )
+                (normalized_dict[i] if i in normalized_dict and normalized_dict[i] is not None else self.chunks[i])
                 for i in range(self.ndim)
             )
         if isinstance(resolved_chunks, (tuple, list)):
-            resolved_chunks = tuple(
-                lc if lc is not None else rc
-                for lc, rc in zip(resolved_chunks, self.chunks)
-            )
+            resolved_chunks = tuple(lc if lc is not None else rc for lc, rc in zip(resolved_chunks, self.chunks))
         resolved_chunks = normalize_chunks(
             resolved_chunks,
             self.shape,
@@ -281,9 +266,7 @@ class ArrayExpr(SingletonExpr):
         if not balance and resolved_chunks == self.chunks:
             return self
 
-        result = Rechunk(
-            self, resolved_chunks, threshold, block_size_limit, balance, method
-        )
+        result = Rechunk(self, resolved_chunks, threshold, block_size_limit, balance, method)
         # Ensure that chunks are compatible
         result.chunks
         return result
@@ -382,9 +365,7 @@ def unify_chunks_expr(*args, warn=True):
     arrays, inds = zip(*arginds)
     if all(ind is None for ind in inds):
         return {}, list(arrays), False
-    if all(ind == inds[0] for ind in inds) and all(
-        a.chunks == arrays[0].chunks for a in arrays
-    ):
+    if all(ind == inds[0] for ind in inds) and all(a.chunks == arrays[0].chunks for a in arrays):
         return dict(zip(inds[0], arrays[0].chunks)), arrays, False
 
     nameinds = []
@@ -416,11 +397,7 @@ def unify_chunks_expr(*args, warn=True):
             pass  # Skip scalars, literals, ArrayBlockwiseDep
         else:
             chunks = tuple(
-                (
-                    chunkss[j]
-                    if a.shape[n] > 1
-                    else (a.shape[n],) if not np.isnan(sum(chunkss[j])) else None
-                )
+                (chunkss[j] if a.shape[n] > 1 else (a.shape[n],) if not np.isnan(sum(chunkss[j])) else None)
                 for n, j in enumerate(i)
             )
             if chunks != a.chunks and all(a.chunks):

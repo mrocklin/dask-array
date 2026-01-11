@@ -42,9 +42,7 @@ def _broadcast_array_arg(arg, size, target_chunks):
     return arg
 
 
-def _wrap_func(
-    rng, funcname, *args, size=None, chunks="auto", extra_chunks=(), **kwargs
-):
+def _wrap_func(rng, funcname, *args, size=None, chunks="auto", extra_chunks=(), **kwargs):
     from ._expr import RandomNormal, RandomPoisson
 
     if size is not None and not isinstance(size, (tuple, list)):
@@ -67,13 +65,9 @@ def _wrap_func(
 
     # Broadcast and rechunk array arguments to match output shape/chunks
     if size is not None and shapes:
-        target_chunks = normalize_chunks(
-            chunks, size, dtype=kwargs.get("dtype", np.float64)
-        )
+        target_chunks = normalize_chunks(chunks, size, dtype=kwargs.get("dtype", np.float64))
         args = tuple(_broadcast_array_arg(arg, size, target_chunks) for arg in args)
-        kwargs = {
-            k: _broadcast_array_arg(v, size, target_chunks) for k, v in kwargs.items()
-        }
+        kwargs = {k: _broadcast_array_arg(v, size, target_chunks) for k, v in kwargs.items()}
 
     # Dispatch to specific subclass if available
     if funcname == "normal":
@@ -87,6 +81,4 @@ def _wrap_func(
     # Fallback: use generic Random with args/kwargs tuples
     from ._expr import Random
 
-    return new_collection(
-        Random(rng, funcname, size, chunks, extra_chunks, args, kwargs)
-    )
+    return new_collection(Random(rng, funcname, size, chunks, extra_chunks, args, kwargs))

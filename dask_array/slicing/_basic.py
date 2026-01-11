@@ -98,9 +98,7 @@ def slice_with_int_dask_array(x, index):
 
     assert len(index) == x.ndim
     fancy_indexes = [
-        isinstance(idx, (tuple, list))
-        or (isinstance(idx, (np.ndarray, Array)) and idx.ndim > 0)
-        for idx in index
+        isinstance(idx, (tuple, list)) or (isinstance(idx, (np.ndarray, Array)) and idx.ndim > 0) for idx in index
     ]
     if sum(fancy_indexes) > 1:
         raise NotImplementedError("Don't yet support nd fancy indexing")
@@ -120,8 +118,7 @@ def slice_with_int_dask_array(x, index):
                 out_index.append(slice(None))
             else:
                 raise NotImplementedError(
-                    "Slicing with dask.array of ints only permitted when "
-                    "the indexer has zero or one dimensions"
+                    "Slicing with dask.array of ints only permitted when the indexer has zero or one dimensions"
                 )
         else:
             out_index.append(idx)
@@ -209,10 +206,7 @@ def slice_with_int_dask_array_on_axis(x, idx, axis):
     assert 0 <= axis < x.ndim
 
     if np.isnan(x.chunks[axis]).any():
-        raise NotImplementedError(
-            "Slicing an array with unknown chunks with "
-            "a dask.array of ints is not supported"
-        )
+        raise NotImplementedError("Slicing an array with unknown chunks with a dask.array of ints is not supported")
     x_axes = tuple(range(x.ndim))
     idx_axes = (x.ndim,)  # arbitrary index not already in x_axes
     offset_axes = (axis,)
@@ -277,9 +271,7 @@ def slice_array(x, index):
     slice_wrap_lists : handle fancy indexing with lists
     slice_slices_and_integers : handle everything else
     """
-    if all(
-        isinstance(index, slice) and index == slice(None, None, None) for index in index
-    ):
+    if all(isinstance(index, slice) and index == slice(None, None, None) for index in index):
         # all none slices
         return x.expr
 
@@ -333,9 +325,7 @@ def slice_wrap_lists(x, index, allow_getitem_optimization):
         raise IndexError("Too many indices for array")
 
     # Do we have more than one list in the index?
-    where_list = [
-        i for i, ind in enumerate(index) if is_arraylike(ind) and ind.ndim > 0
-    ]
+    where_list = [i for i, ind in enumerate(index) if is_arraylike(ind) and ind.ndim > 0]
     if len(where_list) > 1:
         raise NotImplementedError("Don't yet support nd fancy indexing")
     # Is the single list an empty list? In this case just treat it as a zero
@@ -350,9 +340,7 @@ def slice_wrap_lists(x, index, allow_getitem_optimization):
         return slice_slices_and_integers(x, index, allow_getitem_optimization)
 
     # Replace all lists with full slices  [3, 1, 0] -> slice(None, None, None)
-    index_without_list = tuple(
-        slice(None, None, None) if is_arraylike(i) else i for i in index
-    )
+    index_without_list = tuple(slice(None, None, None) if is_arraylike(i) else i for i in index)
 
     # lists and full slices.  Just use take
     if all(is_arraylike(i) or i == slice(None, None, None) for i in index):
@@ -366,9 +354,7 @@ def slice_wrap_lists(x, index, allow_getitem_optimization):
             allow_getitem_optimization=False,
         )
         axis = where_list[0]
-        axis2 = axis - sum(
-            1 for i, ind in enumerate(index) if i < axis and isinstance(ind, Integral)
-        )
+        axis2 = axis - sum(1 for i, ind in enumerate(index) if i < axis and isinstance(ind, Integral))
         x = take(x, index[axis], axis=axis2)
 
     return x
@@ -381,9 +367,7 @@ def slice_slices_and_integers(x, index, allow_getitem_optimization=False):
 
     for dim, ind in zip(shape, index):
         if np.isnan(dim) and ind != slice(None, None, None):
-            raise ValueError(
-                f"Arrays chunk sizes are unknown: {shape}{unknown_chunk_message}"
-            )
+            raise ValueError(f"Arrays chunk sizes are unknown: {shape}{unknown_chunk_message}")
     assert all(isinstance(ind, (slice, Integral)) for ind in index)
     return SliceSlicesIntegers(x, index, allow_getitem_optimization)
 
@@ -418,9 +402,7 @@ def take(x, index, axis=0):
     else:
         from dask_array._core_utils import unknown_chunk_message
 
-        raise ValueError(
-            f"Array chunk size or shape is unknown. {unknown_chunk_message}"
-        )
+        raise ValueError(f"Array chunk size or shape is unknown. {unknown_chunk_message}")
 
 
 class Slice(ArrayExpr):
@@ -448,9 +430,7 @@ class SliceSlicesIntegers(Slice):
                     normalize_slice(idx, dim) if isinstance(idx, slice) else idx
                     for idx, dim in zip(fused, self.array.array.shape)
                 )
-                return SliceSlicesIntegers(
-                    self.array.array, normalized, self.allow_getitem_optimization
-                )
+                return SliceSlicesIntegers(self.array.array, normalized, self.allow_getitem_optimization)
             except NotImplementedError:
                 # Skip fusion for unsupported slicing patterns (e.g., negative step)
                 pass
@@ -495,15 +475,11 @@ class SliceSlicesIntegers(Slice):
 
     def _layer(self) -> dict:
         # Get a list (for each dimension) of dicts{blocknum: slice()}
-        block_slices = list(
-            map(_slice_1d, self.array.shape, self.array.chunks, self.index)
-        )
+        block_slices = list(map(_slice_1d, self.array.shape, self.array.chunks, self.index))
         sorted_block_slices = [sorted(i.items()) for i in block_slices]
 
         # (in_name, 1, 1, 2), (in_name, 1, 1, 4), (in_name, 2, 1, 2), ...
-        in_names = list(
-            product([self.array._name], *[pluck(0, s) for s in sorted_block_slices])
-        )
+        in_names = list(product([self.array._name], *[pluck(0, s) for s in sorted_block_slices]))
 
         # (out_name, 0, 0, 0), (out_name, 0, 0, 1), (out_name, 0, 1, 0), ...
         out_names = list(
@@ -522,8 +498,7 @@ class SliceSlicesIntegers(Slice):
         dsk_out = {
             out_name: (
                 Task(out_name, getitem, TaskRef(in_name), slices)
-                if not self.allow_getitem_optimization
-                or not all(sl == slice(None, None, None) for sl in slices)
+                if not self.allow_getitem_optimization or not all(sl == slice(None, None, None) for sl in slices)
                 else Alias(out_name, in_name)
             )
             for out_name, in_name, slices in zip(out_names, in_names, all_slices)
@@ -564,14 +539,9 @@ class TakeUnknownOneChunk(Slice):
         slices = [slice(None)] * len(self.array.chunks)
         slices[self.axis] = list(self.index)
         sl = tuple(slices)
-        chunk_tuples = list(
-            product(*(range(len(c)) for i, c in enumerate(self.array.chunks)))
-        )
+        chunk_tuples = list(product(*(range(len(c)) for i, c in enumerate(self.array.chunks))))
         dsk = {
-            (self._name,)
-            + ct: Task(
-                (self._name,) + ct, getitem, TaskRef((self.array.name,) + ct), sl
-            )
+            (self._name,) + ct: Task((self._name,) + ct, getitem, TaskRef((self.array.name,) + ct), sl)
             for ct in chunk_tuples
         }
         return dsk

@@ -279,9 +279,7 @@ def compression_matrix(
     data = asanyarray(data)
 
     if iterator not in ["power", "QR"]:
-        raise ValueError(
-            f"Iterator '{iterator}' not valid, must be one of ['power', 'QR']"
-        )
+        raise ValueError(f"Iterator '{iterator}' not valid, must be one of ['power', 'QR']")
     m, n = data.shape
     comp_level = compression_level(min(m, n), q, n_oversamples=n_oversamples)
     if isinstance(seed, RandomState):
@@ -291,9 +289,9 @@ def compression_matrix(
     datatype = np.float64
     if (data.dtype).type in {np.float32, np.complex64}:
         datatype = np.float32
-    omega = state.standard_normal(
-        size=(n, comp_level), chunks=(data.chunks[1], (comp_level,))
-    ).astype(datatype, copy=False)
+    omega = state.standard_normal(size=(n, comp_level), chunks=(data.chunks[1], (comp_level,))).astype(
+        datatype, copy=False
+    )
     mat_h = data.dot(omega)
     if iterator == "power":
         for _ in range(n_power_iter):

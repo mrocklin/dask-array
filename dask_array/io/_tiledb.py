@@ -55,10 +55,7 @@ def from_tiledb(uri, attribute=None, chunks=None, storage_options=None, **kwargs
 
     if not attribute:
         if tdb.schema.nattr > 1:
-            raise TypeError(
-                "keyword 'attribute' must be provided"
-                "when loading a multi-attribute TileDB array"
-            )
+            raise TypeError("keyword 'attribute' must be providedwhen loading a multi-attribute TileDB array")
         else:
             attribute = tdb.schema.attr(0).name
 
@@ -139,27 +136,21 @@ def to_tiledb(
 
     if not _check_regular_chunks(darray.chunks):
         raise ValueError(
-            "Attempt to save array to TileDB with irregular "
-            "chunking, please call `arr.rechunk(...)` first."
+            "Attempt to save array to TileDB with irregular chunking, please call `arr.rechunk(...)` first."
         )
 
     if isinstance(uri, str):
         chunks = [c[0] for c in darray.chunks]
         # create a suitable, empty, writable TileDB array
-        tdb = tiledb.empty_like(
-            uri, darray, tile=chunks, config=tiledb_config, key=key, **kwargs
-        )
+        tdb = tiledb.empty_like(uri, darray, tile=chunks, config=tiledb_config, key=key, **kwargs)
     elif isinstance(uri, tiledb.Array):
         tdb = uri
         # sanity checks
         if not ((darray.dtype == tdb.dtype) and (darray.ndim == tdb.ndim)):
-            raise ValueError(
-                "Target TileDB array layout is not compatible with source array"
-            )
+            raise ValueError("Target TileDB array layout is not compatible with source array")
     else:
         raise ValueError(
-            "'uri' must be string pointing to supported TileDB store location "
-            "or an open, writable TileDB array."
+            "'uri' must be string pointing to supported TileDB store location or an open, writable TileDB array."
         )
 
     if not (tdb.isopen and tdb.iswritable):

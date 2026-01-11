@@ -25,11 +25,7 @@ class BroadcastTo(ArrayExpr):
     def _meta(self):
         meta_override = self.operand("_meta_override")
         # Only use meta_override if it has the correct ndim
-        if (
-            meta_override is not None
-            and hasattr(meta_override, "ndim")
-            and meta_override.ndim == len(self._shape)
-        ):
+        if meta_override is not None and hasattr(meta_override, "ndim") and meta_override.ndim == len(self._shape):
             return meta_override
         return meta_from_array(self.array._meta, ndim=len(self._shape))
 
@@ -47,9 +43,7 @@ class BroadcastTo(ArrayExpr):
         enumerated_chunks = product(*(enumerate(bds) for bds in chunks))
         for ec in enumerated_chunks:
             new_index, chunk_shape = zip(*ec)
-            old_index = tuple(
-                0 if bd == (1,) else i for bd, i in zip(x.chunks, new_index[ndim_new:])
-            )
+            old_index = tuple(0 if bd == (1,) else i for bd, i in zip(x.chunks, new_index[ndim_new:]))
             old_key = (x._name,) + old_index
             new_key = (self._name,) + new_index
             dsk[new_key] = Task(new_key, np.broadcast_to, TaskRef(old_key), chunk_shape)
@@ -173,9 +167,7 @@ class BroadcastTo(ArrayExpr):
                     # Broadcasted - compute new chunks from old
                     idx = full_index[out_dim]
                     start, stop, _ = idx.indices(output_shape[out_dim])
-                    new_chunks.append(
-                        self._slice_chunks(old_chunk, start, stop - start)
-                    )
+                    new_chunks.append(self._slice_chunks(old_chunk, start, stop - start))
                 else:
                     # Use sliced input's chunks
                     new_chunks.append(sliced_input.expr.chunks[in_dim])
@@ -260,20 +252,15 @@ def broadcast_to(x, shape, chunks=None, meta=None):
         return x
 
     ndim_new = len(shape) - x.ndim
-    if ndim_new < 0 or any(
-        new != old for new, old in zip(shape[ndim_new:], x.shape) if old != 1
-    ):
+    if ndim_new < 0 or any(new != old for new, old in zip(shape[ndim_new:], x.shape) if old != 1):
         raise ValueError(f"cannot broadcast shape {x.shape} to shape {shape}")
 
     if chunks is None:
         chunks = tuple((s,) for s in shape[:ndim_new]) + tuple(
-            bd if old > 1 else (new,)
-            for bd, old, new in zip(x.chunks, x.shape, shape[ndim_new:])
+            bd if old > 1 else (new,) for bd, old, new in zip(x.chunks, x.shape, shape[ndim_new:])
         )
     else:
-        chunks = normalize_chunks(
-            chunks, shape, dtype=x.dtype, previous_chunks=x.chunks
-        )
+        chunks = normalize_chunks(chunks, shape, dtype=x.dtype, previous_chunks=x.chunks)
         for old_bd, new_bd in zip(x.chunks, chunks[ndim_new:]):
             if old_bd != new_bd and old_bd != (1,):
                 raise ValueError(
