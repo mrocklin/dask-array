@@ -1,57 +1,48 @@
 # Dask Array Standalone Package
 
-This is a standalone extraction of dask array expressions from the main dask repository.
-This project will replace the dask.array project in the future.
+This is a re-implementation of dask arrays with a query optimization system, array expressions.
 
-## Initial Project Goal
+This provides large scale, chunked, parallel n-dimensional arrays that know how
+to optimize themselves.
 
-Extract `dask/array/_array_expr/` into a standalone package that:
-- Imports as `import dask_array as da`
-- Depends on dask for core infrastructure (expressions, task spec, schedulers)
-- Has its own implementations of utilities (not importing from `dask.array`)
-- Targets modern numpy (>= 2.0)
+## Drop-in Replacement for dask.array
 
-## Architecture
-
-Array expressions separate **intent** from **execution**:
+Normal Dask arrays can be used as follows:
 
 ```python
-# User code creates expression tree
-result = (x + y).sum(axis=0)
-
-# Expression tree: Sum(Elemwise(+, x.expr, y.expr), axis=0)
-# Graph generated only at compute time
+import dask.array as da
 ```
 
-### Core Components
+We're exactly the same
+
+```python
+import dask_array as da
+```
+
+Except that now computations will rearrange themselves into more
+computationally efficient forms.
+
+## Relationship with Original Dask Repository
+
+This repository still depends on the original Dask repository for task
+schedulers, task specifications, and so on, but it doesn't borrow from the
+legacy dask.array package, or any of the HighLevelGraph machinery.  It also
+borrows the original Expression (Expr) system originally designed for Dask
+DataFrames.
+
+## Core Components
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
 | `ArrayExpr` | `_expr.py` | Base class for all expressions |
-| `Array` | `_collection.py` | User-facing wrapper |
+| `Array` | `_collection.py` | User-facing wrapper, provides API and mutation|
 | `Blockwise` | `_blockwise.py` | Aligned block operations |
 | `Elemwise` | `_blockwise.py` | Broadcasting element-wise ops |
-
-### Key Dependencies on dask (OK to keep)
-
-- `dask._expr` - Expression base classes
-- `dask._task_spec` - Task specification
-- `dask.base` - `DaskMethodsMixin`, `compute`, `persist`
-- `dask.threaded`, `dask.multiprocessing` - Schedulers
-
-### Dependencies to Remove/Copy
-
-We're working to remove imports from:
-- `dask.array.utils` - Copy needed utilities locally
-- `dask.array.core` - Copy needed helper functions
-- `dask.array.reductions` - Already mostly done
-- `dask.array.slicing` - Copy needed utilities
-- `dask.array.numpy_compat` - Simplify for numpy >= 2.0
-- `dask.highlevelgraph` - Graph representation
-- `dask.array.dispatch` - Type dispatch infrastructure
-- `dask.array.backends` - Backend system
+| ...  | ... | various other ArrayExpr subclasses |
 
 ## Repository Structure
+
+TODO: review and update
 
 ```
 dask_array/
@@ -93,7 +84,7 @@ uv run python -m pytest dask_array/tests/test_reductions.py -q
 
 ### Testing Pattern
 
-We mostly depend on existing tests that we're pulling from the dask.array
+We mostly depend on existing tests that we're pulling from the legacy dask.array
 project.  They often look like this:
 
 ```python
@@ -107,38 +98,10 @@ def test_sum():
     assert_eq(d.sum(), x.sum())
 ```
 
-Sometimes we also have tests for optimizations (this is new to array
-expressions).
+Notably:
 
-## Current Status
-
-### Working
-- Expression system and optimizations (slice pushdown, fusion, etc.)
-- Creation functions (ones, zeros, arange, from_array, etc.)
-- Reductions (sum, mean, var, std, min, max, argmin, argmax, median, quantile, etc.)
-- Slicing and indexing
-- Basic linear algebra (dot, matmul, tensordot)
-- Random number generation
-- FFT operations
-
-### In Progress
-- Removing `dask.array` imports (see `plans/reduce-dask-array-imports.md`)
-
-## Key Principles
-
-1. **Expression-based**: All operations build expression trees, graphs generated at compute time
-2. **Standalone**: Minimize imports from `dask.array.*` modules
-3. **Modern**: Target numpy >= 2.0, Python >= 3.10
-4. **Simple**: Avoid unnecessary abstraction, keep implementations clear
-
-## Plans
-
-See `plans/` directory for implementation plans:
-- `reduce-dask-array-imports.md` - Plan to reduce dask.array dependencies
-
-## Anti-patterns
-
-- **Don't** import from `dask.array.foo` - use `dask_array.foo`
-- **Don't** import from `dask.array.core` for utilities - copy them locally
-- **Don't** create dask.array.Array objects - use dask_array.Array
-- **Don't** put function implementations in `_collection.py` - keep in separate modules
+-  We use pytest
+-  We use flat functions (not grouped into classes)
+-  We compare behavior against numpy
+-  We use `assert_eq`, which tests various things about the Dask object structure, aside from value equality
+-  Tests are very fast when possible (milliseconds)
