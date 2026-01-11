@@ -1627,26 +1627,20 @@ def test_stack_unknown_chunk_sizes(np_func, dsk_func, nan_chunk):
     x = da.ones(shape, chunks=(50, 50, 50))
     y = np.ones(shape)
 
-    if da._array_expr_enabled():
-        # For array-expr, use boolean indexing to create unknown chunks on axis 0
-        mask = da.ones(100, chunks=50) > 0.5  # Always true but dask doesn't know
-        x_base = x[mask]  # Shape: (nan, 100, 100), unknown on axis 0
+    # Use boolean indexing to create unknown chunks on axis 0
+    mask = da.ones(100, chunks=50) > 0.5  # Always true but dask doesn't know
+    x_base = x[mask]  # Shape: (nan, 100, 100), unknown on axis 0
 
-        # Move unknown chunks to the correct axis for each function:
-        # - hstack (concat axis=1): needs unknown on axis 0 or 2 -> axis 0 works
-        # - dstack (concat axis=2): needs unknown on axis 0 or 1 -> axis 0 works
-        # - vstack (concat axis=0): needs unknown on axis 1 or 2 -> transpose to axis 1
-        if nan_chunk == 2:  # vstack needs unknown on non-0 axis
-            # Transpose to move unknown from axis 0 to axis 1: (nan, 100, 100) -> (100, nan, 100)
-            x = x_base.transpose(1, 0, 2)
-            y = y.transpose(1, 0, 2)
-        else:
-            x = x_base
+    # Move unknown chunks to the correct axis for each function:
+    # - hstack (concat axis=1): needs unknown on axis 0 or 2 -> axis 0 works
+    # - dstack (concat axis=2): needs unknown on axis 0 or 1 -> axis 0 works
+    # - vstack (concat axis=0): needs unknown on axis 1 or 2 -> transpose to axis 1
+    if nan_chunk == 2:  # vstack needs unknown on non-0 axis
+        # Transpose to move unknown from axis 0 to axis 1: (nan, 100, 100) -> (100, nan, 100)
+        x = x_base.transpose(1, 0, 2)
+        y = y.transpose(1, 0, 2)
     else:
-        # Traditional implementation allows direct chunk manipulation
-        tmp = list(x._chunks)
-        tmp[nan_chunk] = (np.nan,) * 2
-        x._chunks = tuple(tmp)
+        x = x_base
 
     with pytest.raises(ValueError):
         dsk_func((x, x))
@@ -1669,7 +1663,7 @@ def test_take():
     assert same_keys(da.take(a, [3, 4, 5], axis=-1), da.take(a, [3, 4, 5], axis=-1))
 
 
-@pytest.mark.skipif(da._array_expr_enabled(), reason="hangs - lazy evaluation issue")
+@pytest.mark.skip(reason="hangs - lazy evaluation issue")
 def test_take_large():
     a = da.arange(1_000_000_000_000, chunks=(200_000_000,), dtype="int64")
 

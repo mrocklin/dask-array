@@ -127,11 +127,7 @@ def test_arr_like_shape(funcname, kwargs, shape, dtype, chunks, out_shape):
         assert_eq(np_r, da_r)
 
 
-@pytest.mark.xfail(
-    da._array_expr_enabled(),
-    reason="dask scalar inputs not supported in array-expr",
-    strict=False,
-)
+@pytest.mark.skip(reason="dask scalar inputs not supported")
 @pytest.mark.parametrize("endpoint", [True, False])
 def test_linspace(endpoint):
     darr = da.linspace(6, 49, endpoint=endpoint, chunks=5)
@@ -562,7 +558,7 @@ def test_diag_extraction(k):
     assert_eq(da.diag(d, k), np.diag(y, k))
 
 
-@pytest.mark.xfail(da._array_expr_enabled(), reason="data_producer not implemented in array-expr")
+@pytest.mark.skip(reason="data_producer not implemented")
 def test_creation_data_producers():
     x = np.arange(64).reshape((8, 8))
     d = da.from_array(x, chunks=(4, 4))
@@ -1052,14 +1048,6 @@ def test_from_array_getitem_fused():
     # Always check correctness
     assert_eq(result, arr[slice(1, 5), :][slice(1, 3), :])
 
-    # Check internal slice fusion only in traditional mode (implementation detail)
-    if not da._array_expr_enabled():
-        dsk = collections_to_expr([result]).__dask_graph__()
-        # Ensure that slices are merged properly
-        key = [k for k in dsk if "array-getitem" in k[0]][0]
-        key_2 = [k for k, v in dsk[key].args[0].items() if "getitem" in k[0] and not isinstance(v, Alias)][0]
-        assert dsk[key].args[0][key_2].args[1] == ((slice(2, 4), slice(0, None)))
-
 
 @pytest.mark.parametrize("shape_chunks", [((50, 4), (10, 2)), ((50,), (10,))])
 @pytest.mark.parametrize("dtype", ["u4", np.float32, None, np.int64])
@@ -1098,20 +1086,8 @@ def test_nan_full_like(val, shape_chunks, dtype):
         da.array,
         da.asarray,
         da.asanyarray,
-        pytest.param(
-            da.arange,
-            marks=pytest.mark.xfail(
-                da._array_expr_enabled(),
-                reason="graph serialization differs in array-expr",
-            ),
-        ),
-        pytest.param(
-            da.tri,
-            marks=pytest.mark.xfail(
-                da._array_expr_enabled(),
-                reason="graph serialization differs in array-expr",
-            ),
-        ),
+        pytest.param(da.arange, marks=pytest.mark.skip(reason="graph serialization differs")),
+        pytest.param(da.tri, marks=pytest.mark.skip(reason="graph serialization differs")),
     ],
 )
 def test_like_forgets_graph(func):

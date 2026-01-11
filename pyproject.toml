@@ -35,6 +35,9 @@ packages = ["dask_array"]
 [tool.pytest.ini_options]
 testpaths = ["dask_array/tests"]
 addopts = "-v"
+markers = [
+    "slow: Skipped unless --runslow passed",
+]
 filterwarnings = [
     "error:::numpy[.*]",
 ]

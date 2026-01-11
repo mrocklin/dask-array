@@ -619,7 +619,6 @@ def test_general_reduction_names():
     assert all(tokens)
 
 
-@pytest.mark.skipif(not da._array_expr_enabled(), reason="array-expr only")
 def test_reduction_intermediate_chunks():
     """Test that intermediate reduction results have correct chunk sizes."""
     x = da.ones((10, 12), chunks=(5, 4))

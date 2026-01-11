@@ -30,8 +30,6 @@ from dask_array._test_utils import assert_eq, same_keys
 
 # Legacy helper functions for testing - these test dask.array internals, not dask_array expressions
 # These functions have different signatures/behavior than the expression-based versions in dask_array.slicing
-def _skip_legacy_slicing_test():
-    pytest.skip("Test uses legacy dask.array.slicing internals; not applicable to dask_array standalone")
 
 
 def test_slice_1d():
@@ -183,203 +181,11 @@ def test_slice_singleton_value_on_boundary():
     assert _slice_1d(30, (5, 5, 5, 5, 5, 5), 10) == {2: 0}
 
 
-@pytest.mark.skip(reason="Test uses legacy dask.array.slicing internals; not applicable to dask_array standalone")
-def test_slice_array_1d():
-    # x[24::2]
-    expected = {
-        ("y", 0): Task(("y", 0), getitem, TaskRef(("x", 0)), (slice(24, 25, 2),)),
-        ("y", 1): Task(("y", 1), getitem, TaskRef(("x", 1)), (slice(1, 25, 2),)),
-        ("y", 2): Task(("y", 2), getitem, TaskRef(("x", 2)), (slice(0, 25, 2),)),
-        ("y", 3): Task(("y", 3), getitem, TaskRef(("x", 3)), (slice(1, 25, 2),)),
-    }
-    result, chunks = slice_array("y", "x", [[25] * 4], [slice(24, None, 2)])
-
-    assert expected == result
-
-    # x[26::2]
-    expected = {
-        ("y", 0): Task(("y", 0), getitem, TaskRef(("x", 1)), (slice(1, 25, 2),)),
-        ("y", 1): Task(("y", 1), getitem, TaskRef(("x", 2)), (slice(0, 25, 2),)),
-        ("y", 2): Task(("y", 2), getitem, TaskRef(("x", 3)), (slice(1, 25, 2),)),
-    }
-
-    result, chunks = slice_array("y", "x", [[25] * 4], [slice(26, None, 2)])
-    assert expected == result
-
-    # x[24::2]
-    expected = {
-        ("y", 0): Task(("y", 0), getitem, TaskRef(("x", 0)), (slice(24, 25, 2),)),
-        ("y", 1): Task(("y", 1), getitem, TaskRef(("x", 1)), (slice(1, 25, 2),)),
-        ("y", 2): Task(("y", 2), getitem, TaskRef(("x", 2)), (slice(0, 25, 2),)),
-        ("y", 3): Task(("y", 3), getitem, TaskRef(("x", 3)), (slice(1, 25, 2),)),
-    }
-    result, chunks = slice_array("y", "x", [(25,) * 4], (slice(24, None, 2),))
-
-    assert expected == result
-
-    # x[26::2]
-    expected = {
-        ("y", 0): Task(("y", 0), getitem, TaskRef(("x", 1)), (slice(1, 25, 2),)),
-        ("y", 1): Task(("y", 1), getitem, TaskRef(("x", 2)), (slice(0, 25, 2),)),
-        ("y", 2): Task(("y", 2), getitem, TaskRef(("x", 3)), (slice(1, 25, 2),)),
-    }
-
-    result, chunks = slice_array("y", "x", [(25,) * 4], (slice(26, None, 2),))
-    assert expected == result
-
-
-@pytest.mark.skip(reason="Test uses legacy dask.array.slicing internals; not applicable to dask_array standalone")
-def test_slice_array_2d():
-    # 2d slices: x[13::2,10::1]
-    expected = {
-        ("y", 0, 0): Task(
-            ("y", 0, 0),
-            getitem,
-            TaskRef(("x", 0, 0)),
-            (slice(13, 20, 2), slice(10, 20, 1)),
-        ),
-        ("y", 0, 1): Task(("y", 0, 1), getitem, TaskRef(("x", 0, 1)), (slice(13, 20, 2), slice(None))),
-        ("y", 0, 2): Task(("y", 0, 2), getitem, TaskRef(("x", 0, 2)), (slice(13, 20, 2), slice(None))),
-    }
-
-    result, chunks = slice_array(
-        "y",
-        "x",
-        [[20], [20, 20, 5]],
-        [slice(13, None, 2), slice(10, None, 1)],
-    )
-
-    assert expected == result
-
-    # 2d slices with one dimension: x[5,10::1]
-    expected = {
-        ("y", 0): Task(("y", 0), getitem, TaskRef(("x", 0, 0)), (5, slice(10, 20, 1))),
-        ("y", 1): Task(("y", 1), getitem, TaskRef(("x", 0, 1)), (5, slice(None))),
-        ("y", 2): Task(("y", 2), getitem, TaskRef(("x", 0, 2)), (5, slice(None))),
-    }
-
-    result, chunks = slice_array("y", "x", ([20], [20, 20, 5]), [5, slice(10, None, 1)])
-
-    assert expected == result
-
-
 def test_mixed_index():
     da_array = da.ones((1, 1, 31, 40))
     new = da_array[(np.array([0]), 0, slice(None), slice(None))]
     assert isinstance(new, da.Array)
     assert_eq(new, da_array[0])
-
-
-@pytest.mark.skip(reason="Test uses legacy dask.array.slicing internals; not applicable to dask_array standalone")
-def test_slice_optimizations():
-    # bar[:]
-    with pytest.raises(SlicingNoop):
-        slice_array("foo", "bar", [[100]], (slice(None, None, None),))
-
-    # bar[:,:,:]
-    with pytest.raises(SlicingNoop):
-        slice_array(
-            "foo",
-            "bar",
-            [(100, 1000, 10000)],
-            (slice(None, None, None), slice(None, None, None), slice(None, None, None)),
-        )
-
-
-@pytest.mark.skip(reason="Test uses legacy dask.array.slicing internals; not applicable to dask_array standalone")
-def test_slicing_with_singleton_indices():
-    result, chunks = slice_array("y", "x", ([5, 5], [5, 5]), (slice(0, 5), 8))
-
-    expected = {("y", 0): Task(("y", 0), getitem, TaskRef(("x", 0, 1)), (slice(None, None, None), 3))}
-
-    assert expected == result
-
-
-@pytest.mark.skip(reason="Test uses legacy dask.array.slicing internals; not applicable to dask_array standalone")
-def test_slicing_with_newaxis():
-    result, chunks = slice_array(
-        "y",
-        "x",
-        ([5, 5], [5, 5]),
-        (slice(0, 3), None, slice(None, None, None)),
-    )
-
-    expected = {
-        ("y", 0, 0, 0): Task(
-            ("y", 0, 0, 0),
-            getitem,
-            TaskRef(("x", 0, 0)),
-            (slice(0, 3, 1), None, slice(None, None, None)),
-        ),
-        ("y", 0, 0, 1): Task(
-            ("y", 0, 0, 1),
-            getitem,
-            TaskRef(("x", 0, 1)),
-            (slice(0, 3, 1), None, slice(None, None, None)),
-        ),
-    }
-
-    assert expected == result
-    assert chunks == ((3,), (1,), (5, 5))
-
-
-@pytest.mark.skip(reason="Test uses legacy dask.array.slicing internals; not applicable to dask_array standalone")
-def test_take():
-    chunks, dsk = take("y-y", "x", [(20, 20, 20, 20)], [5, 1, 47, 3], axis=0)
-    assert len(dsk) == 6
-    assert chunks == ((4,),)
-
-    chunks, dsk = take("y-y", "x", [(20, 20, 20, 20), (20, 20)], [5, 1, 47, 3], axis=0)
-    assert len(dsk) == 9
-    assert chunks == ((4,), (20, 20))
-
-
-@pytest.mark.skip(reason="Test uses legacy dask.array.slicing internals; not applicable to dask_array standalone")
-def test_take_sorted():
-    chunks, dsk = take("y-y", "x", [(20, 20, 20, 20)], [1, 3, 5, 47], axis=0)
-    assert len(dsk) == 6
-    assert chunks == ((4,),)
-    chunks, dsk = take("y", "x", [(20, 20, 20, 20)], np.arange(0, 80), axis=0)
-    assert len(dsk) == 4
-    assert chunks == ((20, 20, 20, 20),)
-
-
-@pytest.mark.skip(reason="Test uses legacy dask.array.slicing internals; not applicable to dask_array standalone")
-def test_slicing_chunks():
-    result, chunks = slice_array("y", "x", ([5, 5], [5, 5]), (1, np.array([2, 0, 3])))
-    assert chunks == ((3,),)
-
-    result, chunks = slice_array("y", "x", ([5, 5], [5, 5]), (slice(0, 7), np.array([2, 0, 3])))
-    assert chunks == ((5, 2), (3,))
-
-    result, chunks = slice_array("y", "x", ([5, 5], [5, 5]), (slice(0, 7), 1))
-    assert chunks == ((5, 2),)
-
-
-@pytest.mark.skip(reason="Test uses legacy dask.array.slicing internals; not applicable to dask_array standalone")
-def test_slicing_with_numpy_arrays():
-    a, bd1 = slice_array(
-        "y-y",
-        "x",
-        ((3, 3, 3, 1), (3, 3, 3, 1)),
-        (np.array([1, 2, 9]), slice(None, None, None)),
-    )
-    b, bd2 = slice_array(
-        "y-y",
-        "x",
-        ((3, 3, 3, 1), (3, 3, 3, 1)),
-        (np.array([1, 2, 9]), slice(None, None, None)),
-    )
-
-    assert bd1 == bd2
-    np.testing.assert_equal(a, b)
-
-    i = [False, True, True, False, False, False, False, False, False, True]
-    index = (i, slice(None, None, None))
-    index = normalize_index(index, (10, 10))
-    c, bd3 = slice_array("y-y", "x", ((3, 3, 3, 1), (3, 3, 3, 1)), index)
-    assert bd1 == bd3
-    np.testing.assert_equal(a, c)
 
 
 def test_slicing_and_chunks():
@@ -560,73 +366,6 @@ def test_sanitize_index():
     np.testing.assert_equal(sanitize_index((1, 2, 3)), [1, 2, 3])
 
 
-@pytest.mark.skip(reason="Test uses legacy dask.array.slicing internals; not applicable to dask_array standalone")
-def test_uneven_blockdims():
-    blockdims = ((31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30), (100,))
-    index = (slice(240, 270), slice(None))
-    dsk_out, bd_out = slice_array("in", "out", blockdims, index)
-    sol = {
-        ("in", 0, 0): Task(
-            ("in", 0, 0),
-            getitem,
-            TaskRef(("out", 7, 0)),
-            (slice(28, 31, 1), slice(None)),
-        ),
-        ("in", 1, 0): Task(
-            ("in", 1, 0),
-            getitem,
-            TaskRef(("out", 8, 0)),
-            (slice(0, 27, 1), slice(None)),
-        ),
-    }
-    assert dsk_out == sol
-    assert bd_out == ((3, 27), (100,))
-
-    blockdims = ((31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30),) * 2
-    index = (slice(240, 270), slice(180, 230))
-    dsk_out, bd_out = slice_array("in", "out", blockdims, index)
-    sol = {
-        ("in", 0, 0): Task(
-            ("in", 0, 0),
-            getitem,
-            TaskRef(("out", 7, 5)),
-            (slice(28, 31, 1), slice(29, 30, 1)),
-        ),
-        ("in", 0, 1): Task(
-            ("in", 0, 0),
-            getitem,
-            TaskRef(("out", 7, 6)),
-            (slice(28, 31, 1), slice(None)),
-        ),
-        ("in", 0, 2): Task(
-            ("in", 0, 0),
-            getitem,
-            TaskRef(("out", 7, 7)),
-            (slice(28, 31, 1), slice(0, 18, 1)),
-        ),
-        ("in", 1, 0): Task(
-            ("in", 0, 0),
-            getitem,
-            TaskRef(("out", 8, 5)),
-            (slice(0, 27, 1), slice(29, 30, 1)),
-        ),
-        ("in", 1, 1): Task(
-            ("in", 0, 0),
-            getitem,
-            TaskRef(("out", 8, 6)),
-            (slice(0, 27, 1), slice(None)),
-        ),
-        ("in", 1, 2): Task(
-            ("in", 0, 0),
-            getitem,
-            TaskRef(("out", 8, 7)),
-            (slice(0, 27, 1), slice(0, 18, 1)),
-        ),
-    }
-    assert dsk_out == sol
-    assert bd_out == ((3, 27), (1, 31, 18))
-
-
 def test_oob_check():
     x = da.ones(5, chunks=(2,))
     with pytest.raises(IndexError):
@@ -703,16 +442,6 @@ def test_index_with_int_dask_array_dtypes(dtype):
     a = da.from_array([10, 20, 30, 40], chunks=-1)
     idx = da.from_array(np.array([1, 2]).astype(dtype), chunks=1)
     assert_eq(a[idx], np.array([20, 30]))
-
-
-@pytest.mark.skip(reason="Test uses legacy dask.array.Array constructor; not applicable to dask_array standalone")
-def test_index_with_int_dask_array_nocompute():
-    """Test that when the indices are a dask array
-    they are not accidentally computed
-    """
-    # This test would require importing dask.array.core.Array which we want to avoid.
-    # The legacy Array constructor is not part of the dask_array standalone package.
-    pass
 
 
 def test_index_with_bool_dask_array():
@@ -901,33 +630,6 @@ def test_getitem_avoids_large_chunks_missing():
         assert_eq(result, expected)
 
 
-@pytest.mark.skip(reason="Test uses legacy dask.array.slicing internals; not applicable to dask_array standalone")
-def test_take_avoids_large_chunks():
-    # unit test for https://github.com/dask/dask/issues/6270
-    with dask.config.set({"array.slicing.split-large-chunks": True}):
-        chunks = ((1, 1, 1, 1), (500,), (500,))
-        index = np.array([0, 1] + [2] * 101 + [3])
-        chunks2, dsk = take("a", "b", chunks, index)
-        assert chunks2 == ((1,) * 104, (500,), (500,))
-        assert len(dsk) == 105
-
-        index = np.array([0] * 101 + [1, 2, 3])
-        chunks2, dsk = take("a", "b", chunks, index)
-        assert chunks2 == ((1,) * 104, (500,), (500,))
-        assert len(dsk) == 105
-
-        index = np.array([0, 1, 2] + [3] * 101)
-        chunks2, dsk = take("a", "b", chunks, index)
-        assert chunks2 == ((1,) * 104, (500,), (500,))
-        assert len(dsk) == 105
-
-        chunks = ((500,), (1, 1, 1, 1), (500,))
-        index = np.array([0, 1, 2] + [3] * 101)
-        chunks2, dsk = take("a", "b", chunks, index, axis=1)
-        assert chunks2 == ((500,), (1,) * 104, (500,))
-        assert len(dsk) == 105
-
-
 def test_pathological_unsorted_slicing():
     x = da.ones(100, chunks=10)
 
@@ -1110,22 +812,8 @@ def test_positional_indexer_newaxis():
     [
         (10, 10),
         (np.nan, np.nan),
-        pytest.param(
-            (10, np.nan),
-            marks=pytest.mark.xfail(
-                not da._array_expr_enabled(),
-                reason="Not implemented in traditional mode",
-                strict=True,
-            ),
-        ),
-        pytest.param(
-            (np.nan, 10),
-            marks=pytest.mark.xfail(
-                not da._array_expr_enabled(),
-                reason="Not implemented in traditional mode",
-                strict=True,
-            ),
-        ),
+        (10, np.nan),
+        (np.nan, 10),
     ],
 )
 def test_boolean_mask_with_unknown_shape(
