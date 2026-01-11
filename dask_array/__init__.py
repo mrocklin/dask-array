@@ -4,12 +4,6 @@ import dask_array._backends
 from dask_array import _chunk as chunk
 from dask_array._core_utils import PerformanceWarning
 
-
-def _array_expr_enabled():
-    """Always True for standalone dask-array package."""
-    return True
-
-
 from dask_array import fft, random
 from dask_array._collection import (
     Array,
@@ -49,7 +43,6 @@ from dask_array._einsum import einsum
 from dask_array._gufunc import *
 from dask_array._histogram import histogram, histogram2d, histogramdd
 from dask_array._map_blocks import map_blocks
-from dask_array._optimize import optimize
 from dask_array._overlap import map_overlap, overlap, trim_overlap
 from dask_array._routines import (
     aligned_coarsen_chunks,
@@ -178,3 +171,5 @@ from dask_array.reductions import (
 )
 from dask_array.routines._diff import diff
 from dask_array.routines._where import where
+from dask_array._expr_flow import expr_flow
+from dask_array._visualize import expr_table

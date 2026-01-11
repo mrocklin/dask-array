@@ -372,12 +372,24 @@ class Array(DaskMethodsMixin):
             nbytes = "unknown"
             cbytes = "unknown"
 
+        # Expression flow summary and diagram
+        from dask_array._expr_flow import build_flow_graph, render_flow_svg, count_operations
+
+        try:
+            nodes, edges = build_flow_graph(self._expr)
+            n_expr = count_operations(self._expr)
+            expr_flow = render_flow_svg(self._expr) if nodes else ""
+        except Exception:
+            n_expr = 1
+            expr_flow = ""
+
         return ARRAY_TEMPLATE.render(
             array=self,
             grid=grid,
             nbytes=nbytes,
             cbytes=cbytes,
-            ntasks=len(self.__dask_graph__()),
+            n_expr=n_expr,
+            expr_flow=expr_flow,
         )
 
     def __bool__(self):
