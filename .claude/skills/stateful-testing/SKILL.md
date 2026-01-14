@@ -430,20 +430,16 @@ def reduction(self, data, op):
 
 ## Running Stateful Tests
 
-**IMPORTANT**: Always run stateful array tests with `--array-expr` flag to enable array expression mode:
-
 ```bash
-# Correct way to run stateful tests
-pytest dask_array/tests/test_stateful_array.py -v --array-expr
+# Run stateful tests
+pytest dask_array/tests/test_stateful_array.py -v
 
 # With specific seed for reproducibility
-pytest dask_array/tests/test_stateful_array.py -v --array-expr --hypothesis-seed=12345
+pytest dask_array/tests/test_stateful_array.py -v --hypothesis-seed=12345
 
 # With verbose output
-pytest dask_array/tests/test_stateful_array.py -v --array-expr --hypothesis-verbosity=verbose
+pytest dask_array/tests/test_stateful_array.py -v --hypothesis-verbosity=verbose
 ```
-
-The `--array-expr` flag sets `DASK_ARRAY__QUERY_PLANNING=True` which enables the array expression system that the tests are designed to verify.
 
 ## Debugging Failed Tests
 
@@ -456,7 +452,7 @@ When Hypothesis finds a failure:
 5. **Use `--hypothesis-verbosity=verbose`** for more detail
 
 ```bash
-pytest dask_array/tests/test_stateful_array.py -v --array-expr --hypothesis-seed=12345
+pytest dask_array/tests/test_stateful_array.py -v --hypothesis-seed=12345
 ```
 
 ## When to Use Stateful Tests

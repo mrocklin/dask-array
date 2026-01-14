@@ -74,7 +74,6 @@ class DaskArrayStateMachine(RuleBasedStateMachine):
         # Start with a simple chunking strategy
         self.dask_array = da.from_array(self.numpy_array, chunks=-1)
         note(f"Initialize: shape={self.shape}, dtype={self.numpy_array.dtype}")
-        assert da._array_expr_enabled()
 
     # Skip rechunking if any dimension has size 0
     @precondition(lambda self: 0 not in self.shape)
