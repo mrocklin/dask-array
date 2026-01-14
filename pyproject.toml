@@ -27,7 +27,16 @@ test = [
     "pytest",
     "pytest-cov",
     "pytest-xdist",
+    "xarray",
 ]
+
+# Registers as "dask" to REPLACE xarray's built-in DaskManager.
+# This is required because both dask_array.Array and dask.array.Array are
+# valid dask collections, and xarray's DaskManager uses duck-typing which
+# would recognize both types, causing "Multiple ChunkManagers" errors.
+# See dask_array/_xarray.py for full rationale.
+[project.entry-points."xarray.chunkmanagers"]
+dask = "dask_array._xarray:DaskArrayExprManager"
 
 [tool.hatch.build.targets.wheel]
 packages = ["dask_array"]
