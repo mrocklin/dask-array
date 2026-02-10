@@ -28,6 +28,7 @@ test = [
     "pytest-cov",
     "pytest-xdist",
     "xarray",
+    "hypothesis",
 ]
 
 # Registers as "dask" to replace xarray's built-in DaskManager.
