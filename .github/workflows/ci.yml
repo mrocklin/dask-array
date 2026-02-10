@@ -12,4 +12,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
-      - run: uv run pytest dask_array/tests/ -q
+      - run: uv run --extra test pytest dask_array/tests/ -q
