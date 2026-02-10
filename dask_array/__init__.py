@@ -173,3 +173,12 @@ from dask_array.routines._diff import diff
 from dask_array.routines._where import where
 from dask_array._expr_flow import expr_flow
 from dask_array._visualize import expr_table
+
+# Ensure our xarray ChunkManager replaces the built-in DaskManager
+# regardless of entry point enumeration order. See _xarray.py for details.
+try:
+    from dask_array._xarray import _ensure_registered
+    _ensure_registered()
+    del _ensure_registered
+except ImportError:
+    pass
