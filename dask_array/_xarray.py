@@ -1,37 +1,24 @@
 """
 xarray ChunkManager integration for dask-array expressions.
 
-Design Choice: Replacing the Standard DaskManager
--------------------------------------------------
-This module registers under the entry point name "dask", which REPLACES
-xarray's built-in DaskManager. This is intentional for the following reasons:
+This module registers a ChunkManagerEntrypoint under the entry point name
+"dask" — the same name used by xarray's built-in DaskManager.  We *must*
+replace the built-in rather than coexist alongside it because:
 
-1. Both dask_array.Array and dask.array.Array are valid dask collections
-   (they inherit from dask.base.DaskMethodsMixin and implement __dask_graph__).
+1. ``dask_array.Array`` is a dask collection (implements ``__dask_graph__``)
+   and a duck array, so xarray's built-in ``DaskManager.is_chunked_array``
+   recognises it via ``is_duck_dask_array``.
+2. If two managers both claim the same array type, xarray's
+   ``get_chunked_array_type`` raises
+   ``"Multiple ChunkManagers recognise type ..."``.
+3. Therefore only one "dask"-flavoured manager can be active at a time.
 
-2. xarray's built-in DaskManager uses duck-typing (is_duck_dask_array) which
-   recognizes ANY dask collection with array properties, including our
-   dask_array.Array.
-
-3. If we registered under a different name (e.g., "dask_array_expr"), xarray
-   would see two ChunkManagers claiming the same array type and raise:
-   "Multiple ChunkManagers recognise type <class 'dask_array._collection.Array'>"
-
-4. By replacing the standard manager, we handle BOTH array types:
-   - dask_array.Array: uses optimized expression-based operations
-   - dask.array.Array: delegates to standard dask.array functions
-
-This means when this package is installed, it becomes the default chunk manager
-for all dask-based chunked arrays in xarray.
-
-Usage:
-    import xarray as xr
-
-    # Works automatically - no need to specify chunk manager
-    ds = xr.open_dataset("file.nc", chunks={"x": 100})
-
-    # Can also be explicit
-    ds = xr.open_dataset("file.nc", chunks={"x": 100}, chunked_array_type="dask")
+Because both xarray and dask-array register an entry point named "dask",
+the winner of ``importlib.metadata.entry_points()`` iteration is
+non-deterministic (it depends on filesystem enumeration order).  To make
+the result reproducible, ``_ensure_registered`` mutates the cached dict
+returned by ``list_chunkmanagers()`` at import time so that our manager
+is always the one stored under the "dask" key.
 """
 
 from __future__ import annotations
@@ -309,3 +296,22 @@ class DaskArrayExprManager(ChunkManagerEntrypoint["Array"]):
         from dask.utils import parse_bytes
 
         return parse_bytes(dask_config.get("array.chunk-size"))
+
+
+def _ensure_registered() -> None:
+    """Ensure DaskArrayExprManager is the "dask" chunk manager in xarray.
+
+    Both xarray and this package register an entry point named "dask" under
+    the ``xarray.chunkmanagers`` group.  ``list_chunkmanagers`` builds a dict
+    from those entry points, so the *last* one enumerated wins.  Because
+    ``importlib.metadata.entry_points`` iteration order is non-deterministic,
+    we fix the race here by replacing the cached value after the fact.
+    """
+    try:
+        from xarray.namedarray.parallelcompat import list_chunkmanagers
+    except ImportError:
+        return
+
+    managers = list_chunkmanagers()
+    if not isinstance(managers.get("dask"), DaskArrayExprManager):
+        managers["dask"] = DaskArrayExprManager()
