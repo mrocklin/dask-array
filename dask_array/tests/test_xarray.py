@@ -79,6 +79,25 @@ class TestXarrayIntegration:
         # Our manager should be the one registered (replaces built-in)
         assert isinstance(managers["dask"], DaskArrayExprManager)
 
+    def test_get_chunked_array_type_selects_manager_once(self):
+        """Test xarray sees dask_array.Array through one chunk manager."""
+        from xarray.namedarray.parallelcompat import get_chunked_array_type
+
+        arr = da.ones((10, 10), chunks=(5, 5))
+
+        assert isinstance(get_chunked_array_type(arr), DaskArrayExprManager)
+
+    def test_dask_new_collection_roundtrip(self):
+        """Test Dask can rebuild dask_array.Array from its expression."""
+        from dask._collections import new_collection
+
+        arr = da.arange(6, chunks=(3,)) + 1
+
+        rebuilt = new_collection(arr.expr)
+
+        assert isinstance(rebuilt, da.Array)
+        np.testing.assert_array_equal(rebuilt.compute(), np.arange(6) + 1)
+
     def test_dataarray_from_dask_array(self):
         """Test creating a DataArray from a dask_array.Array."""
         arr = da.ones((10, 20), chunks=(5, 10))
@@ -122,10 +141,12 @@ class TestXarrayIntegration:
         arr1 = da.ones((10, 20), chunks=(5, 10))
         arr2 = da.zeros((10, 20), chunks=(5, 10))
 
-        ds = xr.Dataset({
-            "var1": (["x", "y"], arr1),
-            "var2": (["x", "y"], arr2),
-        })
+        ds = xr.Dataset(
+            {
+                "var1": (["x", "y"], arr1),
+                "var2": (["x", "y"], arr2),
+            }
+        )
 
         assert ds["var1"].shape == (10, 20)
         assert ds["var2"].shape == (10, 20)
