@@ -2,8 +2,7 @@
 
 This is a re-implementation of dask arrays with a query optimization system, array expressions.
 
-This provides large scale, chunked, parallel n-dimensional arrays that know how
-to optimize themselves.
+This provides large scale, chunked, parallel n-dimensional arrays that know how to optimize themselves.
 
 ## Drop-in Replacement for dask.array
 
