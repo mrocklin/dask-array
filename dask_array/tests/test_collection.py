@@ -104,6 +104,29 @@ def test_from_array():
     assert d.chunks == ((5, 5), (5, 5))
 
 
+def test_from_graph_same_key_prefix_different_layers():
+    from dask_array.core import from_graph
+
+    a = from_graph(
+        {("x", 0): np.array([1])},
+        np.empty((0,), dtype=int),
+        ((1,),),
+        [("x", 0)],
+        "a",
+    )
+    b = from_graph(
+        {("x", 0): np.array([2])},
+        np.empty((0,), dtype=int),
+        ((1,),),
+        [("x", 0)],
+        "b",
+    )
+
+    assert a.expr is not b.expr
+    assert_eq(a, np.array([1]))
+    assert_eq(b, np.array([2]))
+
+
 @pytest.mark.xfail(reason="Requires dask core to recognize 'dask_array' module in is_dask_collection")
 def test_is_dask_collection_doesnt_materialize():
     class ArrayTest(Array):

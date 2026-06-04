@@ -329,7 +329,7 @@ class Reshape(ArrayExpr):
         """
         from numbers import Integral
 
-        from dask._collections import new_collection
+        from dask_array._new_collection import new_collection
 
         in_shape = self.array.shape
         out_shape = self._shape
@@ -465,7 +465,7 @@ def reshape(x, shape, merge_chunks=True, limit=None):
     -------
     reshaped : Array
     """
-    from dask._collections import new_collection
+    from dask_array._new_collection import new_collection
 
     # Normalize shape
     if isinstance(shape, int):
@@ -634,7 +634,7 @@ def reshape_blockwise(x, shape, chunks=None):
     """
     import math
 
-    from dask._collections import new_collection
+    from dask_array._new_collection import new_collection
     from dask_array.core import asarray
 
     x = asarray(x)

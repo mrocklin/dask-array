@@ -7,7 +7,7 @@ import operator
 
 import numpy as np
 
-from dask._collections import new_collection
+from dask_array._new_collection import new_collection
 from dask._task_spec import Task, TaskRef
 from dask_array._expr import ArrayExpr
 from dask_array.random import RandomState, default_rng
@@ -167,7 +167,7 @@ def _tsqr_svd(q_expr, r_expr, data_expr):
 
 
 @derived_from(np.linalg)
-def svd(a, full_matrices=True, compute_uv=True):
+def svd(a, full_matrices=False, compute_uv=True):
     """Singular Value Decomposition.
 
     Parameters
@@ -175,17 +175,23 @@ def svd(a, full_matrices=True, compute_uv=True):
     a : Array
         Input array
     full_matrices : bool
-        If True, return full-sized U and Vh matrices
+        Full matrices are not supported when ``compute_uv=True``. The default
+        returns reduced factors with ``k = min(a.shape)``.
     compute_uv : bool
         If True, compute U and Vh in addition to S
 
     Returns
     -------
     u, s, vh : Array, Array, Array
-        SVD factors
+        SVD factors when ``compute_uv=True``
+    s : Array
+        Singular values when ``compute_uv=False``
     """
     from dask_array.core import asanyarray
     from dask_array.linalg._qr import tsqr
+
+    if full_matrices and compute_uv:
+        raise NotImplementedError("full_matrices=True is not supported")
 
     a = asanyarray(a)
 
@@ -215,6 +221,8 @@ def svd(a, full_matrices=True, compute_uv=True):
             k = min(a.shape)
             u, v = u[:, :k], v[:k, :]
 
+    if not compute_uv:
+        return s
     return u, s, v
 
 

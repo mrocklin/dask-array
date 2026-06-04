@@ -10,7 +10,7 @@ import operator
 
 import numpy as np
 
-from dask._collections import new_collection
+from dask_array._new_collection import new_collection
 from dask._task_spec import List, Task, TaskRef
 from dask_array._expr import ArrayExpr
 from dask_array.linalg._utils import (

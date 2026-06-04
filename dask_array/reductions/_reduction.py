@@ -11,7 +11,7 @@ import numpy as np
 from tlz import compose, get, partition_all
 
 from dask import config
-from dask._collections import new_collection
+from dask_array._new_collection import new_collection
 from dask_array._expr import ArrayExpr
 from dask_array._utils import compute_meta
 from dask_array._core_utils import _concatenate2

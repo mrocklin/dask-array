@@ -456,6 +456,31 @@ def test_dask_svd_self_consistent(m, n):
         assert d_e.dtype == e.dtype
 
 
+def test_svd_compute_uv_false_returns_singular_values():
+    a = np.random.default_rng().random((20, 10))
+    d_a = da.from_array(a, chunks=(5, 10))
+
+    d_s = da.linalg.svd(d_a, compute_uv=False)
+
+    assert_eq(d_s, np.linalg.svd(a, full_matrices=False, compute_uv=False))
+
+
+def test_svd_compute_uv_false_ignores_full_matrices():
+    a = np.random.default_rng().random((20, 10))
+    d_a = da.from_array(a, chunks=(5, 10))
+
+    d_s = da.linalg.svd(d_a, full_matrices=True, compute_uv=False)
+
+    assert_eq(d_s, np.linalg.svd(a, full_matrices=True, compute_uv=False))
+
+
+def test_svd_full_matrices_not_supported():
+    a = da.ones((20, 10), chunks=(5, 10))
+
+    with pytest.raises(NotImplementedError, match="full_matrices=True"):
+        da.linalg.svd(a, full_matrices=True)
+
+
 @pytest.mark.parametrize("iterator", ["power", "QR"])
 def test_svd_compressed_compute(iterator):
     x = da.ones((100, 100), chunks=(10, 10))
@@ -980,7 +1005,7 @@ def test_svd_incompatible_dimensions(ndim):
 
 
 @pytest.mark.xfail(
-    sys.platform == "darwin" and _np_version < Version("1.22"),
+    sys.platform == "darwin" and _np_version < (1, 22),
     reason="https://github.com/dask/dask/issues/7189",
     strict=False,
 )
@@ -1001,7 +1026,7 @@ def test_norm_any_ndim(shape, chunks, axis, norm, keepdims):
 
 
 @pytest.mark.xfail(
-    _np_version < Version("1.23"),
+    _np_version < (1, 23),
     reason="https://github.com/numpy/numpy/pull/17709",
     strict=False,
 )
@@ -1028,7 +1053,7 @@ def test_norm_any_prec(norm, keepdims, precision, isreal):
 
 @pytest.mark.slow
 @pytest.mark.xfail(
-    sys.platform == "darwin" and _np_version < Version("1.22"),
+    sys.platform == "darwin" and _np_version < (1, 22),
     reason="https://github.com/dask/dask/issues/7189",
     strict=False,
 )

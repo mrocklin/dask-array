@@ -186,7 +186,7 @@ if hasattr(self.array, "shards") and self.array.shards is not None:
 ```python
 from dask_array.io._base import IO
 from dask_array._core_utils import normalize_chunks, slices_from_chunks
-from dask._collections import new_collection
+from dask_array._new_collection import new_collection
 
 class FromMySource(IO):
     _parameters = ["source", "_chunks", "other_params"]

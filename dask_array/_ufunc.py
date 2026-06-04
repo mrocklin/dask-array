@@ -7,7 +7,7 @@ from operator import getitem
 import numpy as np
 
 from dask import core as dask_core
-from dask._collections import new_collection
+from dask_array._new_collection import new_collection
 from dask_array._collection import Array, asarray, blockwise, elemwise
 from dask_array._expr import ArrayExpr
 from dask_array._core_utils import apply_infer_dtype

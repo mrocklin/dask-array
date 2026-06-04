@@ -206,7 +206,7 @@ def test_slice_through_shuffle_on_shuffle_axis():
     This optimization applies to xarray's unstack pattern where the shuffle
     indexer maps contiguous ranges (identity-like with possible padding).
     """
-    from dask_array._collection import new_collection
+    from dask_array._new_collection import new_collection
     from dask_array._shuffle import _shuffle
 
     arr = np.arange(100 * 50).reshape(100, 50)
@@ -224,6 +224,17 @@ def test_slice_through_shuffle_on_shuffle_axis():
 
     assert result.expr.simplify()._name == expected.expr.simplify()._name
     assert_eq(result, arr[20:40, :])
+
+
+def test_slice_through_grouped_shuffle_on_shuffle_axis():
+    arr = np.arange(8)
+    x = da.from_array(arr, chunks=4)
+    indexer = np.array([6, 5, 2, 4, 1, 3, 0, 7])
+
+    result = x[indexer][1:4]
+
+    assert_eq(result, arr[indexer][1:4])
+    assert_eq(da.Array(result.expr.optimize(fuse=False)), arr[indexer][1:4])
 
 
 # =============================================================================
@@ -246,6 +257,25 @@ def test_slice_new_axis_not_pushed():
     expected = arr[:3, :4, np.newaxis]
 
     assert_eq(result, expected)
+
+
+def test_slice_symbolic_new_axis_not_pushed():
+    x_np = np.arange(6)
+    x = da.from_array(x_np, chunks=3)
+
+    y = da.blockwise(
+        lambda block: np.broadcast_to(block[:, None], (block.shape[0], 5)),
+        "az",
+        x,
+        "a",
+        new_axes={"z": 5},
+        dtype=x.dtype,
+    )
+    result = y[:, :2]
+    expected = np.broadcast_to(x_np[:, None], (6, 5))[:, :2]
+
+    assert_eq(result, expected)
+    assert_eq(da.Array(result.expr.optimize(fuse=False)), expected)
 
 
 def test_slice_only_new_axis():

@@ -146,7 +146,7 @@ def shuffle(x, indexer: list[list[int]], axis: int, chunks: Literal["auto"] = "a
     array([[ 7,  6,  3,  5,  2,  4,  1,  8],
            [15, 14, 11, 13, 10, 12,  9, 16]])
     """
-    from dask._collections import new_collection
+    from dask_array._new_collection import new_collection
 
     if np.isnan(x.shape).any():
         from dask_array._core_utils import unknown_chunk_message
@@ -258,7 +258,7 @@ class Shuffle(ArrayExpr):
             Slice(Shuffle(x, axis=0), [100:200, :])
             -> Shuffle(Slice(x, [input_start:input_stop, :]), adjusted_indexer, axis=0)
         """
-        from dask._collections import new_collection
+        from dask_array._new_collection import new_collection
 
         axis = self.axis
         index = slice_expr.index
@@ -294,8 +294,19 @@ class Shuffle(ArrayExpr):
         if start >= stop:
             return None  # Empty slice
 
-        # Slice the indexer
-        new_indexer = indexer[start:stop]
+        # Slice by output positions. The indexer is grouped into runs, not
+        # one entry per output element.
+        new_indexer = []
+        offset = 0
+        for chunk in indexer:
+            chunk_start = offset
+            chunk_stop = offset + len(chunk)
+            offset = chunk_stop
+
+            take_start = max(start, chunk_start)
+            take_stop = min(stop, chunk_stop)
+            if take_start < take_stop:
+                new_indexer.append(chunk[take_start - chunk_start : take_stop - chunk_start])
 
         # Find all input indices needed
         input_indices = set()

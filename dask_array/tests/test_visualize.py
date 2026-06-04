@@ -51,13 +51,22 @@ def test_expr_table_styling_emphasis():
     y = x.sum()  # Reduces to scalar
 
     table = expr_table(y.expr)
-    text = str(table)
+    rich_table = table._table
 
-    # The repr includes ANSI codes for styling
-    # [1m = bold, [2m = dim
-    # Large array (input) should be bold, scalar output should be dim
-    assert "[1m" in text  # Bold styling present
-    assert "[2m" in text  # Dim styling present
+    operation_cells = rich_table.columns[0]._cells
+    shape_cells = rich_table.columns[1]._cells
+    bytes_cells = rich_table.columns[2]._cells
+
+    # The scalar reduction row is small relative to the source and should dim
+    # non-operation data. Operation names should remain emphasized.
+    assert "bold" in operation_cells[0].spans[0].style
+    assert shape_cells[0].style == "dim"
+    assert bytes_cells[0].style == "dim"
+
+    # The large source row should stay visually emphasized.
+    assert any("bold" in span.style for span in operation_cells[1].spans)
+    assert shape_cells[1].style is None
+    assert bytes_cells[1].style is None
 
 
 def test_expr_table_html_output():

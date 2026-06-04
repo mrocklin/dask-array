@@ -5,7 +5,7 @@ import numbers
 
 import numpy as np
 
-from dask._collections import new_collection
+from dask_array._new_collection import new_collection
 from dask_array.creation import arange
 from dask_array._backends_array import array_creation_dispatch
 from dask.utils import derived_from, typename

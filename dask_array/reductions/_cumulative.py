@@ -7,7 +7,7 @@ from itertools import product
 
 import numpy as np
 
-from dask._collections import new_collection
+from dask_array._new_collection import new_collection
 
 
 # Local implementations of merge/scan functions (copied from dask.array.reductions)

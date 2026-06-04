@@ -5,8 +5,6 @@ from threading import Lock
 from ._generator import Generator, default_rng
 from ._random_state import RandomState
 
-__all__ = ["Generator", "RandomState", "default_rng"]
-
 
 # Lazy RNG-state machinery
 #
@@ -79,3 +77,49 @@ vonmises = _make_api("vonmises")
 wald = _make_api("wald")
 weibull = _make_api("weibull")
 zipf = _make_api("zipf")
+
+__all__ = [
+    "Generator",
+    "RandomState",
+    "default_rng",
+    "seed",
+    "beta",
+    "binomial",
+    "chisquare",
+    "choice",
+    "exponential",
+    "f",
+    "gamma",
+    "geometric",
+    "gumbel",
+    "hypergeometric",
+    "laplace",
+    "logistic",
+    "lognormal",
+    "logseries",
+    "multinomial",
+    "negative_binomial",
+    "noncentral_chisquare",
+    "noncentral_f",
+    "normal",
+    "pareto",
+    "permutation",
+    "poisson",
+    "power",
+    "random_sample",
+    "random",
+    "randint",
+    "random_integers",
+    "rayleigh",
+    "standard_cauchy",
+    "standard_exponential",
+    "standard_gamma",
+    "standard_normal",
+    "standard_t",
+    "triangular",
+    "uniform",
+    "vonmises",
+    "wald",
+    "weibull",
+    "zipf",
+]

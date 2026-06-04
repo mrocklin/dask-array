@@ -85,7 +85,7 @@ def squeeze(a, axis=None):
     -------
     squeezed : Array
     """
-    from dask._collections import new_collection
+    from dask_array._new_collection import new_collection
     from dask_array._utils import validate_axis
 
     if axis is None:

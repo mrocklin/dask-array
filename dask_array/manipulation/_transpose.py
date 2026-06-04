@@ -160,7 +160,7 @@ class Transpose(Blockwise):
         """
         from numbers import Integral
 
-        from dask._collections import new_collection
+        from dask_array._new_collection import new_collection
 
         axes = self.axes
         index = slice_expr.index

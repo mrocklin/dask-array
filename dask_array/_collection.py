@@ -7,8 +7,8 @@ import warnings
 import numpy as np
 
 from dask import config
-from dask._collections import new_collection
 from dask_array import _chunk as chunk
+from dask_array._new_collection import new_collection
 from dask_array._expr import ArrayExpr
 from dask_array.manipulation._transpose import Transpose
 from dask_array._chunk_types import is_valid_chunk_type

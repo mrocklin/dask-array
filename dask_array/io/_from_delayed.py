@@ -77,7 +77,7 @@ def from_delayed(value, shape, dtype=None, meta=None, name=None):
     >>> array.compute()
     array([1., 1., 1., 1., 1.])
     """
-    from dask_array._collection import new_collection
+    from dask_array._new_collection import new_collection
     from dask.delayed import Delayed, delayed
 
     # Convert to Delayed if it has a key but isn't a Delayed

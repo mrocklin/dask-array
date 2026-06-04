@@ -10,7 +10,7 @@ import numpy as np
 from tlz import concat, get, partial
 from tlz.curried import map
 
-from dask._collections import new_collection
+from dask_array._new_collection import new_collection
 from dask_array import _chunk as chunk
 from dask_array._collection import Array, concatenate
 from dask_array._expr import ArrayExpr, unify_chunks_expr

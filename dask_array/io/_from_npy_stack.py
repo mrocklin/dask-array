@@ -62,6 +62,6 @@ def from_npy_stack(dirname, mmap_mode="r"):
     --------
     to_npy_stack
     """
-    from dask_array._collection import new_collection
+    from dask_array._new_collection import new_collection
 
     return new_collection(FromNpyStack(dirname=dirname, mmap_mode=mmap_mode))

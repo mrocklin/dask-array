@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dask._collections import new_collection
+from dask_array._new_collection import new_collection
 from dask_array.io import FromGraph
 
 

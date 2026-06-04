@@ -39,7 +39,7 @@ def unify_chunks(*args, **kwargs):
     """
     from toolz import partition
 
-    from dask._collections import new_collection
+    from dask_array._new_collection import new_collection
     from dask_array._expr import unify_chunks_expr
 
     if not args:

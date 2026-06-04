@@ -11,7 +11,6 @@ import numpy as np
 from tlz import accumulate
 from toolz import concat
 
-from dask._collections import new_collection
 from dask._task_spec import Alias, List, Task, TaskRef
 from dask_array._expr import ArrayExpr, unify_chunks_expr
 from dask_array._core_utils import concatenate3
@@ -103,6 +102,8 @@ class Concatenate(ArrayExpr):
         2. Slice on other axis: push to all inputs
         """
         from numbers import Integral
+
+        from dask_array._new_collection import new_collection
 
         axis = self.axis
         arrays = self.args
@@ -263,6 +264,7 @@ def concatenate(seq, axis=0, allow_unknown_chunksizes=False):
     from dask_array.creation import empty, empty_like
 
     # Lazy import to avoid circular dependency
+    from dask_array._new_collection import new_collection
     from dask_array.core import asarray
 
     seq = [asarray(a, allow_unknown_chunksizes=allow_unknown_chunksizes) for a in seq]

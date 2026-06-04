@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import toolz
 
-from dask._collections import new_collection
+from dask_array._new_collection import new_collection
 from dask_array._blockwise import Blockwise, Elemwise
 from dask_array._core_utils import is_scalar_for_elemwise
 

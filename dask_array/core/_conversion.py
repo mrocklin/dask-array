@@ -156,7 +156,7 @@ def from_array(
     ((2,), (2,))
     """
     # Lazy imports to avoid circular dependencies
-    from dask._collections import new_collection
+    from dask_array._new_collection import new_collection
 
     # Import Array for isinstance check
     from dask_array._collection import Array

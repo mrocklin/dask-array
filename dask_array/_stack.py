@@ -8,7 +8,7 @@ from itertools import product
 import numpy as np
 from toolz import concat, first
 
-from dask._collections import new_collection
+from dask_array._new_collection import new_collection
 from dask._task_spec import Task, TaskRef
 from dask_array._expr import ArrayExpr, unify_chunks_expr
 from dask_array._chunk import getitem
@@ -113,7 +113,7 @@ class Stack(ArrayExpr):
         """
         from numbers import Integral
 
-        from dask._collections import new_collection
+        from dask_array._new_collection import new_collection
         from dask_array._utils import meta_from_array
 
         axis = self.axis

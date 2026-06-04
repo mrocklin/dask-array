@@ -101,7 +101,7 @@ def _compute_indexer(index, chunks_along_axis):
 
 def _vindex_array(x, dict_indexes):
     """Point wise indexing with only NumPy Arrays."""
-    from dask_array._collection import new_collection
+    from dask_array._new_collection import new_collection
     from dask_array.creation import empty
 
     try:

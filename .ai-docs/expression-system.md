@@ -233,7 +233,7 @@ See [blockwise.md](./blockwise.md) for details.
 
 Wrap an expression in an Array:
 ```python
-from dask._collections import new_collection
+from dask_array._new_collection import new_collection
 result = new_collection(new_expr)
 ```
 

@@ -104,7 +104,7 @@ class BroadcastTo(ArrayExpr):
         """
         from numbers import Integral
 
-        from dask._collections import new_collection
+        from dask_array._new_collection import new_collection
 
         input_arr = self.array
         output_shape = self._shape
@@ -191,7 +191,7 @@ class BroadcastTo(ArrayExpr):
     def _slice_chunks(self, chunks, start, length):
         """Compute new chunks after slicing."""
         if length == 0:
-            return ()
+            return (0,)
 
         result = []
         pos = 0
@@ -238,7 +238,7 @@ def broadcast_to(x, shape, chunks=None, meta=None):
     -------
     Array
     """
-    from dask._collections import new_collection
+    from dask_array._new_collection import new_collection
     from dask_array._collection import asarray
 
     x = asarray(x)

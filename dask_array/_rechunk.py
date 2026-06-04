@@ -693,7 +693,7 @@ class Rechunk(ArrayExpr):
 
     def _pushdown_through_concatenate(self):
         """Push rechunk through concatenate for non-concat axes."""
-        from dask._collections import new_collection
+        from dask_array._new_collection import new_collection
 
         concat = self.array
         axis = concat.axis
@@ -1041,7 +1041,7 @@ def rechunk(
     ((500, 500), (1000,))
     """
     import dask
-    from dask._collections import new_collection
+    from dask_array._new_collection import new_collection
 
     # Capture config value at creation time, not during lowering
     if method is None:

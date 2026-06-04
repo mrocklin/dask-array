@@ -122,6 +122,15 @@ def test_non_pushdown_cases():
     assert_eq(x[None, :5, :5], arr[None, :5, :5])
 
 
+def test_broadcast_to_empty_slice():
+    result = da.broadcast_to(da.from_array(np.array([1]), (1,)), (5,))[:0]
+    expected = np.array([], dtype=int)
+
+    assert result.chunks == ((0,),)
+    assert_eq(result, expected)
+    assert_eq(da.Array(result.expr.optimize(fuse=False)), expected)
+
+
 def test_masked_array():
     """Slice pushdown preserves masks."""
     arr = np.ma.array(np.arange(100).reshape(10, 10), mask=False)

@@ -398,7 +398,7 @@ class Blockwise(ArrayExpr):
         """
         from numbers import Integral
 
-        from dask._collections import new_collection
+        from dask_array._new_collection import new_collection
 
         out_ind = self.out_ind
         index = slice_expr.index
@@ -412,18 +412,12 @@ class Blockwise(ArrayExpr):
 
         # Find which output axes have non-trivial slices
         sliced_axes = {i for i, idx in enumerate(full_index) if isinstance(idx, Integral) or idx != slice(None)}
+        sliced_indices = {out_ind[axis] for axis in sliced_axes if axis < len(out_ind)}
 
         # Use getattr since subclasses may define as class attribute or property
         adjust_chunks = getattr(self, "adjust_chunks", None)
         needs_coarse = False
         if adjust_chunks:
-            # Map sliced axis positions to symbolic indices
-            # out_ind can be a tuple like (1, 0) or a string like 'ij'
-            sliced_indices = set()
-            for axis in sliced_axes:
-                if axis < len(out_ind):
-                    sliced_indices.add(out_ind[axis])
-
             # Check if we're slicing an adjusted dimension
             adjusted_indices = set(adjust_chunks.keys())
             if sliced_indices & adjusted_indices:
@@ -433,8 +427,8 @@ class Blockwise(ArrayExpr):
         # Don't handle if blockwise adds new axes and we're slicing those axes
         new_axes = getattr(self, "new_axes", None)
         if new_axes:
-            new_axis_positions = set(new_axes.keys())
-            if sliced_axes & new_axis_positions:
+            new_axis_indices = set(new_axes.keys())
+            if sliced_indices & new_axis_indices:
                 return None
 
         # For coarse optimization, calculate block-aligned slices
@@ -520,7 +514,7 @@ class Blockwise(ArrayExpr):
         """
         from numbers import Integral
 
-        from dask._collections import new_collection
+        from dask_array._new_collection import new_collection
         from dask.utils import cached_cumsum
 
         def find_block_range(cumsum, start, stop):
@@ -893,7 +887,7 @@ class Elemwise(Blockwise):
         """
         from numbers import Integral
 
-        from dask._collections import new_collection
+        from dask_array._new_collection import new_collection
 
         out_ind = self.out_ind
         index = slice_expr.index

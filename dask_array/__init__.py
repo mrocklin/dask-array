@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import numpy as np
+
 import dask_array._backends
 from dask_array import _chunk as chunk
 from dask_array._core_utils import PerformanceWarning
+from dask.base import compute
+from dask_array._chunk_types import register_chunk_type
 
 from dask_array import fft, random
 from dask_array._collection import (
@@ -125,9 +129,12 @@ from dask_array.creation import (
 from dask_array.io import (
     from_delayed,
     from_npy_stack,
+    from_tiledb,
     from_zarr,
     store,
+    to_hdf5,
     to_npy_stack,
+    to_tiledb,
     to_zarr,
 )
 from dask_array.linalg import dot, matmul, tensordot, vdot
@@ -174,10 +181,47 @@ from dask_array.routines._where import where
 from dask_array._expr_flow import expr_flow
 from dask_array._visualize import expr_table
 
+
+def optimize(dsk, keys=None, **kwargs):
+    """Optimize a dask-array collection.
+
+    Low-level graphs are returned unchanged because this package optimizes
+    through Array expressions before graph materialization.
+    """
+    if isinstance(dsk, Array):
+        result = dsk.optimize()
+        if keys is not None:
+            return result.__dask_graph__()
+        return result
+    return dsk
+
+
+newaxis = None
+nan = np.nan
+inf = np.inf
+e = np.e
+pi = np.pi
+euler_gamma = np.euler_gamma
+
+bool = np.bool
+int8 = np.int8
+int16 = np.int16
+int32 = np.int32
+int64 = np.int64
+uint8 = np.uint8
+uint16 = np.uint16
+uint32 = np.uint32
+uint64 = np.uint64
+float32 = np.float32
+float64 = np.float64
+complex64 = np.complex64
+complex128 = np.complex128
+
 # Ensure our xarray ChunkManager replaces the built-in DaskManager
 # regardless of entry point enumeration order. See _xarray.py for details.
 try:
     from dask_array._xarray import _ensure_registered
+
     _ensure_registered()
     del _ensure_registered
 except ImportError:

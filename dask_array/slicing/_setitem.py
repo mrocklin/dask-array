@@ -321,7 +321,7 @@ def concatenate_array_chunks_expr(x):
 
     Array-expr version of dask.array.slicing.concatenate_array_chunks.
     """
-    from dask_array._collection import new_collection
+    from dask_array._new_collection import new_collection
 
     if x.npartitions == 1:
         return x
