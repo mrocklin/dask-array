@@ -23,7 +23,7 @@ is always the one stored under the "dask" key.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -56,6 +56,7 @@ class DaskArrayExprManager(ChunkManagerEntrypoint["Array"]):
         # Also recognize legacy dask.array.Array
         try:
             import dask.array
+
             return isinstance(data, dask.array.Array)
         except ImportError:
             return False
@@ -219,6 +220,29 @@ class DaskArrayExprManager(ChunkManagerEntrypoint["Array"]):
             drop_axis=drop_axis,
             new_axis=new_axis,
             **kwargs,
+        )
+
+    def map_blocks_multi_output(
+        self,
+        func: Callable[..., Any],
+        input_exprs: Sequence[Any],
+        input_indices: Sequence[Iterable[Any]],
+        shared_indices: Iterable[Any],
+        block_specs: Mapping[tuple[int, ...], Any],
+        outputs: Sequence[Mapping[str, Any]],
+        *,
+        token: str,
+    ) -> list[Array]:
+        from dask_array._map_blocks import map_blocks_multi_output
+
+        return map_blocks_multi_output(
+            func,
+            input_exprs,
+            input_indices,
+            shared_indices,
+            block_specs,
+            outputs,
+            token=token,
         )
 
     def blockwise(

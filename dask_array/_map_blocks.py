@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from functools import cached_property
 from itertools import product
 from numbers import Number
+import operator
 
 import numpy as np
 from toolz import concat
@@ -9,6 +11,9 @@ from toolz import concat
 from dask_array._collection import Array, blockwise
 from dask_array._core_utils import _pass_extra_kwargs, apply_and_enforce, apply_infer_dtype
 from dask_array._utils import compute_meta
+from dask_array._expr import ArrayExpr
+from dask_array._new_collection import new_collection
+from dask._task_spec import Task, TaskRef
 from dask.layers import ArrayBlockIdDep, ArrayBlockwiseDep, ArrayValuesDep
 from dask.utils import cached_cumsum, funcname, has_keyword
 
@@ -521,3 +526,127 @@ def map_blocks(
             pass  # dask.dataframe not available
 
     return out
+
+
+class MapBlocksOutput(ArrayExpr):
+    """One projected output from a shared multi-output block mapping."""
+
+    _parameters = [
+        "func",
+        "output_key",
+        "output_indices",
+        "chunks",
+        "dtype",
+        "_meta_provided",
+        "name",
+        "shared_name",
+        "shared_indices",
+        "input_indices",
+        "block_specs",
+    ]
+
+    @property
+    def _is_blockwise_fusable(self):
+        return False
+
+    @cached_property
+    def input_exprs(self):
+        return self.operands[len(self._parameters) :]
+
+    @cached_property
+    def chunks(self):
+        return self.operand("chunks")
+
+    @cached_property
+    def _meta(self):
+        meta = self.operand("_meta_provided")
+        if meta is not None:
+            return meta
+        return np.empty((0,) * len(self.chunks), dtype=self.dtype)
+
+    @cached_property
+    def dtype(self):
+        return np.dtype(self.operand("dtype"))
+
+    @cached_property
+    def _name(self):
+        return self.operand("name")
+
+    def _shared_block_id(self, output_block_id):
+        output_location = dict(zip(self.operand("output_indices"), output_block_id))
+        return tuple(output_location.get(dim, 0) for dim in self.operand("shared_indices"))
+
+    def _input_block_id(self, input_indices, shared_block_id):
+        shared_location = dict(zip(self.operand("shared_indices"), shared_block_id))
+        return tuple(shared_location[dim] for dim in input_indices)
+
+    def _layer(self):
+        dsk = {}
+        needed_shared_ids = set()
+        output_ranges = [range(len(c)) for c in self.chunks]
+
+        for output_block_id in product(*output_ranges):
+            shared_block_id = self._shared_block_id(output_block_id)
+            needed_shared_ids.add(shared_block_id)
+            out_key = (self._name, *output_block_id)
+            shared_key = (self.operand("shared_name"), *shared_block_id)
+            dsk[out_key] = Task(
+                out_key,
+                operator.getitem,
+                TaskRef(shared_key),
+                self.operand("output_key"),
+            )
+
+        block_specs = self.operand("block_specs")
+        input_indices = self.operand("input_indices")
+        for shared_block_id in needed_shared_ids:
+            shared_key = (self.operand("shared_name"), *shared_block_id)
+            args = [block_specs[shared_block_id]]
+            for expr, indices in zip(self.input_exprs, input_indices, strict=True):
+                input_block_id = self._input_block_id(indices, shared_block_id)
+                args.append(TaskRef((expr._name, *input_block_id)))
+            dsk[shared_key] = Task(shared_key, self.operand("func"), *args)
+
+        return dsk
+
+
+def map_blocks_multi_output(
+    func,
+    input_exprs,
+    input_indices,
+    shared_indices,
+    block_specs,
+    outputs,
+    *,
+    token,
+):
+    """Create arrays projected from one shared block function.
+
+    ``func`` receives ``(block_spec, *input_blocks)`` and returns a mapping.
+    Each entry in ``outputs`` must provide ``key``, ``indices``, ``chunks``,
+    ``dtype``, and optionally ``meta`` and ``name``.
+    """
+    shared_name = f"{token}-shared"
+    input_exprs = [expr.lower_completely() for expr in input_exprs]
+    arrays = []
+    for output in outputs:
+        name = output.get("name") or f"{output['key']}-{token}"
+        arrays.append(
+            new_collection(
+                MapBlocksOutput(
+                    func,
+                    output["key"],
+                    tuple(output["indices"]),
+                    tuple(map(tuple, output["chunks"])),
+                    np.dtype(output["dtype"]),
+                    output.get("meta"),
+                    name,
+                    shared_name,
+                    tuple(shared_indices),
+                    tuple(tuple(indices) for indices in input_indices),
+                    dict(block_specs),
+                    *input_exprs,
+                )
+            )
+        )
+    return arrays
