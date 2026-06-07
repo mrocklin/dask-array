@@ -258,7 +258,7 @@ class CumReductionBlelloch(ArrayExpr):
         batches_name = self._name + "-batch"
         for key in product(*map(range, x.numblocks)):
             dsk[(batches_name,) + key] = (
-                partial(preop, axis=axis, keepdims=True, dtype=dtype),
+                partial(preop, axis=axis, keepdims=True),
                 (x.name,) + key,
             )
 

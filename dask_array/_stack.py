@@ -159,8 +159,10 @@ class Stack(ArrayExpr):
             else:
                 sliced_arrays.append(arr)
 
-        # Compute new meta for the resulting stack
-        new_meta = np.stack([meta_from_array(new_collection(a)) for a in sliced_arrays], axis=axis)
+        # Compute new meta from dtype/ndim. Input metas may use different dummy
+        # shapes even when the real arrays have compatible shapes.
+        dtype = np.result_type(*[a.dtype for a in sliced_arrays])
+        new_meta = meta_from_array(None, ndim=self.ndim, dtype=dtype)
 
         # Create new Stack with selected/sliced arrays
         return type(self)(
@@ -232,12 +234,12 @@ def stack(seq, axis=0, allow_unknown_chunksizes=False):
             f"{seq[0].shape}, while array {idx[0] + 1} has shape {idx[1].shape}."
         )
 
-    meta = np.stack([meta_from_array(a) for a in seq], axis=axis)
-    seq = [x.astype(meta.dtype) for x in seq]
-
-    ndim = meta.ndim - 1
+    ndim = seq[0].ndim
     if axis < 0:
         axis = ndim + axis + 1
+    dtype = np.result_type(*[x.dtype for x in seq])
+    meta = meta_from_array(None, ndim=ndim + 1, dtype=dtype)
+    seq = [x.astype(meta.dtype) for x in seq]
     shape = tuple(
         (len(seq) if i == axis else (seq[0].shape[i] if i < axis else seq[0].shape[i - 1])) for i in range(meta.ndim)
     )

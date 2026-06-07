@@ -412,7 +412,10 @@ class Slice(ArrayExpr):
 
     @functools.cached_property
     def _meta(self):
-        meta = meta_from_array(self.array._meta, ndim=len(self.chunks))
+        if self.array._meta is None:
+            meta = meta_from_array(None, ndim=len(self.chunks), dtype=self.array.dtype)
+        else:
+            meta = meta_from_array(self.array._meta, ndim=len(self.chunks))
         if np.isscalar(meta):
             meta = np.array(meta)
         return meta

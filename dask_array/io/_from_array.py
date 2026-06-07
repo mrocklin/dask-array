@@ -79,7 +79,7 @@ class FromArray(IO):
     @functools.cached_property
     def _meta(self):
         if self.operand("meta") is not None:
-            return meta_from_array(self.operand("meta"), dtype=self.array.dtype)
+            return meta_from_array(self.operand("meta"), ndim=len(self._effective_shape), dtype=self.array.dtype)
         return meta_from_array(self.array, dtype=getattr(self.array, "dtype", None))
 
     @functools.cached_property

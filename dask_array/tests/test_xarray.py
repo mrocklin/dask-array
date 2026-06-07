@@ -2,7 +2,7 @@
 
 This module tests the DaskArrayExprManager which registers as the "dask"
 chunk manager, replacing xarray's built-in DaskManager. This allows it to
-handle both dask_array.Array and legacy dask.array.Array types.
+handle dask_array.Array types.
 """
 
 import numpy as np
@@ -29,12 +29,12 @@ class TestDaskArrayExprManager:
         assert not manager.is_chunked_array(np.ones((10, 10)))
 
     def test_is_chunked_array_legacy_dask(self):
-        """Test that manager also recognizes legacy dask.array.Array."""
+        """Test that manager rejects legacy dask.array.Array."""
         import dask.array as legacy_da
 
         manager = DaskArrayExprManager()
         arr = legacy_da.ones((10, 10), chunks=(5, 5))
-        assert manager.is_chunked_array(arr)
+        assert not manager.is_chunked_array(arr)
 
     def test_chunks(self):
         manager = DaskArrayExprManager()
@@ -52,6 +52,26 @@ class TestDaskArrayExprManager:
         arr = manager.from_array(x, chunks=(5, 5))
         assert isinstance(arr, da.Array)
         assert arr.chunks == ((5, 5), (5, 5))
+
+    def test_from_array_lazy_indexing_adapter_uses_numpy_meta(self):
+        from xarray.core.indexing import (
+            ImplicitToExplicitIndexingAdapter,
+            LazilyIndexedArray,
+            NumpyIndexingAdapter,
+            OuterIndexer,
+        )
+
+        manager = DaskArrayExprManager()
+        base = NumpyIndexingAdapter(np.ones((2, 3)))
+        lazy = LazilyIndexedArray(base, OuterIndexer((slice(None), slice(None))))
+        adapter = ImplicitToExplicitIndexingAdapter(lazy, OuterIndexer)
+
+        arr = manager.from_array(adapter, chunks=(1, 3))
+        out = arr * 1.0
+
+        assert isinstance(arr.expr._meta, np.ndarray)
+        assert isinstance(out.expr._meta, np.ndarray)
+        assert out.expr._meta.shape == (0, 0)
 
     def test_compute(self):
         manager = DaskArrayExprManager()

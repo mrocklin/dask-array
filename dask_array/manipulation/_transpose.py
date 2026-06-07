@@ -8,6 +8,7 @@ import numpy as np
 
 from dask._task_spec import Task, TaskRef
 from dask_array._blockwise import Blockwise
+from dask_array._utils import meta_from_array
 
 
 class Transpose(Blockwise):
@@ -30,9 +31,16 @@ class Transpose(Blockwise):
     def _meta_provided(self):
         return self.array._meta
 
+    @functools.cached_property
+    def _meta(self):
+        meta = self.array._meta
+        if meta is None or getattr(meta, "ndim", None) != len(self.axes):
+            return meta_from_array(None, ndim=len(self.axes), dtype=self.array.dtype)
+        return np.transpose(meta, self.axes)
+
     @property
     def dtype(self):
-        return self._meta.dtype
+        return self.array.dtype
 
     @property
     def out_ind(self):

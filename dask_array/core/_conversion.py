@@ -163,9 +163,9 @@ def from_array(
     from dask_array.io import FromArray
     from dask.utils import is_arraylike
 
-    # Check for both array-expr and legacy dask arrays
-    is_legacy = type(x).__module__ == "dask.array.core" and type(x).__name__ == "Array"
-    if isinstance(x, Array) or is_legacy:
+    if type(x).__module__.startswith("dask.array") and type(x).__name__ == "Array":
+        raise TypeError("dask_array does not accept dask.array.Array inputs")
+    if isinstance(x, Array):
         raise ValueError("Array is already a dask array. Use 'asarray' or 'rechunk' instead.")
 
     # Handle xarray DataArray wrapping a dask array
@@ -173,9 +173,9 @@ def from_array(
         import xarray as xr
 
         if isinstance(x, xr.DataArray) and x.chunks is not None:
-            if isinstance(x.data, Array) or (
-                type(x.data).__module__ == "dask.array.core" and type(x.data).__name__ == "Array"
-            ):
+            if type(x.data).__module__.startswith("dask.array") and type(x.data).__name__ == "Array":
+                raise TypeError("dask_array does not accept dask.array.Array inputs")
+            if isinstance(x.data, Array):
                 return x.data
     except ImportError:
         pass

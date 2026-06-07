@@ -50,16 +50,7 @@ class DaskArrayExprManager(ChunkManagerEntrypoint["Array"]):
         self.array_cls = Array
 
     def is_chunked_array(self, data: Any) -> bool:
-        # Recognize dask_array.Array
-        if isinstance(data, self.array_cls):
-            return True
-        # Also recognize legacy dask.array.Array
-        try:
-            import dask.array
-
-            return isinstance(data, dask.array.Array)
-        except ImportError:
-            return False
+        return isinstance(data, self.array_cls)
 
     def chunks(self, data: Array) -> tuple[tuple[int, ...], ...]:
         return data.chunks
@@ -89,6 +80,11 @@ class DaskArrayExprManager(ChunkManagerEntrypoint["Array"]):
         **kwargs: Any,
     ) -> Array:
         import dask_array as da
+        from xarray.core.indexing import ImplicitToExplicitIndexingAdapter
+
+        if isinstance(data, ImplicitToExplicitIndexingAdapter):
+            # Lazily loaded backend arrays should use NumPy arrays for meta.
+            kwargs["meta"] = np.ndarray
 
         return da.from_array(data, chunks, **kwargs)
 

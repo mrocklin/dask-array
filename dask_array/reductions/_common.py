@@ -992,6 +992,7 @@ def quantile(
         drop_axis=axis if not keepdims else None,
         new_axis=0 if isinstance(q, Iterable) else None,
         chunks=_get_quantile_chunks(a, q, axis, keepdims),
+        dtype=np.quantile(np.array([0], dtype=a.dtype), q).dtype,
         **kwargs,
     )
 
@@ -1073,6 +1074,7 @@ def nanquantile(
         drop_axis=axis if not keepdims else None,
         new_axis=0 if isinstance(q, Iterable) else None,
         chunks=_get_quantile_chunks(a, q, axis, keepdims),
+        dtype=np.nanquantile(np.array([0], dtype=a.dtype), q).dtype,
         **kwargs,
     )
 
