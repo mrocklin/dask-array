@@ -127,6 +127,38 @@ def test_from_graph_same_key_prefix_different_layers():
     assert_eq(b, np.array([2]))
 
 
+def test_from_graph_tracks_expression_dependencies():
+    from dask._task_spec import DependenciesMapping, Task, TaskRef
+    from dask_array.core import from_graph
+
+    x = da.from_array(np.arange(6), chunks=(3,)).rechunk((2,))
+    name = "plus-one"
+    layer = {
+        (name, i): Task((name, i), operator.add, TaskRef((x.name, i)), 1)
+        for i in range(len(x.chunks[0]))
+    }
+
+    y = from_graph(
+        layer,
+        np.empty((0,), dtype=x.dtype),
+        x.chunks,
+        [(name, i) for i in range(len(x.chunks[0]))],
+        name,
+        dependencies=[x],
+    )
+    optimized = da.Array(y[:4].expr.optimize(fuse=True))
+    graph = optimized.__dask_graph__()
+    missing = [
+        dep
+        for deps in DependenciesMapping(graph).values()
+        for dep in deps
+        if dep not in graph
+    ]
+
+    assert not missing
+    assert_eq(optimized, np.arange(4) + 1)
+
+
 @pytest.mark.xfail(reason="Requires dask core to recognize 'dask_array' module in is_dask_collection")
 def test_is_dask_collection_doesnt_materialize():
     class ArrayTest(Array):

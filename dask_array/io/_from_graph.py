@@ -7,7 +7,8 @@ from dask_array._expr import ArrayExpr
 
 
 class FromGraph(ArrayExpr):
-    _parameters = ["layer", "_meta", "chunks", "keys", "name_prefix"]
+    _parameters = ["layer", "_meta", "chunks", "keys", "name_prefix", "_dependencies"]
+    _defaults = {"_dependencies": ()}
 
     @functools.cached_property
     def _meta(self):
@@ -20,6 +21,9 @@ class FromGraph(ArrayExpr):
     @functools.cached_property
     def _name(self):
         return self.operand("name_prefix") + "-" + self.deterministic_token
+
+    def dependencies(self):
+        return list(self.operand("_dependencies"))
 
     def _layer(self):
         layer = self.operand("layer")
