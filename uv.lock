@@ -177,7 +177,6 @@ wheels = [
 
 [[package]]
 name = "dask-array"
-version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "dask" },

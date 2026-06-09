@@ -9,6 +9,9 @@ build/
 .venv/
 venv/
 
+# uv
+.uv-cache/
+
 # Testing
 .pytest_cache/
 .coverage

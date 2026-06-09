@@ -1,13 +1,14 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "dask-array"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Parallel arrays with task graphs"
 readme = "README.md"
 license = "BSD-3-Clause"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
     "dask>=2024.1.0",
@@ -16,6 +17,16 @@ dependencies = [
     "rich",
     "toolz>=0.8.2",
 ]
+
+[project.urls]
+Homepage = "https://github.com/mrocklin/dask-array"
+Source = "https://github.com/mrocklin/dask-array"
+Issues = "https://github.com/mrocklin/dask-array/issues"
+
+[tool.hatch.version]
+source = "vcs"
+tag-pattern = '^(?P<version>[0-9]+\.[0-9]+\.[0-9]+)$'
+fallback-version = "0.0.0"
 
 [project.optional-dependencies]
 complete = [
@@ -42,6 +53,15 @@ dask = "dask_array._xarray:DaskArrayExprManager"
 
 [tool.hatch.build.targets.wheel]
 packages = ["dask_array"]
+
+[tool.hatch.build.targets.sdist]
+only-include = [
+    "dask_array",
+    "LICENSE",
+    "README.md",
+    "pyproject.toml",
+    "uv.lock",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["dask_array/tests"]
