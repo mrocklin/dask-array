@@ -14,6 +14,28 @@ import dask_array as da
 from dask_array._xarray import DaskArrayExprManager
 
 
+def test_public_xarray_api_available_from_package():
+    from dask_array import xarray as da_xarray
+
+    assert da.xarray is da_xarray
+    assert callable(da_xarray.register)
+    assert callable(da_xarray.isactive)
+
+
+def test_public_xarray_register_and_isactive(monkeypatch):
+    from xarray.namedarray.parallelcompat import list_chunkmanagers
+
+    managers = list_chunkmanagers()
+    monkeypatch.setitem(managers, "dask", object())
+
+    assert not da.xarray.isactive()
+
+    da.xarray.register()
+
+    assert da.xarray.isactive()
+    assert isinstance(managers["dask"], DaskArrayExprManager)
+
+
 class TestDaskArrayExprManager:
     """Tests for the DaskArrayExprManager class."""
 

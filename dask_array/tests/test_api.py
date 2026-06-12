@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+
 import numpy as np
 
 import dask_array as da
@@ -38,3 +41,34 @@ def test_random_star_exports_legacy_wrappers():
     assert callable(namespace["random"])
     assert callable(namespace["randint"])
     assert callable(namespace["standard_normal"])
+
+
+def test_xarray_public_api_when_xarray_is_unavailable():
+    code = """
+import builtins
+
+real_import = builtins.__import__
+
+
+def blocked_import(name, *args, **kwargs):
+    if name == "xarray" or name.startswith("xarray."):
+        raise ImportError("blocked xarray")
+    return real_import(name, *args, **kwargs)
+
+
+builtins.__import__ = blocked_import
+
+import dask_array as da
+
+assert hasattr(da, "xarray")
+assert da.xarray.isactive() is False
+
+try:
+    da.xarray.register()
+except ImportError:
+    pass
+else:
+    raise AssertionError("register() should raise ImportError without xarray")
+"""
+
+    subprocess.run([sys.executable, "-c", code], check=True)
