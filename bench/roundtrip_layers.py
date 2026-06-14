@@ -130,6 +130,11 @@ def cases():
     ag = (np.arange(54, dtype="f8").reshape(9, 6) * 7) % 11  # distinct-ish, non-monotone
     yield ("argmin axis0", lambda: da.from_array(ag, chunks=(2, 2)).argmin(axis=0), ag.argmin(0))
     yield ("argmax axis1", lambda: da.from_array(ag, chunks=(2, 2)).argmax(axis=1), ag.argmax(1))
+    # cumulative (sequential carry, real cluster -> serialization + cross-block carry)
+    cu = np.arange(54, dtype="f8").reshape(9, 6)
+    yield ("cumsum axis0", lambda: da.from_array(cu, chunks=(2, 2)).cumsum(axis=0), cu.cumsum(0))
+    yield ("cumsum axis1", lambda: da.from_array(cu, chunks=(2, 2)).cumsum(axis=1), cu.cumsum(1))
+    yield ("cumprod axis0", lambda: da.from_array(cu % 3 + 1, chunks=(2, 2)).cumprod(axis=0), (cu % 3 + 1).cumprod(0))
 
 
 def main():

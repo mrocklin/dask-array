@@ -116,7 +116,28 @@ class CumReduction(ArrayExpr):
     def chunks(self):
         return self.array.chunks
 
+    def _frisky_layer(self):
+        from dask_array._frisky.cumulative import CumReductionLayer
+
+        return CumReductionLayer(
+            self._name,
+            self.func,
+            self.binop,
+            self.ident,
+            self.axis,
+            self.dtype,
+            self._meta,
+            self.array._name,
+            self.array.numblocks,
+            self.array.chunks,
+        )
+
     def _layer(self):
+        try:
+            return self._frisky_layer().to_dask_graph()
+        except (NotImplementedError, ImportError):
+            pass
+
         from functools import partial
 
         from dask.utils import apply
