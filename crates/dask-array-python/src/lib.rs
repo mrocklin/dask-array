@@ -20,6 +20,7 @@
 use pyo3::prelude::*;
 
 mod arange;
+mod arg_chunk;
 mod blocks;
 mod blockwise;
 mod broadcast;
@@ -40,7 +41,7 @@ mod stack;
 
 /// Protocol revision for the native extension. Python checks this on import so
 /// a stale `.so` fails loudly instead of silently producing wrong tasks.
-const PROTOCOL_REVISION: usize = 17;
+const PROTOCOL_REVISION: usize = 18;
 
 #[pyfunction]
 fn protocol_revision() -> usize {
@@ -52,6 +53,7 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("PROTOCOL_REVISION", PROTOCOL_REVISION)?;
     m.add_function(wrap_pyfunction!(protocol_revision, m)?)?;
     m.add_class::<arange::ArangeLayer>()?;
+    m.add_class::<arg_chunk::ArgChunkLayer>()?;
     m.add_class::<blocks::BlocksLayer>()?;
     m.add_class::<blockwise::BlockwiseLayer>()?;
     m.add_class::<broadcast::BroadcastLayer>()?;
