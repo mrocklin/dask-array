@@ -15,6 +15,14 @@ from dask_array._frisky.base import Layer
 from dask_array._frisky.blockwise import BlockwiseLayer
 from dask_array._frisky.collect import collect_task_records
 from dask_array._frisky.creation import CreationLayer
+from dask_array._frisky.rechunk import RechunkLayer
 from dask_array._frisky.reduction import PartialReduceLayer
 
-__all__ = ["Layer", "BlockwiseLayer", "CreationLayer", "PartialReduceLayer", "collect_task_records"]
+__all__ = [
+    "Layer",
+    "BlockwiseLayer",
+    "CreationLayer",
+    "PartialReduceLayer",
+    "RechunkLayer",
+    "collect_task_records",
+]

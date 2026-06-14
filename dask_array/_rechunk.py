@@ -768,6 +768,11 @@ class TasksRechunk(Rechunk):
         return
 
     def _layer(self):
+        try:
+            return self._frisky_layer().to_dask_graph()
+        except NotImplementedError:
+            pass
+
         steps = plan_rechunk(
             self.array.chunks,
             self.chunks,
@@ -784,6 +789,50 @@ class TasksRechunk(Rechunk):
             layers.append(layer)
 
         return toolz.merge(*layers)
+
+    def _frisky_layer(self):
+        """Describe this rechunk as a RechunkLayer. The intricate planning stays
+        in Python (``plan_rechunk``); Rust does the per-block split/merge
+        expansion. Unknown (nan) chunk sizes can't be expanded -> fall back."""
+        from dask_array._frisky import RechunkLayer
+
+        old_chunks = self.array.chunks
+        new_chunks = self.chunks
+        if any(math.isnan(s) for chunks in (old_chunks, new_chunks) for dim in chunks for s in dim):
+            raise NotImplementedError("unknown chunk sizes")
+
+        steps = plan_rechunk(
+            old_chunks,
+            new_chunks,
+            self.array.dtype.itemsize,
+            self.threshold,
+            self.block_size_limit,
+        )
+
+        name = self.array.name
+        cur_chunks = old_chunks
+        descs = []
+        for i, c in enumerate(steps):
+            level = len(steps) - i - 1
+            if level != 0:
+                merge_name = self.name.replace("rechunk-merge-", f"rechunk-merge-{level}-")
+                split_name = self.name.replace("rechunk-merge-", f"rechunk-split-{level}-")
+            else:
+                merge_name = self.name
+                split_name = self.name.replace("rechunk-merge-", "rechunk-split-")
+            descs.append(
+                (
+                    name,
+                    [[int(s) for s in dim] for dim in cur_chunks],
+                    [[int(s) for s in dim] for dim in c],
+                    merge_name,
+                    split_name,
+                )
+            )
+            name = merge_name
+            cur_chunks = c
+
+        return RechunkLayer(operator.getitem, concatenate3, descs)
 
 
 def _convert_to_task_refs(obj):
