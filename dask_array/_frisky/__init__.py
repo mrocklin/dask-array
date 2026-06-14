@@ -21,7 +21,9 @@ from dask_array._frisky.collect import collect_task_records
 from dask_array._frisky.concatenate import ConcatenateLayer
 from dask_array._frisky.creation import CreationLayer
 from dask_array._frisky.expand_dims import ExpandDimsLayer
+from dask_array._frisky.eye import EyeLayer
 from dask_array._frisky.from_array import FromArrayLayer
+from dask_array._frisky.linspace import LinspaceLayer
 from dask_array._frisky.rechunk import RechunkLayer
 from dask_array._frisky.reduction import PartialReduceLayer
 from dask_array._frisky.slicing import SliceLayer
@@ -38,7 +40,9 @@ __all__ = [
     "ConcatenateLayer",
     "CreationLayer",
     "ExpandDimsLayer",
+    "EyeLayer",
     "FromArrayLayer",
+    "LinspaceLayer",
     "PartialReduceLayer",
     "RechunkLayer",
     "SliceLayer",
