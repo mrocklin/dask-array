@@ -183,6 +183,13 @@ def cases():
     yield "diag 1d->2d single", da.diag(arr((5,), (5,)))
     yield "diag 2d->1d", da.diag(arr((12, 12), (4, 4)))
     yield "diag 2d->1d irregular", da.diag(arr((10, 10), (3, 3)))
+    # reshape (per-block M.reshape; 1:1 C-order block mapping)
+    yield "reshape merge 2d->1d", arr((6, 8), (3, 4)).reshape(48)
+    yield "reshape split 1d->2d", arr((24,), (6,)).reshape(4, 6)
+    yield "reshape ravel", arr((6, 8), (3, 4)).ravel()
+    yield "reshape 3d merge", arr((4, 3, 5), (2, 3, 5)).reshape(12, 5)
+    yield "reshape single block", arr((6,), (6,)).reshape(2, 3)
+    yield "reshape_blockwise collapse", da.reshape_blockwise(arr((3, 3, 3), (3, 2, (2, 1))), (3, 9))
 
 
 def main():

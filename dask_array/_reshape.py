@@ -428,6 +428,11 @@ class ReshapeLowered(ArrayExpr):
         return self._outchunks
 
     def _layer(self) -> dict:
+        try:
+            return self._frisky_layer().to_dask_graph()
+        except (NotImplementedError, ImportError):
+            pass
+
         inchunks = self.array.chunks
         outchunks = self._outchunks
 
@@ -440,6 +445,18 @@ class ReshapeLowered(ArrayExpr):
             for out_key, in_key, shape in zip(out_keys, in_keys, shapes)
         }
         return dsk
+
+    def _frisky_layer(self):
+        """Describe this lowered reshape as a ReshapeLayer for direct task emission."""
+        from dask_array._frisky import ReshapeLayer
+
+        return ReshapeLayer(
+            name=self._name,
+            dep_name=self.array._name,
+            in_numblocks=[len(c) for c in self.array.chunks],
+            out_numblocks=[len(c) for c in self._outchunks],
+            out_shapes=list(product(*self._outchunks)),
+        )
 
 
 def reshape(x, shape, merge_chunks=True, limit=None):
@@ -578,6 +595,11 @@ class ReshapeBlockwise(ArrayExpr):
         return tuple(reduce(mul, x) for x in output_shape)
 
     def _layer(self) -> dict:
+        try:
+            return self._frisky_layer().to_dask_graph()
+        except (NotImplementedError, ImportError):
+            pass
+
         in_keys = list(product([self.array._name], *[range(len(c)) for c in self.array.chunks]))
         out_keys = list(product([self._name], *[range(len(c)) for c in self.chunks]))
 
@@ -585,6 +607,18 @@ class ReshapeBlockwise(ArrayExpr):
             out_key: Task(out_key, M.reshape, TaskRef(in_key), shape)
             for in_key, out_key, shape in zip(in_keys, out_keys, self._out_shapes)
         }
+
+    def _frisky_layer(self):
+        """Describe this blockwise reshape as a ReshapeLayer for direct task emission."""
+        from dask_array._frisky import ReshapeLayer
+
+        return ReshapeLayer(
+            name=self._name,
+            dep_name=self.array._name,
+            in_numblocks=[len(c) for c in self.array.chunks],
+            out_numblocks=[len(c) for c in self.chunks],
+            out_shapes=self._out_shapes,
+        )
 
 
 def reshape_blockwise(x, shape, chunks=None):

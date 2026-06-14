@@ -118,6 +118,14 @@ def cases():
     yield ("diag 1d->2d", lambda: da.diag(da.from_array(dd, chunks=3)), np.diag(dd))
     dd2 = np.arange(36, dtype="f8").reshape(6, 6)
     yield ("diag 2d->1d", lambda: da.diag(da.from_array(dd2, chunks=(2, 2))), np.diag(dd2))
+    # reshape (distinct data, real cluster -> serialization + per-block reshape)
+    rr = np.arange(48, dtype="f8").reshape(6, 8)
+    yield ("reshape merge", lambda: da.from_array(rr, chunks=(3, 4)).reshape(48), rr.reshape(48))
+    yield (
+        "reshape split",
+        lambda: da.from_array(np.arange(24, dtype="f8"), chunks=6).reshape(4, 6),
+        np.arange(24, dtype="f8").reshape(4, 6),
+    )
 
 
 def main():

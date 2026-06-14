@@ -1,0 +1,123 @@
+"""Coverage probe: which common dask-array operations take the Frisky records
+path end-to-end (vs. fall back to legacy dask because some node in the lowered
+tree lacks a `_frisky_layer`)?
+
+The records path is all-or-nothing: `dask.compute(op)` engages it only if EVERY
+expr in the lowered tree is covered. So `records=True` here means the whole
+operation — including all the layers it lowers to — is Rust-generated, and the
+result still matches numpy. `records=False` pinpoints an operation that hits an
+uncovered layer: the data-driven priority list for the remaining tail.
+
+    PYTHONPATH=/Users/mrocklin/workspace/dask-array \
+      MATURIN_IMPORT_HOOK_ENABLED=0 \
+      /Users/mrocklin/workspace/frisky/.venv/bin/python bench/coverage_probe.py
+"""
+
+import numpy as np
+
+import dask
+import dask_array as da
+import frisky.dask as fdask
+from frisky import Client, LocalCluster
+
+
+def cases():
+    # (label, build dask-array collection, numpy expected)
+    a = np.arange(48, dtype="f8").reshape(6, 8)
+    b = np.arange(48, 96, dtype="f8").reshape(6, 8)
+    fa = lambda c=(3, 4): da.from_array(a, chunks=c)
+    fb = lambda c=(3, 4): da.from_array(b, chunks=c)
+
+    # --- elementwise / blockwise family ---
+    yield ("add", lambda: fa() + fb(), a + b)
+    yield ("scalar mul", lambda: fa() * 2.0, a * 2.0)
+    yield ("astype", lambda: fa().astype("f4"), a.astype("f4"))
+    yield ("clip", lambda: da.clip(fa(), 10, 30), np.clip(a, 10, 30))
+    yield ("where", lambda: da.where(fa() > 20, fa(), 0.0), np.where(a > 20, a, 0.0))
+    yield ("ufunc sqrt", lambda: da.sqrt(fa()), np.sqrt(a))
+    yield ("negative", lambda: -fa(), -a)
+    yield ("maximum", lambda: da.maximum(fa(), fb() - 50), np.maximum(a, b - 50))
+
+    # --- transpose / reshape ---
+    yield ("transpose .T", lambda: fa().T, a.T)
+    yield ("transpose axes", lambda: fa().transpose(1, 0), a.transpose(1, 0))
+    yield ("reshape flat", lambda: fa().reshape(48), a.reshape(48))
+    yield ("reshape split", lambda: fa().reshape(2, 3, 8), a.reshape(2, 3, 8))
+    yield ("ravel", lambda: fa().ravel(), a.ravel())
+
+    # --- reductions ---
+    yield ("sum axis0", lambda: fa().sum(axis=0), a.sum(0))
+    yield ("mean", lambda: fa().mean(), a.mean())
+    yield ("std", lambda: fa().std(), a.std())
+    yield ("var axis1", lambda: fa().var(axis=1), a.var(axis=1))
+    yield ("min", lambda: fa().min(), a.min())
+    yield ("prod axis0", lambda: (fa() / 10).prod(axis=0), (a / 10).prod(0))
+
+    # --- linear algebra-ish (blockwise + reduction) ---
+    yield ("matmul", lambda: fa() @ fb().T, a @ b.T)
+    yield ("tensordot", lambda: da.tensordot(fa(), fb(), axes=([1], [1])), np.tensordot(a, b, axes=([1], [1])))
+    yield ("dot 1d", lambda: da.from_array(a[0], chunks=4) @ da.from_array(b[0], chunks=4), a[0] @ b[0])
+
+    # --- slicing + compute compositions ---
+    yield ("slice + add", lambda: fa()[1:5, 2:7] + 1, a[1:5, 2:7] + 1)
+    yield ("slice neg step", lambda: fa()[::-1] * 2, a[::-1] * 2)
+    yield ("rechunk + sum", lambda: fa().rechunk((2, 8)).sum(axis=1), a.sum(1))
+    yield (
+        "concatenate + mean",
+        lambda: da.concatenate([fa(), fb()], axis=0).mean(axis=0),
+        np.concatenate([a, b], 0).mean(0),
+    )
+    yield ("stack + sum", lambda: da.stack([fa(), fb()]).sum(axis=0), np.stack([a, b]).sum(0))
+    yield ("coarsen + add", lambda: da.coarsen(np.sum, fa(), {0: 2, 1: 2}) + 1, a.reshape(3, 2, 4, 2).sum((1, 3)) + 1)
+    yield ("broadcast + mul", lambda: (fa() * da.from_array(a[0], chunks=4)), a * a[0])
+    sq = np.arange(36, dtype="f8").reshape(6, 6)
+    yield ("diag of 2d", lambda: da.diag(da.from_array(sq, chunks=(3, 3))), np.diag(sq))
+
+    # --- indexed creation composed ---
+    yield ("arange + reshape", lambda: da.arange(24, chunks=6).reshape(4, 6), np.arange(24).reshape(4, 6))
+    yield ("eye @ x", lambda: da.eye(6, chunks=3) @ fa(), np.eye(6) @ a)
+
+    # --- known-uncovered (expect records=False, fall back) ---
+    yield ("cumsum [tail]", lambda: fa().cumsum(axis=0), a.cumsum(0))
+    yield ("argmin [tail]", lambda: fa().argmin(axis=0), a.argmin(0))
+    yield ("argmax ravel [tail]", lambda: fa().argmax(), np.array(a.argmax()))
+
+
+def main():
+    calls = {"n": 0}
+    orig = fdask._frisky_compute_collections
+
+    def spy(client, collections):
+        out = orig(client, collections)
+        calls["n"] += out is not None
+        return out
+
+    fdask._frisky_compute_collections = spy
+
+    covered, fellback, failed = [], [], []
+    with LocalCluster(n_workers=2) as cluster:
+        with Client(cluster.scheduler):
+            for label, build, expected in cases():
+                before = calls["n"]
+                try:
+                    (got,) = dask.compute(build())
+                    used = calls["n"] > before
+                    ok = np.allclose(np.asarray(got), expected) and np.shape(got) == np.shape(expected)
+                except Exception as e:  # noqa: BLE001
+                    failed.append((label, f"{type(e).__name__}: {str(e)[:70]}"))
+                    print(f"  ERR  {label:<22} {type(e).__name__}: {str(e)[:60]}")
+                    continue
+                tag = "REC" if used else "dask"
+                (covered if used else fellback).append(label)
+                flag = "OK " if ok else "BAD"
+                print(f"  {flag} [{tag:>4}] {label:<22} match={ok}")
+
+    fdask._frisky_compute_collections = orig
+    print(f"\nrecords-path (fully Rust-generated): {len(covered)}/{len(covered) + len(fellback) + len(failed)}")
+    print("  fell back to dask:", ", ".join(fellback) or "(none)")
+    if failed:
+        print("  ERRORED:", ", ".join(l for l, _ in failed))
+
+
+if __name__ == "__main__":
+    main()
