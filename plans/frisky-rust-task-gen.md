@@ -99,22 +99,75 @@ deps, aliases and per-block slices. Single-func/flat layers (blockwise,
 creation) are just the common case: one entry in `names`/`funcs`, every task a
 `Call{0}`.
 
-## Status
+## Status — 10 layers; now in the completeness/correctness phase
 
-- **Done:** blockwise (same-grid / broadcast elementwise; now also accepts
-  grid-preserving `adjust_chunks`), creation (ones/zeros/empty/full),
-  **PartialReduce** (tree-reduction aggregate; nested lol_tuples args), and
-  **TasksRechunk** (split `getitem` / merge `concatenate3` / alias; multi-step).
-  dask-array suite green (2809 pass; the 2 masked-array flakes are pre-existing —
-  numpy-2.2.6 masked `.view('i1')` in `from_array`, fail at `main` too). Frisky
-  records roundtrip matches numpy; ~3–4.7× faster client-side submission.
-- **Verification tools (`bench/`):** `roundtrip_layers.py` (real in-process
-  Frisky, `da.ones` base — plumbing), `diff_layers.py` (cluster-free, **distinct
-  arange data**, records path vs dask path per key — catches mis-assembly; reuse
-  for new layers), `bench_records.py` (submission speedup), `e2e_transparent.py`.
-- **Committed:** dask-array `rust-layers` (blockwise + creation + PartialReduce +
-  Rechunk); Frisky `array-bulk-client` `9bf5760` (unchanged — these two layers
-  needed no Frisky-side changes, confirming the client stays array-agnostic).
+- **Done (committed on `rust-layers`):** blockwise (+ grid-preserving
+  `adjust_chunks`), creation, **from_array** (Python data source — see note in the
+  landscape), **PartialReduce**, **TasksRechunk** (multi-step), broadcast_to,
+  expand_dims, squeeze, concatenate, stack. ~10 of ~79 layer classes.
+- dask-array suite green (**2809 pass**; the 2 masked-array failures are
+  pre-existing — numpy-2.2.6 masked `.view('i1')` in `from_array` tokenize, fail
+  at `main` too; deselect `test_weighted_reduction` +
+  `test_slice_pushdown::test_masked_array`).
+- Each layer validated **3 ways**: suite (`to_dask_graph` oracle) + `diff_layers.py`
+  (distinct-arange records-vs-dask per key — catches mis-assembly) +
+  `roundtrip_layers.py` (real in-process Frisky, asserts the records path was
+  taken). **Frisky needed zero changes across all 10** — the client stays
+  array-agnostic, which is the property to preserve.
+- **Verification tools (`bench/`):** `diff_layers.py`, `roundtrip_layers.py`,
+  `bench_records.py` (blockwise submission speedup), `e2e_transparent.py`.
+- Frisky `array-bulk-client` `9bf5760` (unchanged).
+
+## Phase posture: completeness/correctness now, performance later
+
+The current phase is **completeness + correctness** — cover the dask-array layer
+API cleanly and correctly, with *decent* (not maximal) performance. The 5–10×
+hand-off target from the preamble is **deferred to a later optimization phase**;
+it needs work the current "generic, no-Frisky-changes" approach intentionally
+avoids. Don't chase perf now — finish the Rust transformation on the current path.
+
+### Measured performance (recorded so it isn't lost)
+Client-side submission, records path vs the materialized
+`__dask_graph__`+`translate_graph` path: **~2–4.5×, not 5–10×.** By layer:
+blockwise / reduction ~3.8–4.5×, expand_dims ~3.3×, rechunk ~2.0×, concatenate
+~2.1× (and **net-negative full-pipeline** — alias routing nodes pay full per-task
+cost). That's the honest current number; it's fine for this phase.
+
+### Why 5–10× isn't reached, and the real lever (profiled this round)
+`submit_tasks` phase breakdown (ones+1, 12,800 tasks, release):
+`dumps_value` (per-task **arg pickle**) **~55%**, `lower_dep_refs` (per-task dep
+walk) ~20%, run_spec/TaskSpec ~12%, dispatch ~11%, func (cached) ~2%. And
+`submit_tasks` is only ~40% of client cost — `collect_task_records` (Rust gen,
+which *builds* the per-task `TaskRef`/args Python objects) is ~60%. (A much larger
+wall-clock "submit" seen elsewhere is scheduler round-trip/ingest under
+contention — out of scope per the preamble; not client serialization.)
+
+The real lever is **generate serialized task state directly**: dask-array's Rust
+writes the run_spec bytes itself instead of building per-task `TaskRef`/args Python
+objects that Frisky then walks (`lower_dep_refs`) and pickles (`dumps_value`). That
+collapses *both* dominant costs at once — for structurally-simple args (ints,
+coords, dep-refs: most layers) Rust serializes directly; only opaque shared
+literals need a one-time pickle. Projection: blockwise ~3.8× → ~5–6×. **Crucially
+this keeps Frisky array-agnostic:** Frisky defines a *generic* structured-task
+format (shared blobs + compact per-task data) and deserializes it with one generic
+codepath — it does NOT hold per-layer "templates" (that would re-introduce
+array-awareness, the failure mode to avoid). The neutral form (`Expanded`: shared
+funcs/kwargs/literals + per-task coord/slots) already provides the shared/per-task
+split this needs.
+
+### Deferred optimization backlog (future phase)
+- **Serialized-state / generic structured-task format** — the main 5–10× lever
+  (above). Needs generic Frisky-side protocol + worker support, no array-awareness.
+- **Native Frisky `Alias` term** ("key X resolves to key Y", no task run) — removes
+  per-task pickle for routing nodes; fixes the concatenate/stack full-pipeline
+  regression. The records path currently fakes alias with `toolz.identity`.
+- **`FusedBlockwise` layer** — `x.compute()` fuses before submitting and the fused
+  layer has no `_frisky_layer`, so idiomatic compute falls back to dask. Cover it
+  (still blockwise-shaped) so the records path fires for real user code.
+- **`optimize_graph` / low-level fusion** in the records path (currently skipped).
+- "Lower deps in Rust" (build dep placeholders in Rust, drop `lower_dep_refs`) is a
+  ~20%-of-`submit` subset of the serialized-state work — fold it into that, not as
+  a standalone step.
 
 ## Adding a layer — the recipe
 
