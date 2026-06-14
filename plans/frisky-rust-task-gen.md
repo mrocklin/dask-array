@@ -90,19 +90,31 @@ normalizes the operands and **raises `NotImplementedError` for any shape it
 doesn't fully handle** — the safety valve: when unsure, fall back to the correct
 legacy path.
 
-The neutral form today (`common.rs` `Expanded` / `ArgSlot`) assumes **one shared
-func per layer** and **flat args** (`Literal | Dep{name,coord} | IntTuple`).
-That fits blockwise + creation. The next two layers generalize it (below).
+The neutral form (`common.rs`) now covers all three task structures. A
+`NeutralTask` carries its own key (`names[name_idx]` + coord) and a `Compute`
+(`Call{func_idx}` into the layer's `funcs`, or `Alias`). `ArgSlot` is
+`Literal | Dep{name,coord} | IntTuple | List(Vec<ArgSlot>) | Slices`. So one
+layer can emit multiple funcs, free-form intermediate keys, nested/variable-fan
+deps, aliases and per-block slices. Single-func/flat layers (blockwise,
+creation) are just the common case: one entry in `names`/`funcs`, every task a
+`Call{0}`.
 
 ## Status
 
-- **Done:** blockwise (same-grid / broadcast elementwise) + creation
-  (ones/zeros/empty/full). dask-array suite green (2810 pass; the 2 masked-array
-  flakes also fail on `main`); Frisky roundtrip matches numpy; ~4.2–4.7× faster
-  client-side submission than the materialized (`__dask_graph__` +
-  `translate_graph`) path.
-- **Committed:** dask-array `rust-layers` `47dc790`; Frisky `array-bulk-client`
-  `9bf5760`.
+- **Done:** blockwise (same-grid / broadcast elementwise; now also accepts
+  grid-preserving `adjust_chunks`), creation (ones/zeros/empty/full),
+  **PartialReduce** (tree-reduction aggregate; nested lol_tuples args), and
+  **TasksRechunk** (split `getitem` / merge `concatenate3` / alias; multi-step).
+  dask-array suite green (2809 pass; the 2 masked-array flakes are pre-existing —
+  numpy-2.2.6 masked `.view('i1')` in `from_array`, fail at `main` too). Frisky
+  records roundtrip matches numpy; ~3–4.7× faster client-side submission.
+- **Verification tools (`bench/`):** `roundtrip_layers.py` (real in-process
+  Frisky, `da.ones` base — plumbing), `diff_layers.py` (cluster-free, **distinct
+  arange data**, records path vs dask path per key — catches mis-assembly; reuse
+  for new layers), `bench_records.py` (submission speedup), `e2e_transparent.py`.
+- **Committed:** dask-array `rust-layers` (blockwise + creation + PartialReduce +
+  Rechunk); Frisky `array-bulk-client` `9bf5760` (unchanged — these two layers
+  needed no Frisky-side changes, confirming the client stays array-agnostic).
 
 ## Adding a layer — the recipe
 
@@ -142,31 +154,32 @@ Mirror `blockwise.rs`/`creation.rs` and `_frisky/{blockwise,creation}.py`.
   generalizes): reductions, slicing, rechunk, from_array, concatenate/stack.
   Linalg, map_blocks, vindex are lower-frequency — defer.
 
-## First round: PartialReduce + Rechunk (de-risk the model)
+## First round: PartialReduce + Rechunk (DONE — model de-risked)
 
-One Opus agent, serial. Goal: extend the neutral form to cover the two
-structures the rest of the API needs, and lock the shared vocabulary **before**
-parallelizing.
+Goal was to extend the neutral form to the two structures the rest of the API
+needs and lock the vocabulary before parallelizing. Both landed:
 
-- **PartialReduce** (`reductions/_reduction.py`; `Reduction` lowers to
-  `Blockwise` (chunk, already handled) + `PartialReduce` (aggregate)). Forces
-  **nested / variable-length dependency args** (the aggregate's lol_tuples).
-  Likely add `ArgSlot::List(Vec<ArgSlot>)` so a task's args can be arbitrary
-  nested structures of `Dep`/`Literal`; both converters build the nested Python
-  list (`lower_dep_refs` already recurses). Func = the aggregate (kwargs:
-  axis/keepdims).
-- **Rechunk** (`TasksRechunk`, `_rechunk.py`). Forces **multiple funcs +
-  intermediate keys within one layer** (split = `getitem(old_block, slices)`;
-  merge = `concatenate3(nested list)`). The current `Expanded` assumes one shared
-  func and `(name, coord)` keys; generalize so a layer emits tasks that each
-  carry their own func and an arbitrary key (intermediates aren't the layer's
-  outputs). This converges the neutral form toward the per-task
-  `(key, func, args, kwargs, deps)` hand-off described above, with single-func
-  `Expanded` kept as a fast path for blockwise/creation.
+- **PartialReduce** (`reduction.rs`, `_frisky/reduction.py`; routing in
+  `reductions/_reduction.py`). Reproduces dask's `lol_tuples` nesting as one
+  `ArgSlot::List` per task (reduced axes nest, kept axes fix a coord). The
+  reduction's chunk step is a `Blockwise` with `adjust_chunks` — `_blockwise.py`
+  now accepts grid-preserving `adjust_chunks` (block *counts* unchanged; the
+  alignment check still rejects count-changing forms), so a whole `da.x.sum()`
+  takes the records path.
+- **Rechunk** (`rechunk.rs`, `_frisky/rechunk.py`; routing in `_rechunk.py`).
+  The intricate planning (`plan_rechunk`) stays in tested Python and runs once;
+  Rust does the O(n_blocks) work — the 1-D chunk intersection
+  (`intersect_1d`/`old_to_new`) and the per-block split (`getitem`) / merge
+  (`concatenate3` nested list, or `Alias`) expansion, across multiple steps.
+  Exercises the full vocabulary: two `funcs`, `Compute::Alias`, free-form split
+  keys, `ArgSlot::List`, `ArgSlot::Slices`.
 
-Both are validated by the suite (`to_dask_graph`) + a Frisky roundtrip. When
-done, the neutral form + `ArgSlot` vocabulary cover per-task func, nested /
-variable deps, and intermediate keys — the union most remaining layers need.
+Validated: dask-array suite (2809) + distinct-data differential (`diff_layers.py`,
+records vs dask per key, incl. multi-step/3-D/transpose-like) + real-Frisky
+roundtrip (`roundtrip_layers.py`). Independent review: 0 critical/medium across
+~400 differential configs. The neutral form + `ArgSlot` vocabulary now cover
+per-task func, nested/variable deps, intermediate keys, aliases and slices — the
+union most remaining layers need.
 
 ## Then: parallel-agent workflow
 
@@ -202,12 +215,20 @@ Once the recipe is mechanical and the vocabulary is settled:
 - **Simplicity:** the Rust layer should be comparable in size/clarity to the
   dask Python `_layer` it replaces.
 
-## Open questions / model decisions (settle in round 1)
+## Open questions / model decisions
 
-- Nested / variable-length dep args: `ArgSlot::List(Vec<ArgSlot>)` vs a more
-  general "args are an arbitrary nested structure with embedded deps".
-- Multi-func + intermediate keys: generalize `Expanded` toward per-task func +
-  free-form keys (the records model), keeping single-func as a fast path?
+Settled in round 1:
+- **Nested / variable-length dep args** → `ArgSlot::List(Vec<ArgSlot>)` (recursive
+  `ArgSlot` nesting). Both converters build it; the dask path wraps it in
+  `dask._task_spec.List` (so embedded `TaskRef`s register as deps), the records
+  path a plain Python list (Frisky's worker `resolve_futures` recurses lists).
+- **Multi-func + intermediate keys** → `Expanded` carries `names` (keys) +
+  `funcs`; each `NeutralTask` picks a `Compute` (`Call{func_idx}` or `Alias`).
+  Single-func/flat layers are just one `names`/`funcs` entry — no fast-path fork.
+- **Alias** → dask path emits `dask._task_spec.Alias`; records path a
+  `toolz.identity` task (Frisky has no alias node). Deps tracked either way.
+
+Still open:
 - `from_array`: keep the backing array out of per-task args (per-block getter).
 - `dask.order` priorities: the records path uses insertion order; revisit if
   scheduling quality matters on real workloads.
