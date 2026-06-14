@@ -12,6 +12,7 @@ set in parallel.
 """
 
 from dask_array._frisky.arange import ArangeLayer
+from dask_array._frisky.arg_chunk import ArgChunkLayer
 from dask_array._frisky.base import Layer
 from dask_array._frisky.blocks import BlocksLayer
 from dask_array._frisky.blockwise import BlockwiseLayer
@@ -35,6 +36,7 @@ from dask_array._frisky.stack import StackLayer
 __all__ = [
     "Layer",
     "ArangeLayer",
+    "ArgChunkLayer",
     "BlocksLayer",
     "BlockwiseLayer",
     "BroadcastLayer",

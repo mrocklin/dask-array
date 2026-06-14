@@ -126,6 +126,10 @@ def cases():
         lambda: da.from_array(np.arange(24, dtype="f8"), chunks=6).reshape(4, 6),
         np.arange(24, dtype="f8").reshape(4, 6),
     )
+    # arg-reduction (argmin/argmax axis-wise; chunk = ArgChunk, combine = PartialReduce)
+    ag = (np.arange(54, dtype="f8").reshape(9, 6) * 7) % 11  # distinct-ish, non-monotone
+    yield ("argmin axis0", lambda: da.from_array(ag, chunks=(2, 2)).argmin(axis=0), ag.argmin(0))
+    yield ("argmax axis1", lambda: da.from_array(ag, chunks=(2, 2)).argmax(axis=1), ag.argmax(1))
 
 
 def main():

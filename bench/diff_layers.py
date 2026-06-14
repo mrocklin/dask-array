@@ -190,6 +190,12 @@ def cases():
     yield "reshape 3d merge", arr((4, 3, 5), (2, 3, 5)).reshape(12, 5)
     yield "reshape single block", arr((6,), (6,)).reshape(2, 3)
     yield "reshape_blockwise collapse", da.reshape_blockwise(arr((3, 3, 3), (3, 2, (2, 1))), (3, 9))
+    # arg-reduction chunk step (argmin/argmax, non-ravel; combine = PartialReduce)
+    yield "argmin axis0", arr((9, 6), (2, 2)).argmin(axis=0)
+    yield "argmax axis1", arr((9, 6), (2, 2)).argmax(axis=1)
+    yield "argmin 3d axis1", arr((8, 6, 4), (4, 3, 2)).argmin(axis=1)
+    yield "argmin irregular", arr((10, 7), (3, 4)).argmin(axis=0)
+    yield "argmax 3d axis2", arr((6, 5, 8), (3, 5, 2)).argmax(axis=2)
 
 
 def main():

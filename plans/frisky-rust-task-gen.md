@@ -99,15 +99,16 @@ deps, aliases and per-block slices. Single-func/flat layers (blockwise,
 creation) are just the common case: one entry in `names`/`funcs`, every task a
 `Call{0}`.
 
-## Status — 19 layers; now in the completeness/correctness phase
+## Status — 20 layers; now in the completeness/correctness phase
 
-- **Coverage frontier (`bench/coverage_probe.py`):** 32/35 common composite
+- **Coverage frontier (`bench/coverage_probe.py`):** 33/35 common composite
   operations take the records path **end-to-end** (fully Rust-generated, matching
   numpy) — all elementwise/ufunc/where/clip/astype, transpose, every reduction
   (sum/mean/std/var/min/prod), matmul/tensordot/dot, slicing compositions, rechunk,
-  concatenate/stack/coarsen/broadcast, diag, `eye @ x`, **reshape/ravel**. The 3
-  fall-backs (still correct via legacy dask) are `cumsum` (cumulative) and
-  `argmin`/`argmax` (arg_reduction) — the next data-driven priorities.
+  concatenate/stack/coarsen/broadcast, diag, `eye @ x`, **reshape/ravel**, and
+  **axis-wise argmin/argmax**. The 2 remaining fall-backs (still correct via legacy
+  dask) are `cumsum` (cumulative — intricate) and **ravel** argmin/argmax (the
+  nested-tuple offset, deliberately deferred).
 
 - **Done (committed on `rust-layers`):** blockwise (+ grid-preserving
   `adjust_chunks`), creation, **from_array** (Python data source — see note in the
@@ -124,7 +125,9 @@ creation) are just the common case: one entry in `names`/`funcs`, every task a
   `Compute::CallKw` — for its off-diagonal `np.zeros_like(meta, shape=…)`).
   Plus **reshape** (`ReshapeLowered` + `ReshapeBlockwise` — per-block
   `M.reshape(in_block, out_shape)`, 1:1 C-order block mapping; one Rust layer
-  serves both). ~19 of ~79 layer classes. PROTOCOL_REVISION 17.
+  serves both) and **ArgChunk** (the per-block chunk step of argmin/argmax,
+  non-ravel; the combine is the already-covered `PartialReduce`). ~20 of ~79
+  layer classes. PROTOCOL_REVISION 18.
 - dask-array suite green (**2808 pass**; the 3 masked-array failures are
   pre-existing — numpy-2.2.6 masked `.view('i1')` in dask's tokenize, fail at
   `main` too, pure numpy traceback with no layer code, fail standalone in a fresh
@@ -280,11 +283,14 @@ Mirror `blockwise.rs`/`creation.rs` and `_frisky/{blockwise,creation}.py`.
   as the top fall-back (reshape/ravel hit 3× in common workloads); one Rust
   `ReshapeLayer` (1:1 C-order block map + per-block `IntTuple` shape) serves both
   `ReshapeLowered` and `ReshapeBlockwise`, no `common.rs` change. Next data-driven
-  candidates (from the probe): `cumulative` (cumsum — intricate: chunk + sequential
-  correction-chain + an inline `getitem` + an `apply`+kwargs `full_like`; also a
-  `CumReductionBlelloch` variant — needs care, possibly a lead-first port) and
-  `arg_reduction` (argmin/argmax — entangled with the reduction combine; the ravel
-  case needs a nested-tuple offset). Linalg (qr/svd/lu — the big multi-stage lift),
+  candidates (from the probe): **arg_reduction ✅ (axis-wise) done** — `ArgChunk`
+  ported (non-ravel; combine = covered `PartialReduce`), so `argmin`/`argmax(axis=k)`
+  now generate end-to-end; the **ravel** case (`argmin()`) still falls back (its
+  offset is a nested `(offsets, shape)` tuple — would need a nested-tuple arg or to
+  flatten it). The last common fall-back is `cumulative` (cumsum — intricate: chunk
+  + sequential correction-chain + an inline `getitem` + an `apply`+kwargs
+  `full_like`; also a `CumReductionBlelloch` variant — needs care, likely a
+  lead-first port). Linalg (qr/svd/lu — the big multi-stage lift),
   map_blocks, vindex, bool-index, setitem, random, `diagonal`, k≠0 diag, overlap
   (delegates to dask's `ArrayOverlapLayer`) are lower-frequency or large — defer.
 - **Data-source layers are a Python seam, not Rust.** `from_array` (and other I/O
