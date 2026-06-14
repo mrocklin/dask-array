@@ -34,6 +34,11 @@ class BroadcastTo(ArrayExpr):
         return self._chunks
 
     def _layer(self) -> dict:
+        try:
+            return self._frisky_layer().to_dask_graph()
+        except NotImplementedError:
+            pass
+
         x = self.array
         shape = self._shape
         chunks = self._chunks
@@ -49,6 +54,34 @@ class BroadcastTo(ArrayExpr):
             dsk[new_key] = Task(new_key, np.broadcast_to, TaskRef(old_key), chunk_shape)
 
         return dsk
+
+    def _frisky_layer(self):
+        """Describe this BroadcastTo as a BroadcastLayer for direct task emission.
+
+        Raises NotImplementedError for anything we don't fully handle; _layer
+        catches that and falls back to the dask path.
+        """
+        from dask_array._frisky import BroadcastLayer
+
+        x = self.array
+        try:
+            chunks = [[int(s) for s in c] for c in self._chunks]
+        except (TypeError, ValueError):
+            # Unknown (nan) chunk sizes can't be expanded; fall back.
+            raise NotImplementedError("non-concrete chunks")
+        ndim_new = len(self._shape) - x.ndim
+
+        # Per-input-dimension broadcast flag: True if the input has a single
+        # block on that axis (bd == (1,)), False if the output coord passes through.
+        broadcast_dim = [bd == (1,) for bd in x.chunks]
+
+        return BroadcastLayer(
+            self._name,
+            x._name,
+            chunks,
+            ndim_new,
+            broadcast_dim,
+        )
 
     def _simplify_up(self, parent, dependents):
         """Allow slice and shuffle operations to push through BroadcastTo."""

@@ -96,6 +96,22 @@ def cases():
     # chained
     yield "rechunk then sum", arr((12, 12), (4, 4)).rechunk((6, 3)).sum(axis=0)
     yield "sum of rechunk 3d", arr((6, 6, 6), (2, 2, 2)).rechunk((3, 3, 3)).sum(axis=1)
+    # squeeze
+    yield "squeeze axis=0", arr((1, 6, 4), (1, 3, 2)).squeeze(axis=0)
+    yield "squeeze axis=1", arr((4, 1, 6), (2, 1, 3)).squeeze(axis=1)
+    yield "squeeze multi-axis", arr((1, 4, 1, 6), (1, 2, 1, 3)).squeeze(axis=(0, 2))
+    yield "squeeze all size-1", arr((1, 4, 1), (1, 2, 1)).squeeze()
+    # broadcast_to
+    yield "broadcast_to new leading dim", da.broadcast_to(arr((4, 6), (2, 3)), (3, 4, 6))
+    yield "broadcast_to size-1 dim", da.broadcast_to(arr((1, 6), (1, 3)), (4, 6))
+    yield "broadcast_to both new and size-1", da.broadcast_to(arr((1, 6), (1, 3)), (5, 4, 6))
+    yield "broadcast_to passthrough", da.broadcast_to(arr((4, 6), (2, 3)), (4, 6))
+    # expand_dims
+    yield "expand_dims axis0", da.expand_dims(arr((6, 4), (3, 2)), axis=0)
+    yield "expand_dims axis1", da.expand_dims(arr((6, 4), (3, 2)), axis=1)
+    yield "expand_dims axis-1", da.expand_dims(arr((6, 4), (3, 2)), axis=-1)
+    yield "expand_dims multi", da.expand_dims(arr((6, 4), (3, 2)), axis=(0, 2))
+    yield "expand_dims 3d", da.expand_dims(arr((4, 3, 5), (2, 3, 2)), axis=1)
 
 
 def main():

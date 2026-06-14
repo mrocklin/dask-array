@@ -38,7 +38,28 @@ class Squeeze(ArrayExpr):
     def chunks(self):
         return tuple(c for i, c in enumerate(self.array.chunks) if i not in self._axis_set)
 
+    def _frisky_layer(self):
+        from dask_array._frisky.squeeze import SqueezeLayer
+
+        axis_set = self._axis_set
+        out_chunks = self.chunks
+        # numblocks: number of output blocks per output dimension
+        numblocks = tuple(len(c) for c in out_chunks)
+        input_ndim = self.array.ndim
+        return SqueezeLayer(
+            self._name,
+            self.array._name,
+            numblocks,
+            input_ndim,
+            axis_set,
+        )
+
     def _layer(self) -> dict:
+        try:
+            return self._frisky_layer().to_dask_graph()
+        except (NotImplementedError, ImportError):
+            pass
+
         # Map from output chunk indices to input chunk indices
         # Input has more dimensions than output
         in_chunks = self.array.chunks

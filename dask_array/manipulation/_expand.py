@@ -54,6 +54,11 @@ class ExpandDims(ArrayExpr):
         return tuple(None if i in self.axes else slice(None) for i in range(out_ndim))
 
     def _layer(self) -> dict:
+        try:
+            return self._frisky_layer().to_dask_graph()
+        except NotImplementedError:
+            pass
+
         indexer = self._indexer
         axes = sorted(self.axes)
         input_name = self.array._name
@@ -69,6 +74,19 @@ class ExpandDims(ArrayExpr):
             dsk[out_key] = Task(out_key, getitem, TaskRef(in_key), indexer)
 
         return dsk
+
+    def _frisky_layer(self):
+        """Describe this ExpandDims as an ExpandDimsLayer for direct task emission."""
+        from dask_array._frisky import ExpandDimsLayer
+
+        return ExpandDimsLayer(
+            name=self._name,
+            input_name=self.array._name,
+            func=getitem,
+            indexer=self._indexer,
+            input_numblocks=self.array.numblocks,
+            axes=sorted(self.axes),
+        )
 
     def _simplify_up(self, parent, dependents):
         """Allow slice and shuffle operations to push through ExpandDims."""
