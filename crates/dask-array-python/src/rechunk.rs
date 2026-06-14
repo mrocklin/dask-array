@@ -6,7 +6,7 @@
 //! covers a whole new block). It exercises the full neutral-form vocabulary:
 //! per-task func ([`Compute::Call`] with two `funcs`), free-form intermediate
 //! keys (split names), [`Compute::Alias`], nested deps ([`ArgSlot::List`]) and
-//! per-task slices ([`ArgSlot::Slices`]).
+//! per-task slices ([`ArgSlot::Index`]).
 //!
 //! The intricate planning heuristic (`plan_rechunk`) stays in tested Python and
 //! runs once; it hands this layer a list of steps (old/new chunk sizes + the
@@ -20,7 +20,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use crate::common::{to_dask_graph, to_task_records, ArgSlot, Compute, Expanded, NeutralTask};
+use crate::common::{to_dask_graph, to_task_records, ArgSlot, Compute, Expanded, IndexElem, NeutralTask};
 
 struct Step {
     old_idx: usize,
@@ -209,11 +209,11 @@ impl RechunkLayer {
                 for _ in 0..ncontrib {
                     let mut full = true;
                     let mut old_coord = vec![0u32; ndim];
-                    let mut slices: Vec<(i64, i64)> = Vec::with_capacity(ndim);
+                    let mut slices: Vec<IndexElem> = Vec::with_capacity(ndim);
                     for d in 0..ndim {
                         let (oi, lo, hi) = entries[d][sel[d]];
                         old_coord[d] = oi;
-                        slices.push((lo, hi));
+                        slices.push(IndexElem::Slice { start: Some(lo), stop: Some(hi), step: Some(1) });
                         if !(lo == 0 && hi == step.old_chunks[d][oi as usize]) {
                             full = false;
                         }
@@ -230,7 +230,7 @@ impl RechunkLayer {
                             compute: Compute::Call { func_idx: 0 }, // getitem
                             slots: vec![
                                 ArgSlot::Dep { name_idx: step.old_idx, coord: old_coord },
-                                ArgSlot::Slices(slices),
+                                ArgSlot::Index(slices),
                             ],
                         });
                         ArgSlot::Dep { name_idx: step.split_idx, coord: vec![cur] }

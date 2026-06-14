@@ -69,6 +69,17 @@ def cases():
         lambda: da.stack([da.from_array(r, chunks=(3, 2)), da.from_array(r2, chunks=(3, 2))], axis=0),
         np.stack([r, r2], axis=0),
     )
+    # basic slicing / getitem (distinct data, real cluster -> serialization + assembly)
+    s = np.arange(60, dtype="f8").reshape(6, 10)
+    fs = lambda c=(3, 5): da.from_array(s, chunks=c)
+    yield ("slice 2d", lambda: fs()[1:5, 2:9], s[1:5, 2:9])
+    yield ("slice 2d step", lambda: fs()[::2, 1::3], s[::2, 1::3])
+    yield ("slice 2d neg step", lambda: fs()[::-1, 2:9], s[::-1, 2:9])
+    yield ("integer row", lambda: fs()[4], s[4])
+    yield ("integer + slice", lambda: fs()[3, 2:9], s[3, 2:9])
+    yield ("slice + integer", lambda: fs()[1:5, 7], s[1:5, 7])
+    yield ("scalar index", lambda: fs()[3, 4], s[3, 4])
+    yield ("slice then slice", lambda: fs()[1:6, 1:9][1:4, 2:6], s[1:6, 1:9][1:4, 2:6])
 
 
 def main():

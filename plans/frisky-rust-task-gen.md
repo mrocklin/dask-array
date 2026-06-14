@@ -99,16 +99,24 @@ deps, aliases and per-block slices. Single-func/flat layers (blockwise,
 creation) are just the common case: one entry in `names`/`funcs`, every task a
 `Call{0}`.
 
-## Status — 10 layers; now in the completeness/correctness phase
+## Status — 11 layers; now in the completeness/correctness phase
 
 - **Done (committed on `rust-layers`):** blockwise (+ grid-preserving
   `adjust_chunks`), creation, **from_array** (Python data source — see note in the
   landscape), **PartialReduce**, **TasksRechunk** (multi-step), broadcast_to,
-  expand_dims, squeeze, concatenate, stack. ~10 of ~79 layer classes.
+  expand_dims, squeeze, concatenate, stack, **basic slicing/getitem**
+  (`SliceSlicesIntegers` — slices + integer-drop + negative steps; the intricate
+  `_slice_1d` index math stays in Python, Rust does the O(n_tasks) product). ~11
+  of ~79 layer classes.
 - dask-array suite green (**2809 pass**; the 2 masked-array failures are
   pre-existing — numpy-2.2.6 masked `.view('i1')` in `from_array` tokenize, fail
-  at `main` too; deselect `test_weighted_reduction` +
-  `test_slice_pushdown::test_masked_array`).
+  at `main` too. Deselect `dask_array/tests/test_reductions.py::test_weighted_reduction`
+  + `dask_array/tests/test_slice_pushdown.py::test_masked_array`. NOTE: the second
+  is the **file**-level `test_slice_pushdown.py::test_masked_array`; an earlier
+  shorthand mis-resolved to a nonexistent `test_slicing.py::test_slice_pushdown::…`
+  which pytest silently skipped — so prior "2810" counts intermittently *included*
+  this failing test passing under xdist tokenize-cache priming. It fails standalone
+  in a fresh process; the traceback is pure dask-tokenize/numpy-masked, no layer code.)
 - Each layer validated **3 ways**: suite (`to_dask_graph` oracle) + `diff_layers.py`
   (distinct-arange records-vs-dask per key — catches mis-assembly) +
   `roundtrip_layers.py` (real in-process Frisky, asserts the records path was
@@ -211,7 +219,7 @@ Mirror `blockwise.rs`/`creation.rs` and `_frisky/{blockwise,creation}.py`.
   (squeeze ✅, expand_dims ✅, broadcast_to ✅, reshape), aliasing (concatenate ✅,
   stack ✅, blocks, copy), indexed creation (arange, linspace, eye, diag — these
   need a per-task scalar `ArgSlot`, a small `common.rs` addition: lead first),
-  basic slicing/getitem, coarsen, gufunc, random.
+  basic slicing/getitem ✅, coarsen, gufunc, random.
 - **Variable fan-in** — one output ← a nested, variable-length list of input
   blocks. Needs a **nested/list arg** in the neutral form. PartialReduce
   (tree-aggregate, lol_tuples), concatenate-finalize, overlap (neighbors),
@@ -227,8 +235,11 @@ Mirror `blockwise.rs`/`creation.rs` and `_frisky/{blockwise,creation}.py`.
   cluster until its whole input chain is covered — and **`from_array` gated every
   non-creation workload** (done ✅ — distinct-data workloads now roundtrip on a
   real cluster, not just the `diff_layers.py` local resolver). concatenate ✅ +
-  stack ✅ done (parallel batch 2). Next: basic slicing/getitem (the other root —
-  needs `ArgSlot::Slices` to carry a step; lead-first), then the long tail.
+  stack ✅ done (parallel batch 2). **basic slicing/getitem ✅ done** (lead-first:
+  generalized `ArgSlot::Slices(Vec<(i64,i64)>)` → `ArgSlot::Index(Vec<IndexElem>)`
+  carrying `slice(start,stop,step)` with `None` bounds + integer-drop; rechunk
+  migrated to the same variant). Both testing-unlock roots are now covered. Next:
+  the long tail — resume parallel batches (lead-owns-shared-files).
   Linalg, map_blocks, vindex are lower-frequency — defer.
 - **Data-source layers are a Python seam, not Rust.** `from_array` (and other I/O
   sources) have no per-task computation to accelerate — each block is a numpy
@@ -254,7 +265,7 @@ needs and lock the vocabulary before parallelizing. Both landed:
   (`intersect_1d`/`old_to_new`) and the per-block split (`getitem`) / merge
   (`concatenate3` nested list, or `Alias`) expansion, across multiple steps.
   Exercises the full vocabulary: two `funcs`, `Compute::Alias`, free-form split
-  keys, `ArgSlot::List`, `ArgSlot::Slices`.
+  keys, `ArgSlot::List`, `ArgSlot::Index`.
 
 Validated: dask-array suite (2809) + distinct-data differential (`diff_layers.py`,
 records vs dask per key, incl. multi-step/3-D/transpose-like) + real-Frisky
@@ -301,7 +312,9 @@ Once the recipe is mechanical and the vocabulary is settled:
 
 - **Correctness oracle:** `cd ~/workspace/dask-array && .venv/bin/python -m
   pytest dask_array/tests/ -q -n auto` with `_frisky_layer` active (pre-existing
-  flakes: `test_weighted_reduction`, `test_slice_pushdown::test_masked_array`).
+  flakes: `test_reductions.py::test_weighted_reduction`,
+  `test_slice_pushdown.py::test_masked_array` — use the full file::test path; the
+  bare `test_slice_pushdown::…` form silently matches nothing).
   Build: `.venv/bin/maturin develop` (debug, ~1s rebuild; `--release` for perf).
 - **Records path, distinct data:** `bench/diff_layers.py` — cluster-free, runs
   each layer's `to_task_records` through a worker-style resolver and compares to

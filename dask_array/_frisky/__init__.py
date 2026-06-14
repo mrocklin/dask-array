@@ -21,6 +21,7 @@ from dask_array._frisky.expand_dims import ExpandDimsLayer
 from dask_array._frisky.from_array import FromArrayLayer
 from dask_array._frisky.rechunk import RechunkLayer
 from dask_array._frisky.reduction import PartialReduceLayer
+from dask_array._frisky.slicing import SliceLayer
 from dask_array._frisky.squeeze import SqueezeLayer
 from dask_array._frisky.stack import StackLayer
 
@@ -34,6 +35,7 @@ __all__ = [
     "FromArrayLayer",
     "PartialReduceLayer",
     "RechunkLayer",
+    "SliceLayer",
     "SqueezeLayer",
     "StackLayer",
     "collect_task_records",
