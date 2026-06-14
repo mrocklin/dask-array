@@ -46,18 +46,22 @@ class ArgChunk(ArrayExpr):
     def _frisky_layer(self):
         from dask_array._frisky.arg_chunk import ArgChunkLayer
 
-        if self.ravel:
-            # The ravel offset is a nested ``(offsets, x.shape)`` tuple the simple
-            # Scalar slot can't carry — fall back to legacy dask.
-            raise NotImplementedError("ravel arg-reduction")
-
         x = self.array
-        # Mirror the legacy non-ravel offset math exactly:
-        # off = pluck(axis[0], product over per-dim cumulative chunk starts).
+        # Per-block per-dim start offsets (C order), mirroring the legacy.
         offsets = list(product(*(accumulate(operator.add, bd[:-1], 0) for bd in x.chunks)))
-        offs = list(pluck(self.axis[0], offsets))
-        numblocks = x.numblocks
-        return ArgChunkLayer(self._name, self.chunk_func, self.axis, x._name, numblocks, offs)
+        if self.ravel:
+            # off = (per-dim offsets, full shape) per block (the ravel case).
+            offs = []
+            offset_tuples = [list(o) for o in offsets]
+            shape = list(x.shape)
+        else:
+            # off = the scalar offset along the reduction axis.
+            offs = list(pluck(self.axis[0], offsets))
+            offset_tuples = []
+            shape = []
+        return ArgChunkLayer(
+            self._name, self.chunk_func, self.axis, x._name, x.numblocks, self.ravel, offs, offset_tuples, shape
+        )
 
     def _layer(self):
         try:

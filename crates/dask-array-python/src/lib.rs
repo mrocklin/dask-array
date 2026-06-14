@@ -42,7 +42,7 @@ mod stack;
 
 /// Protocol revision for the native extension. Python checks this on import so
 /// a stale `.so` fails loudly instead of silently producing wrong tasks.
-const PROTOCOL_REVISION: usize = 19;
+const PROTOCOL_REVISION: usize = 20;
 
 #[pyfunction]
 fn protocol_revision() -> usize {
