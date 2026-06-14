@@ -12,8 +12,10 @@ set in parallel.
 """
 
 from dask_array._frisky.base import Layer
+from dask_array._frisky.blocks import BlocksLayer
 from dask_array._frisky.blockwise import BlockwiseLayer
 from dask_array._frisky.broadcast import BroadcastLayer
+from dask_array._frisky.coarsen import CoarsenLayer
 from dask_array._frisky.collect import collect_task_records
 from dask_array._frisky.concatenate import ConcatenateLayer
 from dask_array._frisky.creation import CreationLayer
@@ -27,8 +29,10 @@ from dask_array._frisky.stack import StackLayer
 
 __all__ = [
     "Layer",
+    "BlocksLayer",
     "BlockwiseLayer",
     "BroadcastLayer",
+    "CoarsenLayer",
     "ConcatenateLayer",
     "CreationLayer",
     "ExpandDimsLayer",

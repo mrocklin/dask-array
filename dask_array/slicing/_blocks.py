@@ -88,11 +88,24 @@ class Blocks(ArrayExpr):
         """Compute chunks by selecting from the source array's chunks."""
         return tuple(tuple(np.array(c)[idx].tolist()) for c, idx in zip(self.array.chunks, self.index))
 
+    def _frisky_layer(self):
+        from dask_array._frisky.blocks import BlocksLayer
+
+        # Per-dimension remap lists: output position -> input block index, the
+        # same `np.arange(numblocks)[idx]` math the legacy `_layer` uses below.
+        index_maps = [np.arange(n)[idx] for n, idx in zip(self.array.numblocks, self.index)]
+        return BlocksLayer(self._name, self.array._name, index_maps)
+
     def _layer(self) -> dict:
         """Generate the task graph layer.
 
         Each output block is an alias to the corresponding input block.
         """
+        try:
+            return self._frisky_layer().to_dask_graph()
+        except (NotImplementedError, ImportError):
+            pass
+
         # Pre-compute index mappings for each dimension
         index_maps = [np.arange(n)[idx] for n, idx in zip(self.array.numblocks, self.index)]
 

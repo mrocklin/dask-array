@@ -144,6 +144,20 @@ def cases():
     yield "slice 3d mixed", arr((9, 8, 7), (2, 3, 4))[1:8, 5, ::2]
     yield "slice then slice (fusion)", arr((20,), (5,))[2:18][1:10]
     yield "slice partial alias", arr((10, 10), (3, 3))[:, 1:9]
+    # blocks (x.blocks[...] — pure block-index alias)
+    yield "blocks single", arr((12,), (4,)).blocks[1]
+    yield "blocks slice", arr((20,), (5,)).blocks[1:3]
+    yield "blocks reorder", arr((20,), (5,)).blocks[[3, 0, 2, 1]]
+    yield "blocks repeat", arr((20,), (5,)).blocks[[0, 0, 2, 2]]
+    yield "blocks 2d", arr((12, 12), (4, 4)).blocks[1:, ::2]
+    yield "blocks 2d single+slice", arr((12, 12), (4, 4)).blocks[2, 0:2]
+    # coarsen (per-block reduction over fixed neighborhoods)
+    yield "coarsen 1d sum f2", da.coarsen(np.sum, arr((12,), (4,)), {0: 2})
+    yield "coarsen 1d max f3", da.coarsen(np.max, arr((12,), (6,)), {0: 3})
+    yield "coarsen 2d both axes", da.coarsen(np.sum, arr((12, 8), (4, 4)), {0: 2, 1: 2})
+    yield "coarsen 2d one axis", da.coarsen(np.mean, arr((12, 8), (6, 4)), {0: 3})
+    yield "coarsen 2d multichunk", da.coarsen(np.sum, arr((24, 16), (4, 8)), {0: 4, 1: 2})
+    yield "coarsen 3d", da.coarsen(np.sum, arr((8, 6, 4), (4, 3, 2)), {0: 2, 2: 2})
 
 
 def main():
