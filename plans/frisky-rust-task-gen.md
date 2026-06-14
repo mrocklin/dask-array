@@ -129,8 +129,24 @@ Mirror `blockwise.rs`/`creation.rs` and `_frisky/{blockwise,creation}.py`.
 3. **Routing** on the expr (`_layer` try/except + `_frisky_layer`
    validate/normalize, NotImplementedError → fallback). Bump `PROTOCOL_REVISION`
    (lib.rs + `_frisky/base.py`) if the Rust↔Python surface changes.
-4. **Verify**: suite green with `_frisky_layer` active + a Frisky roundtrip case
-   matching numpy.
+4. **Verify both paths.** The suite only exercises `to_dask_graph`; a layer can
+   pass it and still have a broken `to_task_records` (the two converters differ —
+   e.g. dask wraps nested deps in `_task_spec.List`, the records path uses a plain
+   list). So also run the records path with **distinct** data: `bench/diff_layers.py`
+   (records-vs-dask per key) is **required** for any layer that moves/slices/
+   concatenates blocks — `da.ones` can't catch a mis-assembly. Add a
+   `bench/roundtrip_layers.py` case for a real-Frisky check too.
+
+**Two guiding principles (held up well in round 1):**
+- **Python plans, Rust expands.** Do a layer's one-time structural/planning math
+  in Python (reuse dask's tested code) and pass Rust only the per-block params;
+  port just the O(n_tasks) expansion. (Rechunk keeps `plan_rechunk` in Python.)
+- **`_frisky_layer` is a conservative safety valve.** Raise `NotImplementedError`
+  for anything not fully handled; only relax a guard when an existing invariant
+  still catches the bad case (e.g. blockwise now allows `adjust_chunks` because
+  the alignment check still rejects count-changing forms). `common.rs`
+  `ArgSlot`/`Compute` is the shared vocabulary — extending it (a construct not yet
+  modeled, e.g. a dict arg) is a lead escalation, not an independent edit.
 
 ## The layer landscape (categorized priorities)
 
@@ -150,9 +166,15 @@ Mirror `blockwise.rs`/`creation.rs` and `_frisky/{blockwise,creation}.py`.
   funcs. Needs **per-task func + free-form intermediate keys**. Rechunk
   (slice→concat), all linalg (single-chunk in-core then per-block multiply),
   boolean-index, setitem.
-- **High-value handful** a typical workload hits (do first after the model
-  generalizes): reductions, slicing, rechunk, from_array, concatenate/stack.
-  Linalg, map_blocks, vindex are lower-frequency — defer.
+- **Sequence by what unlocks testing, not just frequency.** The records path is
+  all-or-nothing: `collect_task_records` falls back if *any* node in the lowered
+  tree lacks a `_frisky_layer`. So a layer can't be roundtrip-tested on a real
+  cluster until its whole input chain is covered — and **`from_array` gates every
+  non-creation workload** (until it lands, distinct-data tests fall back to the
+  local resolver in `diff_layers.py` rather than a real cluster). Do the
+  connectors/roots first — `from_array`, basic slicing/getitem — then the
+  high-frequency layers (reductions ✅, rechunk ✅, concatenate/stack), then the
+  long tail. Linalg, map_blocks, vindex are lower-frequency — defer.
 
 ## First round: PartialReduce + Rechunk (DONE — model de-risked)
 
@@ -185,10 +207,14 @@ union most remaining layers need.
 
 Once the recipe is mechanical and the vocabulary is settled:
 
+- **Sequence by testing-unlock first:** land `from_array` + basic slicing/getitem
+  before fanning out (serial or a first wave). They're the roots that let every
+  downstream layer roundtrip on a real cluster; until then downstream layers can
+  only be checked via the `diff_layers.py` local resolver.
 - One agent per layer (or small group); per-layer files keep contention low.
   Shared files: `lib.rs` + `_frisky/__init__.py` are append-only; `common.rs`
-  `ArgSlot` is settled in round 1 (an agent needing to extend it escalates to the
-  lead).
+  `ArgSlot`/`Compute` is settled in round 1 (an agent needing to extend it
+  escalates to the lead).
 - **Editable-install trap:** the venv resolves `dask_array` / `dask_array._rust`
   to the *main checkout*, so an agent in a bare worktree can't import/test its
   changes. Give each parallel agent its own worktree + venv + `maturin develop`,
@@ -197,8 +223,10 @@ Once the recipe is mechanical and the vocabulary is settled:
 - **Per-agent template:** "Implement `<X>` per `plans/frisky-rust-task-gen.md`
   § Adding a layer; mirror blockwise/creation; your files
   `crates/.../<x>.rs`, `dask_array/_frisky/<x>.py`, routing in `<expr file>`;
-  append-only edits to `lib.rs`/`__init__.py`; validate conservatively; verify
-  suite + a Frisky roundtrip matching numpy; report the diff + test output."
+  append-only edits to `lib.rs`/`__init__.py`; validate conservatively
+  (NotImplementedError → fallback); verify the suite **and** the records path
+  with distinct data (`diff_layers.py`) + a Frisky roundtrip; report the diff +
+  test output. Deselect the two pre-existing masked-array flakes."
 
 ## Verification (the inner loop)
 
@@ -206,12 +234,17 @@ Once the recipe is mechanical and the vocabulary is settled:
   pytest dask_array/tests/ -q -n auto` with `_frisky_layer` active (pre-existing
   flakes: `test_weighted_reduction`, `test_slice_pushdown::test_masked_array`).
   Build: `.venv/bin/maturin develop` (debug, ~1s rebuild; `--release` for perf).
+- **Records path, distinct data:** `bench/diff_layers.py` — cluster-free, runs
+  each layer's `to_task_records` through a worker-style resolver and compares to
+  the dask path *per key* with `arange` data. This is the check that catches
+  mis-sliced / mis-ordered assembly (the suite + `da.ones` roundtrips can't), and
+  it's layer-agnostic — extend `cases()` for each new layer.
 - **Frisky roundtrip:** in-process cluster
   `frisky.LocalCluster(processes=False, dashboard_address="127.0.0.1:0")` +
   `Client`; `dask.compute(x)` (the free function takes the records path) matches
-  numpy. Benches: `bench/e2e_transparent.py`, `bench/bench_records.py` (run with
-  Frisky's venv, `PYTHONPATH=~/workspace/dask-array`,
-  `MATURIN_IMPORT_HOOK_ENABLED=0`).
+  numpy (`bench/roundtrip_layers.py`). Benches: `bench/e2e_transparent.py`,
+  `bench/bench_records.py` (run with Frisky's venv,
+  `PYTHONPATH=~/workspace/dask-array`, `MATURIN_IMPORT_HOOK_ENABLED=0`).
 - **Simplicity:** the Rust layer should be comparable in size/clarity to the
   dask Python `_layer` it replaces.
 
