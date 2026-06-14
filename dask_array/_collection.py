@@ -159,6 +159,15 @@ class Array(DaskMethodsMixin):
         out = self._lowered_expr
         return out.__dask_keys__()
 
+    def __frisky_task_records__(self):
+        """Frisky submission protocol (duck-typed; Frisky never imports
+        dask_array). Returns a flat list of ``(key, func, args, kwargs, deps)``
+        task records, or raises ``NotImplementedError`` if any layer has no
+        Frisky layer (so the caller falls back to the materialized-graph path)."""
+        from dask_array._frisky import collect_task_records
+
+        return collect_task_records(self)
+
     def __dask_tokenize__(self):
         return "Array", self._name
 

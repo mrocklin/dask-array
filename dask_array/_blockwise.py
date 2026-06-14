@@ -270,6 +270,11 @@ class Blockwise(ArrayExpr):
         return f"{prefix}-{self.deterministic_token}"
 
     def _layer(self):
+        try:
+            return self._frisky_layer().to_dask_graph()
+        except NotImplementedError:
+            pass
+
         arginds = [(a, i) for (a, i) in toolz.partition(2, self.args)]
 
         numblocks = {}
@@ -322,6 +327,66 @@ class Blockwise(ArrayExpr):
             if is_dask_collection(dep):
                 result.update(dep.__dask_graph__())
         return result
+
+    def _frisky_layer(self):
+        """Describe this Blockwise as a BlockwiseLayer for direct task emission.
+
+        Raises NotImplementedError for anything outside the same-grid /
+        broadcast elementwise subset (contractions, new axes, concatenation,
+        adjusted chunks, ArrayBlockwiseDep, or dask collections embedded in
+        args/kwargs); _layer catches that and falls back to dask.blockwise.
+        """
+        from dask_array._frisky import BlockwiseLayer
+
+        if self.new_axes or self.adjust_chunks or self.concatenate:
+            raise NotImplementedError("new_axes / adjust_chunks / concatenate")
+
+        # Normalize index labels (e.g. "i", "j" or 0, 1) to ints aligned with
+        # out_ind so the layer is independent of how the labels were spelled.
+        label_ids = {}
+
+        def label_id(label):
+            return label_ids.setdefault(label, len(label_ids))
+
+        out_ind = tuple(label_id(i) for i in self.out_ind)
+        out_numblocks = tuple(len(c) for c in self.chunks)
+
+        args = []
+        for arg, ind in toolz.partition(2, self.args):
+            if ind is None:
+                arg = normalize_arg(arg)
+                arg, collections = unpack_collections(arg)
+                if collections:
+                    raise NotImplementedError("dask collection in a literal argument")
+                args.append(("literal", arg))
+            elif hasattr(arg, "_name"):
+                nb = arg.numblocks
+                if len(ind) != len(nb):
+                    raise NotImplementedError("index does not match array ndim")
+                for d, label in enumerate(ind):
+                    if label not in self.out_ind:
+                        if nb[d] != 1:
+                            raise NotImplementedError("contracted dimension")
+                    elif nb[d] != 1 and nb[d] != out_numblocks[self.out_ind.index(label)]:
+                        # Input not aligned to the output grid — only happens on an
+                        # un-unified (un-lowered) expr. Fall back so the dask path
+                        # raises the usual "shapes do not align" error instead of us
+                        # silently emitting refs to blocks that don't exist.
+                        raise NotImplementedError("unaligned chunks (expr not lowered)")
+                args.append(("array", arg._name, tuple(label_id(i) for i in ind), tuple(nb)))
+            else:
+                raise NotImplementedError("ArrayBlockwiseDep argument")
+
+        kwargs = {}
+        for k, v in self.kwargs.items():
+            v = normalize_arg(v)
+            v, collections = unpack_collections(v)
+            if collections:
+                raise NotImplementedError("dask collection in a keyword argument")
+            kwargs[k] = v
+
+        numblocks = tuple(len(c) for c in self.chunks)
+        return BlockwiseLayer(self._name, self.func, numblocks, out_ind, tuple(args), kwargs)
 
     def _lower(self):
         if self.align_arrays:
