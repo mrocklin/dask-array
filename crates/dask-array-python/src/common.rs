@@ -69,6 +69,12 @@ pub enum IndexElem {
 pub enum Compute {
     /// Apply `funcs[func_idx]` to the args (with the layer's shared kwargs).
     Call { func_idx: usize },
+    /// Like [`Compute::Call`] but with extra per-task keyword arguments, merged
+    /// over the layer's shared `kwargs` (per-task wins on a name clash). Each
+    /// value is an [`ArgSlot`], so a kwarg can be a literal, scalar, int-tuple,
+    /// nested list or dependency. Used where blocks differ by a keyword — e.g.
+    /// `diag`'s off-diagonal `np.zeros_like(meta, shape=(m, n))`.
+    CallKw { func_idx: usize, kwargs: Vec<(String, ArgSlot)> },
     /// An alias: the key resolves directly to its single dependency (`slots[0]`,
     /// a [`ArgSlot::Dep`]). The dask path emits a `dask._task_spec.Alias`; the
     /// records path emits a `toolz.identity` task (Frisky has no alias node).
@@ -219,7 +225,7 @@ pub fn to_dask_graph<'py>(py: Python<'py>, exp: &Expanded) -> PyResult<Bound<'py
                 let alias = alias_cls.call1((key.clone(), src))?;
                 dsk.set_item(key, alias)?;
             }
-            Compute::Call { func_idx } => {
+            Compute::Call { func_idx } | Compute::CallKw { func_idx, .. } => {
                 let func = exp.funcs[*func_idx].bind(py);
                 let mut call: Vec<Bound<'py, PyAny>> = Vec::with_capacity(task.slots.len() + 2);
                 call.push(key.clone().into_any());
@@ -227,7 +233,18 @@ pub fn to_dask_graph<'py>(py: Python<'py>, exp: &Expanded) -> PyResult<Bound<'py
                 for slot in &task.slots {
                     call.push(build_arg_dask(py, exp, slot, &taskref_cls, &list_cls, &slice_cls)?);
                 }
-                let t = task_cls.call(PyTuple::new(py, call)?, Some(&kwargs))?;
+                // Per-task kwargs (CallKw) merge over the shared dict; plain
+                // Call uses the shared dict directly.
+                let kw = if let Compute::CallKw { kwargs: per, .. } = &task.compute {
+                    let d = kwargs.copy()?;
+                    for (name, slot) in per {
+                        d.set_item(name, build_arg_dask(py, exp, slot, &taskref_cls, &list_cls, &slice_cls)?)?;
+                    }
+                    d
+                } else {
+                    kwargs.clone()
+                };
+                let t = task_cls.call(PyTuple::new(py, call)?, Some(&kw))?;
                 dsk.set_item(key, t)?;
             }
         }
@@ -310,14 +327,25 @@ pub fn to_task_records<'py>(py: Python<'py>, exp: &Expanded) -> PyResult<Bound<'
                 let args = PyTuple::new(py, [taskref_cls.call1((dep_key,))?])?;
                 records.append((key, func, args, kwargs.clone(), deps))?;
             }
-            Compute::Call { func_idx } => {
+            Compute::Call { func_idx } | Compute::CallKw { func_idx, .. } => {
                 let func = exp.funcs[*func_idx].bind(py);
                 let mut args: Vec<Bound<'py, PyAny>> = Vec::with_capacity(task.slots.len());
                 for slot in &task.slots {
                     args.push(build_arg_rec(py, exp, slot, &taskref_cls, &slice_cls, &mut deps)?);
                 }
                 let args_tuple = PyTuple::new(py, args)?;
-                records.append((key, func.clone(), args_tuple, kwargs.clone(), deps))?;
+                // Per-task kwargs (CallKw) merge over the shared dict — a kwarg
+                // value that is a Dep registers in `deps` like any other arg.
+                let kw = if let Compute::CallKw { kwargs: per, .. } = &task.compute {
+                    let d = kwargs.downcast::<PyDict>()?.copy()?;
+                    for (name, slot) in per {
+                        d.set_item(name, build_arg_rec(py, exp, slot, &taskref_cls, &slice_cls, &mut deps)?)?;
+                    }
+                    d.into_any()
+                } else {
+                    kwargs.clone()
+                };
+                records.append((key, func.clone(), args_tuple, kw, deps))?;
             }
         }
     }

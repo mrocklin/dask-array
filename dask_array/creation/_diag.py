@@ -30,7 +30,17 @@ class Diag1D(ArrayExpr):
         chunks_1d = self.x.chunks[0]
         return (chunks_1d, chunks_1d)
 
+    def _frisky_layer(self):
+        from dask_array._frisky.diag import Diag1DLayer
+
+        return Diag1DLayer(self._name, self._meta, self.x._name, self.x.chunks[0])
+
     def _layer(self) -> dict:
+        try:
+            return self._frisky_layer().to_dask_graph()
+        except (NotImplementedError, ImportError):
+            pass
+
         dsk = {}
         x = self.x
         chunks_1d = x.chunks[0]
@@ -63,7 +73,17 @@ class Diag2DSimple(ArrayExpr):
     def chunks(self):
         return (self.x.chunks[0],)
 
+    def _frisky_layer(self):
+        from dask_array._frisky.diag import Diag2DSimpleLayer
+
+        return Diag2DSimpleLayer(self._name, self.x._name, len(self.x.chunks[0]))
+
     def _layer(self) -> dict:
+        try:
+            return self._frisky_layer().to_dask_graph()
+        except (NotImplementedError, ImportError):
+            pass
+
         dsk = {}
         x = self.x
         x_keys = x.__dask_keys__()

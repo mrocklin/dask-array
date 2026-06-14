@@ -27,6 +27,7 @@ mod coarsen;
 mod common;
 mod concatenate;
 mod creation;
+mod diag;
 mod expand_dims;
 mod eye;
 mod linspace;
@@ -38,7 +39,7 @@ mod stack;
 
 /// Protocol revision for the native extension. Python checks this on import so
 /// a stale `.so` fails loudly instead of silently producing wrong tasks.
-const PROTOCOL_REVISION: usize = 15;
+const PROTOCOL_REVISION: usize = 16;
 
 #[pyfunction]
 fn protocol_revision() -> usize {
@@ -56,6 +57,8 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<coarsen::CoarsenLayer>()?;
     m.add_class::<concatenate::ConcatenateLayer>()?;
     m.add_class::<creation::CreationLayer>()?;
+    m.add_class::<diag::Diag1DLayer>()?;
+    m.add_class::<diag::Diag2DSimpleLayer>()?;
     m.add_class::<expand_dims::ExpandDimsLayer>()?;
     m.add_class::<eye::EyeLayer>()?;
     m.add_class::<linspace::LinspaceLayer>()?;
