@@ -36,7 +36,18 @@ class Eye(ArrayExpr):
         # Use the first vertical chunk size for diagonal positioning logic
         return self.chunks[0][0]
 
+    def _frisky_layer(self):
+        from dask_array._frisky.eye import EyeLayer
+
+        vchunks, hchunks = self.chunks
+        return EyeLayer(self._name, self.dtype, vchunks, hchunks, self._chunk_size, self.k)
+
     def _layer(self) -> dict:
+        try:
+            return self._frisky_layer().to_dask_graph()
+        except (NotImplementedError, ImportError):
+            pass
+
         dsk = {}
         vchunks, hchunks = self.chunks
         chunk_size = self._chunk_size

@@ -103,6 +103,16 @@ def cases():
     yield ("arange basic", lambda: da.arange(20, chunks=6), np.arange(20))
     yield ("arange int step", lambda: da.arange(5, 50, 3, chunks=7), np.arange(5, 50, 3))
     yield ("arange float step", lambda: da.arange(0, 10, 0.5, chunks=4), np.arange(0, 10, 0.5))
+    # linspace (1-D indexed creation)
+    yield ("linspace endpoint", lambda: da.linspace(0, 10, 20, chunks=6), np.linspace(0, 10, 20))
+    yield (
+        "linspace no endpoint",
+        lambda: da.linspace(0, 10, 20, endpoint=False, chunks=7),
+        np.linspace(0, 10, 20, endpoint=False),
+    )
+    # eye (2-D indexed creation)
+    yield ("eye main diag", lambda: da.eye(8, chunks=3), np.eye(8))
+    yield ("eye pos k off-square", lambda: da.eye(6, chunks=2, M=10, k=2), np.eye(6, 10, k=2))
 
 
 def main():

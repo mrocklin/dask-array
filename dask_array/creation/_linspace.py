@@ -38,7 +38,17 @@ class Linspace(Arange):
 
         return float(range_) / div
 
+    def _frisky_layer(self):
+        from dask_array._frisky.linspace import LinspaceLayer
+
+        return LinspaceLayer(self._name, self.start, self.step, self.endpoint, self.dtype, self.chunks[0])
+
     def _layer(self) -> dict:
+        try:
+            return self._frisky_layer().to_dask_graph()
+        except (NotImplementedError, ImportError):
+            pass
+
         dsk = {}
         blockstart = self.start
         func = partial(_linspace, endpoint=self.endpoint, dtype=self.dtype)

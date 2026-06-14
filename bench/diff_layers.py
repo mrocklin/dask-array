@@ -164,6 +164,19 @@ def cases():
     yield "arange float step", da.arange(0, 10, 0.5, chunks=4)
     yield "arange single chunk", da.arange(8, chunks=8)
     yield "arange neg start", da.arange(-7, 7, 2, chunks=3)
+    # linspace (1-D indexed creation)
+    yield "linspace endpoint", da.linspace(0, 10, 20, chunks=6)
+    yield "linspace no endpoint", da.linspace(0, 10, 20, endpoint=False, chunks=6)
+    yield "linspace float range", da.linspace(-2.5, 7.5, 17, chunks=5)
+    yield "linspace single chunk", da.linspace(0, 1, 8, chunks=8)
+    yield "linspace many chunks", da.linspace(1, 100, 50, chunks=7)
+    # eye (2-D indexed creation; per-block np.eye / np.zeros choice)
+    yield "eye main diag", da.eye(8, chunks=3)
+    yield "eye pos k", da.eye(10, chunks=4, k=3)
+    yield "eye neg k", da.eye(10, chunks=4, k=-5)
+    yield "eye off-square M>N", da.eye(6, chunks=2, M=12, k=2)
+    yield "eye off-square M<N", da.eye(12, chunks=4, M=6, k=-3)
+    yield "eye k beyond matrix", da.eye(9, chunks=3, k=50)
 
 
 def main():

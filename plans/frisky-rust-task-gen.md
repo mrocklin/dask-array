@@ -99,7 +99,7 @@ deps, aliases and per-block slices. Single-func/flat layers (blockwise,
 creation) are just the common case: one entry in `names`/`funcs`, every task a
 `Call{0}`.
 
-## Status — 14 layers; now in the completeness/correctness phase
+## Status — 16 layers; now in the completeness/correctness phase
 
 - **Done (committed on `rust-layers`):** blockwise (+ grid-preserving
   `adjust_chunks`), creation, **from_array** (Python data source — see note in the
@@ -108,9 +108,11 @@ creation) are just the common case: one entry in `names`/`funcs`, every task a
   (`SliceSlicesIntegers` — slices + integer-drop + negative steps; the intricate
   `_slice_1d` index math stays in Python, Rust does the O(n_tasks) product),
   **blocks** (`x.blocks[...]` — pure block-index alias), **coarsen** (per-block
-  reduction, the simplest blockwise shape) and **arange** (1-D indexed creation;
-  introduced the per-task scalar `ArgSlot::Scalar(Num)`). ~14 of ~79 layer classes.
-  PROTOCOL_REVISION 14.
+  reduction, the simplest blockwise shape), and the **indexed-creation family**:
+  **arange** (introduced the per-task scalar `ArgSlot::Scalar(Num)`), **linspace**
+  (same shape), and **eye** (2-D; per-block `np.eye`/`np.zeros` choice — the
+  multi-func + IntTuple + Scalar combo). ~16 of ~79 layer classes.
+  PROTOCOL_REVISION 15.
 - dask-array suite green (**2808 pass**; the 3 masked-array failures are
   pre-existing — numpy-2.2.6 masked `.view('i1')` in dask's tokenize, fail at
   `main` too, pure numpy traceback with no layer code, fail standalone in a fresh
@@ -220,11 +222,10 @@ Mirror `blockwise.rs`/`creation.rs` and `_frisky/{blockwise,creation}.py`.
   Fits the current model (some need an `Alias` task and/or per-block `IntTuple`
   args). Elementwise/blockwise ✅, creation ✅, `from_array` ✅, simple transforms
   (squeeze ✅, expand_dims ✅, broadcast_to ✅, reshape), aliasing (concatenate ✅,
-  stack ✅, blocks ✅, copy), indexed creation (arange ✅, linspace, eye — fit the
-  per-task scalar `ArgSlot::Scalar(Num)` added for arange; diag/diagonal need a
-  per-task *kwarg* (`np.zeros_like(meta, shape=…)`), which the shared-kwargs
-  neutral form can't express yet — defer), basic slicing/getitem ✅, coarsen ✅,
-  gufunc, random.
+  stack ✅, blocks ✅, copy), indexed creation (arange ✅, linspace ✅, eye ✅ — fit
+  the per-task scalar `ArgSlot::Scalar(Num)`; diag/diagonal need a per-task *kwarg*
+  (`np.zeros_like(meta, shape=…)`), which the shared-kwargs neutral form can't
+  express yet — defer), basic slicing/getitem ✅, coarsen ✅, gufunc, random.
 - **Variable fan-in** — one output ← a nested, variable-length list of input
   blocks. Needs a **nested/list arg** in the neutral form. PartialReduce
   (tree-aggregate, lol_tuples), concatenate-finalize, overlap (neighbors),
@@ -251,12 +252,15 @@ Mirror `blockwise.rs`/`creation.rs` and `_frisky/{blockwise,creation}.py`.
   lead builds). **arange ✅ done (lead-first)** — added the per-task scalar
   `ArgSlot::Scalar(Num{Int|Float})` to `common.rs` and settled it on arange
   (blockstart/stop computed in Python, mirroring the legacy `_layer`; step/dtype
-  shared literals). Next: **fan out `linspace` + `eye`** (both fit the now-proven
-  Scalar slot — eye also uses the 2-func + IntTuple vocabulary). `diag`/`diagonal`
-  need a per-task *kwarg* (`np.zeros_like(meta, shape=…)`) — defer until the
-  neutral form grows per-task kwargs, or wrap shape positionally in a helper.
-  `arg_reduction` (per-block scalar offset) also fits Scalar — later batch.
-  Linalg, map_blocks, vindex, bool-index, setitem are lower-frequency — defer.
+  shared literals). **`linspace` ✅ + `eye` ✅ done (parallel batch 4)** — both fit
+  the Scalar slot; eye exercised the 2-func + IntTuple + Scalar combo (per-block
+  `np.eye`/`np.zeros` choice, all int arithmetic in Rust). Indexed-creation family
+  is now done except diag/diagonal. Next candidates: `arg_reduction` (per-block
+  scalar offset — fits Scalar; two-stage like PartialReduce), then `diag`/`diagonal`
+  (need a per-task *kwarg* `np.zeros_like(meta, shape=…)` → either grow the neutral
+  form to carry per-task kwargs, or wrap `shape` positionally in a small helper —
+  lead decision), and the long tail. Linalg, map_blocks, vindex, bool-index,
+  setitem, general reshape, random are lower-frequency — defer.
 - **Data-source layers are a Python seam, not Rust.** `from_array` (and other I/O
   sources) have no per-task computation to accelerate — each block is a numpy
   slice — so they build records directly in Python (`_frisky/from_array.py`: a
