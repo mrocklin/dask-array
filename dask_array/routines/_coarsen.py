@@ -72,7 +72,28 @@ class Coarsen(ArrayExpr):
             tuple(coarsen_dim(bd, i) for bd in bds if coarsen_dim(bd, i) > 0) for i, bds in enumerate(x.chunks)
         )
 
+    def _frisky_layer(self):
+        from dask_array._frisky.coarsen import CoarsenLayer
+
+        # numblocks: coarsen preserves the block grid (one output block per input
+        # block), so the input grid is also the output grid.
+        numblocks = tuple(len(c) for c in self.x.chunks)
+        return CoarsenLayer(
+            self._name,
+            self.x._name,
+            numblocks,
+            self._reduction,
+            self.axes,
+            self.trim_excess,
+            self._kwargs,
+        )
+
     def _layer(self):
+        try:
+            return self._frisky_layer().to_dask_graph()
+        except (NotImplementedError, ImportError):
+            pass
+
         from dask_array import _chunk as chunk
 
         x = self.x

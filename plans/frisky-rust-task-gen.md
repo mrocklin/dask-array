@@ -99,15 +99,17 @@ deps, aliases and per-block slices. Single-func/flat layers (blockwise,
 creation) are just the common case: one entry in `names`/`funcs`, every task a
 `Call{0}`.
 
-## Status — 11 layers; now in the completeness/correctness phase
+## Status — 13 layers; now in the completeness/correctness phase
 
 - **Done (committed on `rust-layers`):** blockwise (+ grid-preserving
   `adjust_chunks`), creation, **from_array** (Python data source — see note in the
   landscape), **PartialReduce**, **TasksRechunk** (multi-step), broadcast_to,
   expand_dims, squeeze, concatenate, stack, **basic slicing/getitem**
   (`SliceSlicesIntegers` — slices + integer-drop + negative steps; the intricate
-  `_slice_1d` index math stays in Python, Rust does the O(n_tasks) product). ~11
-  of ~79 layer classes.
+  `_slice_1d` index math stays in Python, Rust does the O(n_tasks) product),
+  **blocks** (`x.blocks[...]` — pure block-index alias) and **coarsen**
+  (per-block reduction, the simplest blockwise shape). ~13 of ~79 layer classes.
+  PROTOCOL_REVISION 13.
 - dask-array suite green (**2809 pass**; the 2 masked-array failures are
   pre-existing — numpy-2.2.6 masked `.view('i1')` in `from_array` tokenize, fail
   at `main` too. Deselect `dask_array/tests/test_reductions.py::test_weighted_reduction`
@@ -217,9 +219,9 @@ Mirror `blockwise.rs`/`creation.rs` and `_frisky/{blockwise,creation}.py`.
   Fits the current model (some need an `Alias` task and/or per-block `IntTuple`
   args). Elementwise/blockwise ✅, creation ✅, `from_array` ✅, simple transforms
   (squeeze ✅, expand_dims ✅, broadcast_to ✅, reshape), aliasing (concatenate ✅,
-  stack ✅, blocks, copy), indexed creation (arange, linspace, eye, diag — these
+  stack ✅, blocks ✅, copy), indexed creation (arange, linspace, eye, diag — these
   need a per-task scalar `ArgSlot`, a small `common.rs` addition: lead first),
-  basic slicing/getitem ✅, coarsen, gufunc, random.
+  basic slicing/getitem ✅, coarsen ✅, gufunc, random.
 - **Variable fan-in** — one output ← a nested, variable-length list of input
   blocks. Needs a **nested/list arg** in the neutral form. PartialReduce
   (tree-aggregate, lol_tuples), concatenate-finalize, overlap (neighbors),
@@ -238,9 +240,15 @@ Mirror `blockwise.rs`/`creation.rs` and `_frisky/{blockwise,creation}.py`.
   stack ✅ done (parallel batch 2). **basic slicing/getitem ✅ done** (lead-first:
   generalized `ArgSlot::Slices(Vec<(i64,i64)>)` → `ArgSlot::Index(Vec<IndexElem>)`
   carrying `slice(start,stop,step)` with `None` bounds + integer-drop; rechunk
-  migrated to the same variant). Both testing-unlock roots are now covered. Next:
-  the long tail — resume parallel batches (lead-owns-shared-files).
-  Linalg, map_blocks, vindex are lower-frequency — defer.
+  migrated to the same variant). Both testing-unlock roots are now covered.
+  **blocks ✅ + coarsen ✅ done (parallel batch 3** — agents wrote disjoint files +
+  routing only; lead did lib.rs/__init__/protocol + diff/roundtrip cases + the
+  single integrated build. Confirmed: two agents cannot build the shared checkout
+  concurrently — a build compiles everyone's in-progress `.rs` — so agents write,
+  lead builds). Next: indexed creation family (arange/linspace/eye/diag/diagonal)
+  + arg_reduction — gated on a lead-first per-task **scalar `ArgSlot`** add to
+  `common.rs` (each block carries scalar params like blockstart/stop/size).
+  Linalg, map_blocks, vindex, bool-index, setitem are lower-frequency — defer.
 - **Data-source layers are a Python seam, not Rust.** `from_array` (and other I/O
   sources) have no per-task computation to accelerate — each block is a numpy
   slice — so they build records directly in Python (`_frisky/from_array.py`: a

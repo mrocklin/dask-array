@@ -80,6 +80,25 @@ def cases():
     yield ("slice + integer", lambda: fs()[1:5, 7], s[1:5, 7])
     yield ("scalar index", lambda: fs()[3, 4], s[3, 4])
     yield ("slice then slice", lambda: fs()[1:6, 1:9][1:4, 2:6], s[1:6, 1:9][1:4, 2:6])
+    # blocks (distinct data, real cluster)
+    yield ("blocks slice", lambda: fs().blocks[0:1, 1:], s[0:3, 5:])
+    yield (
+        "blocks reorder 1d",
+        lambda: da.from_array(np.arange(20, dtype="f8"), chunks=5).blocks[[3, 1, 0, 2]],
+        np.arange(20, dtype="f8").reshape(4, 5)[[3, 1, 0, 2]].ravel(),
+    )
+    # coarsen (distinct data, real cluster -> serialization + per-block reduction)
+    cx = np.arange(48, dtype="f8").reshape(6, 8)
+    yield (
+        "coarsen 2d",
+        lambda: da.coarsen(np.sum, da.from_array(cx, chunks=(3, 4)), {0: 2, 1: 2}),
+        cx.reshape(3, 2, 4, 2).sum(axis=(1, 3)),
+    )
+    yield (
+        "coarsen 1d",
+        lambda: da.coarsen(np.max, da.from_array(np.arange(12, dtype="f8"), chunks=(6,)), {0: 3}),
+        np.arange(12, dtype="f8").reshape(4, 3).max(axis=1),
+    )
 
 
 def main():
