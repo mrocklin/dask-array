@@ -41,8 +41,9 @@ scheduler efficiently, instead of building millions of Python
 
 Branch: `rust-layers` (worked in the **main dask-array checkout**, not a
 worktree — both venvs resolve `dask_array` via an editable install that beats
-PYTHONPATH, so a worktree breaks imports). **Nothing committed yet** (owner
-commits explicitly).
+PYTHONPATH, so a worktree breaks imports). **Committed** as of `47dc790`
+(blockwise + creation); Frisky side committed on `array-bulk-client` (`9bf5760`).
+Subsequent work should keep committing as it lands (owner authorized).
 
 ## Scope decisions (with rationale)
 
