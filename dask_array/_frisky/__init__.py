@@ -21,6 +21,7 @@ from dask_array._frisky.coarsen import CoarsenLayer
 from dask_array._frisky.collect import collect_task_records
 from dask_array._frisky.concatenate import ConcatenateLayer
 from dask_array._frisky.creation import CreationLayer
+from dask_array._frisky.cumulative import CumReductionLayer
 from dask_array._frisky.diag import Diag1DLayer, Diag2DSimpleLayer
 from dask_array._frisky.expand_dims import ExpandDimsLayer
 from dask_array._frisky.eye import EyeLayer
@@ -43,6 +44,7 @@ __all__ = [
     "CoarsenLayer",
     "ConcatenateLayer",
     "CreationLayer",
+    "CumReductionLayer",
     "Diag1DLayer",
     "Diag2DSimpleLayer",
     "ExpandDimsLayer",

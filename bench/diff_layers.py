@@ -196,6 +196,13 @@ def cases():
     yield "argmin 3d axis1", arr((8, 6, 4), (4, 3, 2)).argmin(axis=1)
     yield "argmin irregular", arr((10, 7), (3, 4)).argmin(axis=0)
     yield "argmax 3d axis2", arr((6, 5, 8), (3, 5, 2)).argmax(axis=2)
+    # cumulative (sequential carry: chunk + identity + tail-getitem + binop)
+    yield "cumsum axis0", arr((9, 6), (2, 2)).cumsum(axis=0)
+    yield "cumsum axis1", arr((9, 6), (2, 2)).cumsum(axis=1)
+    yield "cumsum single block axis", arr((6, 9), (6, 2)).cumsum(axis=0)
+    yield "cumprod axis0", (arr((8, 5), (3, 2)) % 3 + 1).cumprod(axis=0)
+    yield "cumsum 3d axis1", arr((4, 6, 5), (2, 3, 5)).cumsum(axis=1)
+    yield "cumsum irregular", arr((10, 7), (3, 4)).cumsum(axis=0)
 
 
 def main():

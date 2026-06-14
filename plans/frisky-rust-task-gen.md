@@ -99,16 +99,16 @@ deps, aliases and per-block slices. Single-func/flat layers (blockwise,
 creation) are just the common case: one entry in `names`/`funcs`, every task a
 `Call{0}`.
 
-## Status — 20 layers; now in the completeness/correctness phase
+## Status — 21 layers; now in the completeness/correctness phase
 
-- **Coverage frontier (`bench/coverage_probe.py`):** 33/35 common composite
+- **Coverage frontier (`bench/coverage_probe.py`):** 34/35 common composite
   operations take the records path **end-to-end** (fully Rust-generated, matching
   numpy) — all elementwise/ufunc/where/clip/astype, transpose, every reduction
   (sum/mean/std/var/min/prod), matmul/tensordot/dot, slicing compositions, rechunk,
-  concatenate/stack/coarsen/broadcast, diag, `eye @ x`, **reshape/ravel**, and
-  **axis-wise argmin/argmax**. The 2 remaining fall-backs (still correct via legacy
-  dask) are `cumsum` (cumulative — intricate) and **ravel** argmin/argmax (the
-  nested-tuple offset, deliberately deferred).
+  concatenate/stack/coarsen/broadcast, diag, `eye @ x`, **reshape/ravel**,
+  **axis-wise argmin/argmax**, and **cumsum/cumprod**. The 1 remaining fall-back
+  (still correct via legacy dask) is **ravel** argmin/argmax (`argmin()` with no
+  axis — its offset is a nested `(offsets, shape)` tuple).
 
 - **Done (committed on `rust-layers`):** blockwise (+ grid-preserving
   `adjust_chunks`), creation, **from_array** (Python data source — see note in the
@@ -125,9 +125,12 @@ creation) are just the common case: one entry in `names`/`funcs`, every task a
   `Compute::CallKw` — for its off-diagonal `np.zeros_like(meta, shape=…)`).
   Plus **reshape** (`ReshapeLowered` + `ReshapeBlockwise` — per-block
   `M.reshape(in_block, out_shape)`, 1:1 C-order block mapping; one Rust layer
-  serves both) and **ArgChunk** (the per-block chunk step of argmin/argmax,
-  non-ravel; the combine is the already-covered `PartialReduce`). ~20 of ~79
-  layer classes. PROTOCOL_REVISION 18.
+  serves both), **ArgChunk** (the per-block chunk step of argmin/argmax,
+  non-ravel; the combine is the already-covered `PartialReduce`), and
+  **CumReduction** (cumsum/cumprod, sequential algorithm — the most intricate
+  layer: chunk + per-block identity (`CallKw` `full_like`) + tail-`getitem` +
+  `binop` carry along the axis; four task-kinds/names in one layer). ~21 of ~79
+  layer classes. PROTOCOL_REVISION 19.
 - dask-array suite green (**2808 pass**; the 3 masked-array failures are
   pre-existing — numpy-2.2.6 masked `.view('i1')` in dask's tokenize, fail at
   `main` too, pure numpy traceback with no layer code, fail standalone in a fresh
