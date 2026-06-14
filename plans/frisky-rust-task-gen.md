@@ -101,14 +101,17 @@ creation) are just the common case: one entry in `names`/`funcs`, every task a
 
 ## Status — 21 layers; now in the completeness/correctness phase
 
-- **Coverage frontier (`bench/coverage_probe.py`):** 34/35 common composite
-  operations take the records path **end-to-end** (fully Rust-generated, matching
-  numpy) — all elementwise/ufunc/where/clip/astype, transpose, every reduction
-  (sum/mean/std/var/min/prod), matmul/tensordot/dot, slicing compositions, rechunk,
-  concatenate/stack/coarsen/broadcast, diag, `eye @ x`, **reshape/ravel**,
-  **axis-wise argmin/argmax**, and **cumsum/cumprod**. The 1 remaining fall-back
-  (still correct via legacy dask) is **ravel** argmin/argmax (`argmin()` with no
-  axis — its offset is a nested `(offsets, shape)` tuple).
+- **Coverage frontier (`bench/coverage_probe.py`):** **35/35** probed common
+  composite operations take the records path **end-to-end** (fully Rust-generated,
+  matching numpy), **zero fall-backs** — all elementwise/ufunc/where/clip/astype,
+  transpose, every reduction (sum/mean/std/var/min/prod), matmul/tensordot/dot,
+  slicing compositions, rechunk, concatenate/stack/coarsen/broadcast, diag,
+  `eye @ x`, reshape/ravel, argmin/argmax (axis-wise AND ravel), cumsum/cumprod.
+  NOTE: this is a 35-op *sample* of common workloads, not exhaustive — the still
+  uncovered layers are the more specialized tail (see the landscape): linalg,
+  fancy/boolean indexing (take/vindex/bool-index), setitem, overlap, histogram/
+  unique/bincount, random, pad/roll/flip, `diagonal`, k≠0 diag. Extend
+  `coverage_probe.py` with more ops to re-map the frontier before picking the next.
 
 - **Done (committed on `rust-layers`):** blockwise (+ grid-preserving
   `adjust_chunks`), creation, **from_array** (Python data source — see note in the
@@ -286,14 +289,17 @@ Mirror `blockwise.rs`/`creation.rs` and `_frisky/{blockwise,creation}.py`.
   as the top fall-back (reshape/ravel hit 3× in common workloads); one Rust
   `ReshapeLayer` (1:1 C-order block map + per-block `IntTuple` shape) serves both
   `ReshapeLowered` and `ReshapeBlockwise`, no `common.rs` change. Next data-driven
-  candidates (from the probe): **arg_reduction ✅ (axis-wise) done** — `ArgChunk`
-  ported (non-ravel; combine = covered `PartialReduce`), so `argmin`/`argmax(axis=k)`
-  now generate end-to-end; the **ravel** case (`argmin()`) still falls back (its
-  offset is a nested `(offsets, shape)` tuple — would need a nested-tuple arg or to
-  flatten it). The last common fall-back is `cumulative` (cumsum — intricate: chunk
-  + sequential correction-chain + an inline `getitem` + an `apply`+kwargs
-  `full_like`; also a `CumReductionBlelloch` variant — needs care, likely a
-  lead-first port). Linalg (qr/svd/lu — the big multi-stage lift),
+  candidates (from the probe): **arg_reduction ✅ done** — `ArgChunk` (combine =
+  covered `PartialReduce`); both axis-wise AND ravel now generate end-to-end (ravel
+  offset = nested `(offsets, shape)` carried as `ArgSlot::List([IntTuple, IntTuple])`
+  — a list tuple-unpacks like the original tuple, no new vocab). **cumulative ✅
+  done (lead-first)** — `CumReduction` (cumsum/cumprod): chunk + per-block identity
+  (`CallKw` `full_like`) + tail-`getitem` + `binop` carry; the inline nested getitem
+  is flattened into a named `tail` task, the string-in-key carry gets its own name.
+  (`CumReductionBlelloch` not needed — default cumsum uses `CumReduction`.) The
+  35-op probe is now at **35/35, zero fall-backs**. The remaining uncovered layers
+  are specialized (not in the common probe): Linalg (qr/svd/lu — the big multi-stage
+  lift),
   map_blocks, vindex, bool-index, setitem, random, `diagonal`, k≠0 diag, overlap
   (delegates to dask's `ArrayOverlapLayer`) are lower-frequency or large — defer.
 - **Data-source layers are a Python seam, not Rust.** `from_array` (and other I/O

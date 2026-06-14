@@ -11,9 +11,11 @@
 //! block), one `ArgSlot::Literal` (the shared `axis`), and one
 //! `ArgSlot::Scalar(Num::Int(off))` (the per-block offset).
 //!
-//! Only the non-ravel case is modeled here: the ravel offset is a nested
-//! `(offsets, x.shape)` tuple the simple `Scalar` slot can't carry, so the
-//! routing raises `NotImplementedError` and falls back to legacy dask.
+//! Two offset shapes: the non-ravel (`axis=k`) case carries a per-block scalar
+//! (`ArgSlot::Scalar`); the ravel (`axis=None`) case carries the nested
+//! `(per-dim offsets, full shape)` the ravel `arg_chunk` unpacks, built as an
+//! `ArgSlot::List([IntTuple(offsets), IntTuple(shape)])` (a list tuple-unpacks
+//! like the original tuple, so no nested-tuple arg type is needed).
 
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
@@ -35,8 +37,16 @@ pub struct ArgChunkLayer {
     /// Number of blocks per dimension (input grid; arg-chunk preserves the grid,
     /// so it is also the output grid).
     numblocks: Vec<usize>,
-    /// Per-block start offset along the reduction axis, one per block in C order.
+    /// Ravel (full / `axis=None`) reduction? Then the offset is the nested
+    /// `(per-dim offsets, full shape)` tuple rather than a scalar.
+    ravel: bool,
+    /// Non-ravel: per-block start offset along the reduction axis (C order).
     offs: Vec<i64>,
+    /// Ravel: per-block per-dimension start offsets (C order, one inner Vec of
+    /// length ndim per block).
+    offset_tuples: Vec<Vec<i64>>,
+    /// Ravel: the full array shape (shared across blocks).
+    shape: Vec<i64>,
 }
 
 #[pymethods]
@@ -46,6 +56,7 @@ impl ArgChunkLayer {
     /// offsets, already computed in Python (one per block, C order), mirroring the
     /// legacy non-ravel `pluck(axis[0], offsets)`.
     #[new]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         name: String,
         func: PyObject,
@@ -53,7 +64,10 @@ impl ArgChunkLayer {
         axis: PyObject,
         dep_name: String,
         numblocks: Vec<usize>,
+        ravel: bool,
         offs: Vec<i64>,
+        offset_tuples: Vec<Vec<i64>>,
+        shape: Vec<i64>,
     ) -> Self {
         Self {
             name,
@@ -62,7 +76,10 @@ impl ArgChunkLayer {
             literals: vec![axis],
             dep_names: vec![dep_name],
             numblocks,
+            ravel,
             offs,
+            offset_tuples,
+            shape,
         }
     }
 
@@ -88,6 +105,17 @@ impl ArgChunkLayer {
         let mut coord = vec![0u32; ndim];
 
         for p in 0..total {
+            // The per-block offset: a scalar along the reduction axis (non-ravel),
+            // or the nested `(per-dim offsets, full shape)` the ravel arg_chunk
+            // unpacks (a List is fine — it tuple-unpacks like a tuple).
+            let off_slot = if self.ravel {
+                ArgSlot::List(vec![
+                    ArgSlot::IntTuple(self.offset_tuples[p].clone()),
+                    ArgSlot::IntTuple(self.shape.clone()),
+                ])
+            } else {
+                ArgSlot::Scalar(Num::Int(self.offs[p]))
+            };
             tasks.push(NeutralTask {
                 name_idx: 0,
                 coord: coord.clone(),
@@ -96,7 +124,7 @@ impl ArgChunkLayer {
                 slots: vec![
                     ArgSlot::Dep { name_idx: 0, coord: coord.clone() },
                     ArgSlot::Literal(0), // axis
-                    ArgSlot::Scalar(Num::Int(self.offs[p])),
+                    off_slot,
                 ],
             });
 
