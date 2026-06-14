@@ -177,6 +177,12 @@ def cases():
     yield "eye off-square M>N", da.eye(6, chunks=2, M=12, k=2)
     yield "eye off-square M<N", da.eye(12, chunks=4, M=6, k=-3)
     yield "eye k beyond matrix", da.eye(9, chunks=3, k=50)
+    # diag (1-D -> 2-D matrix uses per-task-kwargs zeros_like; 2-D -> 1-D extract)
+    yield "diag 1d->2d", da.diag(arr((12,), (4,)))
+    yield "diag 1d->2d irregular", da.diag(arr((10,), (3,)))
+    yield "diag 1d->2d single", da.diag(arr((5,), (5,)))
+    yield "diag 2d->1d", da.diag(arr((12, 12), (4, 4)))
+    yield "diag 2d->1d irregular", da.diag(arr((10, 10), (3, 3)))
 
 
 def main():

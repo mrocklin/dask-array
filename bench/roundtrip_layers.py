@@ -113,6 +113,11 @@ def cases():
     # eye (2-D indexed creation)
     yield ("eye main diag", lambda: da.eye(8, chunks=3), np.eye(8))
     yield ("eye pos k off-square", lambda: da.eye(6, chunks=2, M=10, k=2), np.eye(6, 10, k=2))
+    # diag (1-D -> 2-D matrix; off-diagonal uses per-task-kwargs zeros_like)
+    dd = np.arange(8, dtype="f8")
+    yield ("diag 1d->2d", lambda: da.diag(da.from_array(dd, chunks=3)), np.diag(dd))
+    dd2 = np.arange(36, dtype="f8").reshape(6, 6)
+    yield ("diag 2d->1d", lambda: da.diag(da.from_array(dd2, chunks=(2, 2))), np.diag(dd2))
 
 
 def main():
