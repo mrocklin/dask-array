@@ -619,6 +619,11 @@ class PartialReduce(ArrayExpr):
         return tuple(chunks)
 
     def _layer(self):
+        try:
+            return self._frisky_layer().to_dask_graph()
+        except NotImplementedError:
+            pass
+
         x = self.array
         parts = [list(partition_all(self.split_every.get(i, 1), range(n))) for (i, n) in enumerate(x.numblocks)]
         keys = product(*map(range, map(len, parts)))
@@ -634,6 +639,16 @@ class PartialReduce(ArrayExpr):
             dsk[(self._name,) + k] = (self.func, g)
 
         return dsk
+
+    def _frisky_layer(self):
+        """Describe this PartialReduce as a PartialReduceLayer for direct task
+        emission. The Rust layer reproduces dask's lol_tuples nesting, so the
+        structure matches ``_layer`` exactly."""
+        from dask_array._frisky import PartialReduceLayer
+
+        x = self.array
+        steps = [self.split_every.get(i, 0) for i in range(x.ndim)]
+        return PartialReduceLayer(self._name, self.func, x.name, list(x.numblocks), steps, self.keepdims)
 
     @property
     def _meta(self):

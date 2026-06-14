@@ -338,8 +338,12 @@ class Blockwise(ArrayExpr):
         """
         from dask_array._frisky import BlockwiseLayer
 
-        if self.new_axes or self.adjust_chunks or self.concatenate:
-            raise NotImplementedError("new_axes / adjust_chunks / concatenate")
+        if self.new_axes or self.concatenate:
+            raise NotImplementedError("new_axes / concatenate")
+        # adjust_chunks only relabels output chunk *sizes*; the block grid and
+        # per-block tasks are unchanged. If it instead changed a block *count*,
+        # the alignment check below rejects it (an array dep's numblocks would no
+        # longer match out_numblocks), so we fall back to dask there.
 
         # Normalize index labels (e.g. "i", "j" or 0, 1) to ints aligned with
         # out_ind so the layer is independent of how the labels were spelled.

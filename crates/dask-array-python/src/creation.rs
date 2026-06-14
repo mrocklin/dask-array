@@ -8,7 +8,7 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use crate::common::{to_dask_graph, to_task_records, ArgSlot, Expanded};
+use crate::common::{to_dask_graph, to_task_records, ArgSlot, Compute, Expanded, NeutralTask};
 
 #[pyclass]
 pub struct CreationLayer {
@@ -45,7 +45,12 @@ impl CreationLayer {
 
         for _ in 0..total {
             let shape: Vec<i64> = (0..ndim).map(|d| self.chunks[d][coord[d] as usize]).collect();
-            tasks.push((coord.clone(), vec![ArgSlot::IntTuple(shape)]));
+            tasks.push(NeutralTask {
+                name_idx: 0,
+                coord: coord.clone(),
+                compute: Compute::Call { func_idx: 0 },
+                slots: vec![ArgSlot::IntTuple(shape)],
+            });
 
             for d in (0..ndim).rev() {
                 coord[d] += 1;
@@ -57,8 +62,8 @@ impl CreationLayer {
         }
 
         Expanded {
-            name: &self.name,
-            func: &self.func,
+            names: vec![&self.name],
+            funcs: vec![&self.func],
             kwargs: &self.kwargs,
             literals: &[],
             dep_names: &[],
