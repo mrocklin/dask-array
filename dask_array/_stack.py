@@ -36,6 +36,11 @@ class Stack(ArrayExpr):
         return "stack-" + self.deterministic_token
 
     def _layer(self) -> dict:
+        try:
+            return self._frisky_layer().to_dask_graph()
+        except NotImplementedError:
+            pass
+
         keys = list(product([self._name], *[range(len(bd)) for bd in self.chunks]))
         names = [a.name for a in self.args]
         axis = self.axis
@@ -52,6 +57,25 @@ class Stack(ArrayExpr):
             for key, inp in zip(keys, inputs)
         ]
         return dict(zip(keys, values))
+
+    def _frisky_layer(self):
+        """Describe this Stack as a StackLayer for direct task emission."""
+        from dask_array._frisky import StackLayer
+
+        axis = self.axis
+        ndim = self._meta.ndim - 1  # input ndim
+        indexer = (slice(None),) * axis + (None,) + (slice(None),) * (ndim - axis)
+        out_numblocks = tuple(len(c) for c in self.chunks)
+        dep_names = [a._name for a in self.args]
+
+        return StackLayer(
+            name=self._name,
+            func=getitem,
+            dep_names=dep_names,
+            out_numblocks=out_numblocks,
+            axis=axis,
+            indexer=indexer,
+        )
 
     def _simplify_up(self, parent, dependents):
         """Allow slice and shuffle operations to push through Stack."""

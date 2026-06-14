@@ -155,14 +155,15 @@ Mirror `blockwise.rs`/`creation.rs` and `_frisky/{blockwise,creation}.py`.
 - **Blockwise-shaped** — per output block → `func(input blocks) + literals`.
   Fits the current model (some need an `Alias` task and/or per-block `IntTuple`
   args). Elementwise/blockwise ✅, creation ✅, `from_array` ✅, simple transforms
-  (squeeze ✅, expand_dims ✅, broadcast_to ✅, reshape), aliasing (blocks,
-  concatenate, copy), indexed creation (arange, linspace, eye, diag — these need
-  a per-task scalar `ArgSlot`, a small `common.rs` addition: lead first), basic
-  slicing/getitem, coarsen, gufunc, random.
+  (squeeze ✅, expand_dims ✅, broadcast_to ✅, reshape), aliasing (concatenate ✅,
+  stack ✅, blocks, copy), indexed creation (arange, linspace, eye, diag — these
+  need a per-task scalar `ArgSlot`, a small `common.rs` addition: lead first),
+  basic slicing/getitem, coarsen, gufunc, random.
 - **Variable fan-in** — one output ← a nested, variable-length list of input
   blocks. Needs a **nested/list arg** in the neutral form. PartialReduce
-  (tree-aggregate, lol_tuples), stack, concatenate-finalize, overlap (neighbors),
-  cumulative scans.
+  (tree-aggregate, lol_tuples), concatenate-finalize, overlap (neighbors),
+  cumulative scans. (Plain `concatenate`/`stack` turned out to be aliasing/getitem,
+  not variable fan-in — handled above.)
 - **Multi-stage** — a single layer emits intermediate-keyed tasks with ≥2
   funcs. Needs **per-task func + free-form intermediate keys**. Rechunk
   (slice→concat), all linalg (single-chunk in-core then per-block multiply),
@@ -172,8 +173,9 @@ Mirror `blockwise.rs`/`creation.rs` and `_frisky/{blockwise,creation}.py`.
   tree lacks a `_frisky_layer`. So a layer can't be roundtrip-tested on a real
   cluster until its whole input chain is covered — and **`from_array` gated every
   non-creation workload** (done ✅ — distinct-data workloads now roundtrip on a
-  real cluster, not just the `diff_layers.py` local resolver). Next: basic
-  slicing/getitem (the other root), then concatenate/stack, then the long tail.
+  real cluster, not just the `diff_layers.py` local resolver). concatenate ✅ +
+  stack ✅ done (parallel batch 2). Next: basic slicing/getitem (the other root —
+  needs `ArgSlot::Slices` to carry a step; lead-first), then the long tail.
   Linalg, map_blocks, vindex are lower-frequency — defer.
 - **Data-source layers are a Python seam, not Rust.** `from_array` (and other I/O
   sources) have no per-task computation to accelerate — each block is a numpy

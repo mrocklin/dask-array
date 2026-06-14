@@ -58,6 +58,17 @@ def cases():
     )
     yield ("expand_dims", lambda: da.expand_dims(da.from_array(r, chunks=(3, 2)), axis=1), np.expand_dims(r, 1))
     yield ("squeeze", lambda: da.from_array(r.reshape(1, 3, 4), chunks=(1, 3, 2)).squeeze(axis=0), r)
+    r2 = np.arange(12, 24, dtype="f8").reshape(3, 4)
+    yield (
+        "concatenate",
+        lambda: da.concatenate([da.from_array(r, chunks=(3, 2)), da.from_array(r2, chunks=(3, 2))], axis=0),
+        np.concatenate([r, r2], axis=0),
+    )
+    yield (
+        "stack",
+        lambda: da.stack([da.from_array(r, chunks=(3, 2)), da.from_array(r2, chunks=(3, 2))], axis=0),
+        np.stack([r, r2], axis=0),
+    )
 
 
 def main():

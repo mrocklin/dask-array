@@ -39,7 +39,34 @@ class Concatenate(ArrayExpr):
     def _name(self):
         return "stack-" + self.deterministic_token
 
+    def _frisky_layer(self):
+        import math
+
+        from dask_array._frisky.concatenate import ConcatenateLayer
+
+        axis = self.axis
+        # Reject unknown chunk sizes (NaN) — we can't compute offsets.
+        for a in self.args:
+            if any(math.isnan(s) for s in a.shape):
+                raise NotImplementedError("unknown chunk sizes")
+
+        dep_names = [a._name for a in self.args]
+        blocks_per_arr = [len(a.chunks[axis]) for a in self.args]
+        out_numblocks = [len(c) for c in self.chunks]
+        return ConcatenateLayer(
+            self._name,
+            dep_names,
+            axis,
+            blocks_per_arr,
+            out_numblocks,
+        )
+
     def _layer(self) -> dict:
+        try:
+            return self._frisky_layer().to_dask_graph()
+        except (NotImplementedError, ImportError):
+            pass
+
         axis = self.axis
         cum_dims = [0] + list(accumulate(add, [len(a.chunks[axis]) for a in self.args]))
         keys = list(product([self._name], *[range(len(bd)) for bd in self.chunks]))
