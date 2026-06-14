@@ -48,6 +48,16 @@ def cases():
     yield ("from_array rechunk", lambda: fa((2, 4)).rechunk((3, 2)), b)
     yield ("from_array sum axis0", lambda: fa((2, 4)).sum(axis=0), b.sum(0))
     yield ("from_array rechunk sum", lambda: fa((3, 2)).rechunk((2, 4)).sum(axis=1), b.sum(1))
+    # manipulation layers (distinct data, real cluster -> serialization + assembly)
+    r = np.arange(12, dtype="f8").reshape(3, 4)
+    r1 = np.arange(6, dtype="f8").reshape(1, 6)
+    yield (
+        "broadcast_to",
+        lambda: da.broadcast_to(da.from_array(r1, chunks=(1, 3)), (4, 6)),
+        np.broadcast_to(r1, (4, 6)),
+    )
+    yield ("expand_dims", lambda: da.expand_dims(da.from_array(r, chunks=(3, 2)), axis=1), np.expand_dims(r, 1))
+    yield ("squeeze", lambda: da.from_array(r.reshape(1, 3, 4), chunks=(1, 3, 2)).squeeze(axis=0), r)
 
 
 def main():

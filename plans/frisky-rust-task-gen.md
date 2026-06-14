@@ -154,10 +154,11 @@ Mirror `blockwise.rs`/`creation.rs` and `_frisky/{blockwise,creation}.py`.
 
 - **Blockwise-shaped** — per output block → `func(input blocks) + literals`.
   Fits the current model (some need an `Alias` task and/or per-block `IntTuple`
-  args). Elementwise/blockwise ✅, creation ✅, simple transforms (squeeze,
-  reshape, expand_dims, broadcast_to), aliasing (blocks, concatenate, copy),
-  indexed creation (arange, linspace, eye, diag), `from_array` (per-block slice),
-  basic slicing/getitem, coarsen, gufunc, random.
+  args). Elementwise/blockwise ✅, creation ✅, `from_array` ✅, simple transforms
+  (squeeze ✅, expand_dims ✅, broadcast_to ✅, reshape), aliasing (blocks,
+  concatenate, copy), indexed creation (arange, linspace, eye, diag — these need
+  a per-task scalar `ArgSlot`, a small `common.rs` addition: lead first), basic
+  slicing/getitem, coarsen, gufunc, random.
 - **Variable fan-in** — one output ← a nested, variable-length list of input
   blocks. Needs a **nested/list arg** in the neutral form. PartialReduce
   (tree-aggregate, lol_tuples), stack, concatenate-finalize, overlap (neighbors),
@@ -219,11 +220,20 @@ Once the recipe is mechanical and the vocabulary is settled:
   Shared files: `lib.rs` + `_frisky/__init__.py` are append-only; `common.rs`
   `ArgSlot`/`Compute` is settled in round 1 (an agent needing to extend it
   escalates to the lead).
-- **Editable-install trap:** the venv resolves `dask_array` / `dask_array._rust`
-  to the *main checkout*, so an agent in a bare worktree can't import/test its
-  changes. Give each parallel agent its own worktree + venv + `maturin develop`,
-  or have agents return diffs the lead builds/tests serially. Never edit the main
-  checkout concurrently; never `git stash` in an agent.
+- **Editable-install trap (confirmed in batch 1):** the venv resolves
+  `dask_array` / `dask_array._rust` to the *main checkout*. Spawning agents with
+  `isolation: worktree` did NOT isolate — all three agents' edits landed in the
+  main checkout and built/tested there. It worked only because the edits were
+  *additive* (distinct new files + distinct routing files) and the shared-file
+  appends (`lib.rs`, `__init__.py`, `diff_layers.py`) didn't lose updates this
+  time. Do not rely on that. Safer patterns: (a) lead owns ALL shared-file edits
+  (`lib.rs` mod/add_class, `__init__.py`, `base.py` protocol) — agents only write
+  their own new files + routing and *report* the one-liners to add; or (b) give
+  each agent a real separate clone+venv. Keep the batch small. Never `git stash`
+  in an agent.
+- **Protocol bump is the lead's, once per batch.** Agents leave
+  `PROTOCOL_REVISION` alone (concurrent bumps collide); the lead bumps it once
+  after integrating the batch.
 - **Per-agent template:** "Implement `<X>` per `plans/frisky-rust-task-gen.md`
   § Adding a layer; mirror blockwise/creation; your files
   `crates/.../<x>.rs`, `dask_array/_frisky/<x>.py`, routing in `<expr file>`;
