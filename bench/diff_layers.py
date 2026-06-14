@@ -112,6 +112,19 @@ def cases():
     yield "expand_dims axis-1", da.expand_dims(arr((6, 4), (3, 2)), axis=-1)
     yield "expand_dims multi", da.expand_dims(arr((6, 4), (3, 2)), axis=(0, 2))
     yield "expand_dims 3d", da.expand_dims(arr((4, 3, 5), (2, 3, 2)), axis=1)
+    # concatenate
+    yield "concatenate axis=0", da.concatenate([arr((6, 4), (3, 2)), arr((9, 4), (3, 2))], axis=0)
+    yield "concatenate axis=1", da.concatenate([arr((4, 6), (2, 3)), arr((4, 9), (2, 3))], axis=1)
+    yield (
+        "concatenate 3 arrays",
+        da.concatenate([arr((4, 6), (2, 3)), arr((4, 3), (2, 3)), arr((4, 9), (2, 3))], axis=1),
+    )
+    yield "concatenate 3d axis0", da.concatenate([arr((6, 4, 5), (3, 2, 5)), arr((9, 4, 5), (3, 2, 5))], axis=0)
+    # stack
+    yield "stack axis=0", da.stack([arr((4, 6), (2, 3)), arr((4, 6), (2, 3))], axis=0)
+    yield "stack axis=1", da.stack([arr((4, 6), (2, 3)), arr((4, 6), (2, 3))], axis=1)
+    yield "stack axis=2", da.stack([arr((4, 6), (2, 3)), arr((4, 6), (2, 3))], axis=2)
+    yield "stack 3 arrays", da.stack([arr((4, 6), (2, 3)), arr((4, 6), (2, 3)), arr((4, 6), (2, 3))], axis=0)
 
 
 def main():
