@@ -39,6 +39,15 @@ def cases():
     yield ("rechunk split+merge", lambda: o((16, 50), c=(16, 1)).rechunk((3, 10)), np.ones((16, 50)))
     yield ("rechunk 1d", lambda: o((20,), c=(7,)).rechunk((5,)), np.ones((20,)))
     yield ("rechunk then sum", lambda: o((12, 12), c=(4, 4)).rechunk((6, 3)).sum(axis=0), np.ones((12, 12)).sum(0))
+    # from_array — DISTINCT data on a real cluster: validates serialization +
+    # spatial assembly (which the da.ones cases above can't).
+    b = np.arange(48, dtype="f8").reshape(6, 8)
+    fa = lambda c: da.from_array(np.arange(48, dtype="f8").reshape(6, 8), chunks=c)
+    yield ("from_array", lambda: fa((2, 4)), b)
+    yield ("from_array + 1", lambda: fa((2, 4)) + 1, b + 1)
+    yield ("from_array rechunk", lambda: fa((2, 4)).rechunk((3, 2)), b)
+    yield ("from_array sum axis0", lambda: fa((2, 4)).sum(axis=0), b.sum(0))
+    yield ("from_array rechunk sum", lambda: fa((3, 2)).rechunk((2, 4)).sum(axis=1), b.sum(1))
 
 
 def main():

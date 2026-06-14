@@ -169,12 +169,16 @@ Mirror `blockwise.rs`/`creation.rs` and `_frisky/{blockwise,creation}.py`.
 - **Sequence by what unlocks testing, not just frequency.** The records path is
   all-or-nothing: `collect_task_records` falls back if *any* node in the lowered
   tree lacks a `_frisky_layer`. So a layer can't be roundtrip-tested on a real
-  cluster until its whole input chain is covered — and **`from_array` gates every
-  non-creation workload** (until it lands, distinct-data tests fall back to the
-  local resolver in `diff_layers.py` rather than a real cluster). Do the
-  connectors/roots first — `from_array`, basic slicing/getitem — then the
-  high-frequency layers (reductions ✅, rechunk ✅, concatenate/stack), then the
-  long tail. Linalg, map_blocks, vindex are lower-frequency — defer.
+  cluster until its whole input chain is covered — and **`from_array` gated every
+  non-creation workload** (done ✅ — distinct-data workloads now roundtrip on a
+  real cluster, not just the `diff_layers.py` local resolver). Next: basic
+  slicing/getitem (the other root), then concatenate/stack, then the long tail.
+  Linalg, map_blocks, vindex are lower-frequency — defer.
+- **Data-source layers are a Python seam, not Rust.** `from_array` (and other I/O
+  sources) have no per-task computation to accelerate — each block is a numpy
+  slice — so they build records directly in Python (`_frisky/from_array.py`: a
+  plain object, not a Rust layer; data nodes wrapped as `toolz.identity` tasks).
+  Only *computed* layers go through Rust + `common.rs`.
 
 ## First round: PartialReduce + Rechunk (DONE — model de-risked)
 

@@ -95,6 +95,11 @@ class FromArray(IO):
             return self.operand("asarray")
 
     def _layer(self):
+        try:
+            return self._frisky_layer().to_dask_graph()
+        except NotImplementedError:
+            pass
+
         lock = self.operand("lock")
         region = self.operand("_region")
         # Note: lock=True is already normalized to SerializableLock() in from_array()
@@ -159,6 +164,22 @@ class FromArray(IO):
                     dtype=self.array.dtype,
                 )
         return dict(dsk)  # this comes as a legacy HLG for now
+
+    def _frisky_layer(self):
+        """from_array as a records-path data source. Only the plain-ndarray case
+        (no lock / region / custom getter) is handled here; everything else falls
+        back to the dask path in `_layer`."""
+        from dask_array._frisky import FromArrayLayer
+
+        is_ndarray = type(self.array) in (np.ndarray, np.ma.core.MaskedArray)
+        if (
+            not is_ndarray
+            or self.operand("lock")
+            or self.operand("_region") is not None
+            or self.operand("getitem") is not None
+        ):
+            raise NotImplementedError("from_array: only plain ndarray, no lock/region/getitem")
+        return FromArrayLayer(self._name, self.array, self.chunks)
 
     def __str__(self):
         return "FromArray(...)"
