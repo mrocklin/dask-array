@@ -99,6 +99,10 @@ def cases():
         lambda: da.coarsen(np.max, da.from_array(np.arange(12, dtype="f8"), chunks=(6,)), {0: 3}),
         np.arange(12, dtype="f8").reshape(4, 3).max(axis=1),
     )
+    # arange (1-D indexed creation, distinct values inherent)
+    yield ("arange basic", lambda: da.arange(20, chunks=6), np.arange(20))
+    yield ("arange int step", lambda: da.arange(5, 50, 3, chunks=7), np.arange(5, 50, 3))
+    yield ("arange float step", lambda: da.arange(0, 10, 0.5, chunks=4), np.arange(0, 10, 0.5))
 
 
 def main():

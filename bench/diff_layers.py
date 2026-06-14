@@ -158,6 +158,12 @@ def cases():
     yield "coarsen 2d one axis", da.coarsen(np.mean, arr((12, 8), (6, 4)), {0: 3})
     yield "coarsen 2d multichunk", da.coarsen(np.sum, arr((24, 16), (4, 8)), {0: 4, 1: 2})
     yield "coarsen 3d", da.coarsen(np.sum, arr((8, 6, 4), (4, 3, 2)), {0: 2, 2: 2})
+    # arange (1-D indexed creation; distinct values are inherent)
+    yield "arange basic", da.arange(20, chunks=6)
+    yield "arange int step", da.arange(5, 50, 3, chunks=7)
+    yield "arange float step", da.arange(0, 10, 0.5, chunks=4)
+    yield "arange single chunk", da.arange(8, chunks=8)
+    yield "arange neg start", da.arange(-7, 7, 2, chunks=3)
 
 
 def main():

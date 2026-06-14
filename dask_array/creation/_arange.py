@@ -38,7 +38,17 @@ class Arange(ArrayExpr):
     def chunks(self):
         return normalize_chunks(self.operand("chunks"), (self.num_rows,), dtype=self.dtype)
 
+    def _frisky_layer(self):
+        from dask_array._frisky.arange import ArangeLayer
+
+        return ArangeLayer(self._name, self.start, self.step, self.dtype, self.like, self.chunks[0])
+
     def _layer(self) -> dict:
+        try:
+            return self._frisky_layer().to_dask_graph()
+        except (NotImplementedError, ImportError):
+            pass
+
         dsk = {}
         elem_count = 0
         start, step = self.start, self.step

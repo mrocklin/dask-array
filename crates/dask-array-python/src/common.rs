@@ -43,6 +43,18 @@ pub enum ArgSlot {
     /// step)` (Python `None` for a missing bound) or an integer (which drops
     /// that dimension). Used by rechunk's split slices and basic slicing.
     Index(Vec<IndexElem>),
+    /// A per-block scalar (int or float) computed per output block — e.g. an
+    /// arange block's start/stop, or an eye block's diagonal offset. Used by the
+    /// indexed-creation layers, whose blocks differ only in such scalars.
+    Scalar(Num),
+}
+
+/// A scalar carried in an [`ArgSlot::Scalar`]. The int/float split is preserved
+/// so the chunk function (`np.arange`, `np.eye`, …) sees the right Python type.
+#[derive(Clone, Copy, FromPyObject)]
+pub enum Num {
+    Int(i64),
+    Float(f64),
 }
 
 /// One element of a getitem index tuple.
@@ -123,6 +135,13 @@ fn opt_obj<'py>(py: Python<'py>, v: Option<i64>) -> PyResult<Bound<'py, PyAny>> 
     })
 }
 
+fn num_obj<'py>(py: Python<'py>, n: Num) -> PyResult<Bound<'py, PyAny>> {
+    Ok(match n {
+        Num::Int(i) => i.into_pyobject(py)?.into_any(),
+        Num::Float(f) => f.into_pyobject(py)?.into_any(),
+    })
+}
+
 /// Build a getitem index tuple — `slice(start, stop, step)` or an int per
 /// element. `slice_cls` is Python's `slice` builtin (fetched once per convert).
 fn index_tuple<'py>(
@@ -162,6 +181,7 @@ fn build_arg_dask<'py>(
         }
         ArgSlot::IntTuple(v) => Ok(int_tuple(py, v)?.into_any()),
         ArgSlot::Index(s) => Ok(index_tuple(py, s, slice_cls)?.into_any()),
+        ArgSlot::Scalar(n) => num_obj(py, *n),
         ArgSlot::List(items) => {
             let mut elems: Vec<Bound<'py, PyAny>> = Vec::with_capacity(items.len());
             for it in items {
@@ -236,6 +256,7 @@ fn build_arg_rec<'py>(
         }
         ArgSlot::IntTuple(v) => Ok(int_tuple(py, v)?.into_any()),
         ArgSlot::Index(s) => Ok(index_tuple(py, s, slice_cls)?.into_any()),
+        ArgSlot::Scalar(n) => num_obj(py, *n),
         ArgSlot::List(items) => {
             let out = PyList::empty(py);
             for it in items {
