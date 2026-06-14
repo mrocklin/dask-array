@@ -27,6 +27,7 @@ from dask_array._frisky.from_array import FromArrayLayer
 from dask_array._frisky.linspace import LinspaceLayer
 from dask_array._frisky.rechunk import RechunkLayer
 from dask_array._frisky.reduction import PartialReduceLayer
+from dask_array._frisky.reshape import ReshapeLayer
 from dask_array._frisky.slicing import SliceLayer
 from dask_array._frisky.squeeze import SqueezeLayer
 from dask_array._frisky.stack import StackLayer
@@ -48,6 +49,7 @@ __all__ = [
     "LinspaceLayer",
     "PartialReduceLayer",
     "RechunkLayer",
+    "ReshapeLayer",
     "SliceLayer",
     "SqueezeLayer",
     "StackLayer",

@@ -99,7 +99,15 @@ deps, aliases and per-block slices. Single-func/flat layers (blockwise,
 creation) are just the common case: one entry in `names`/`funcs`, every task a
 `Call{0}`.
 
-## Status — 18 layers; now in the completeness/correctness phase
+## Status — 19 layers; now in the completeness/correctness phase
+
+- **Coverage frontier (`bench/coverage_probe.py`):** 32/35 common composite
+  operations take the records path **end-to-end** (fully Rust-generated, matching
+  numpy) — all elementwise/ufunc/where/clip/astype, transpose, every reduction
+  (sum/mean/std/var/min/prod), matmul/tensordot/dot, slicing compositions, rechunk,
+  concatenate/stack/coarsen/broadcast, diag, `eye @ x`, **reshape/ravel**. The 3
+  fall-backs (still correct via legacy dask) are `cumsum` (cumulative) and
+  `argmin`/`argmax` (arg_reduction) — the next data-driven priorities.
 
 - **Done (committed on `rust-layers`):** blockwise (+ grid-preserving
   `adjust_chunks`), creation, **from_array** (Python data source — see note in the
@@ -114,7 +122,9 @@ creation) are just the common case: one entry in `names`/`funcs`, every task a
   multi-func + IntTuple + Scalar combo), and **diag** (`Diag1D` 1-D→2-D matrix +
   `Diag2DSimple` 2-D→1-D extract; `Diag1D` introduced per-task kwargs —
   `Compute::CallKw` — for its off-diagonal `np.zeros_like(meta, shape=…)`).
-  ~18 of ~79 layer classes. PROTOCOL_REVISION 16.
+  Plus **reshape** (`ReshapeLowered` + `ReshapeBlockwise` — per-block
+  `M.reshape(in_block, out_shape)`, 1:1 C-order block mapping; one Rust layer
+  serves both). ~19 of ~79 layer classes. PROTOCOL_REVISION 17.
 - dask-array suite green (**2808 pass**; the 3 masked-array failures are
   pre-existing — numpy-2.2.6 masked `.view('i1')` in dask's tokenize, fail at
   `main` too, pure numpy traceback with no layer code, fail standalone in a fresh
@@ -130,6 +140,8 @@ creation) are just the common case: one entry in `names`/`funcs`, every task a
   taken). **Frisky needed zero changes across all 10** — the client stays
   array-agnostic, which is the property to preserve.
 - **Verification tools (`bench/`):** `diff_layers.py`, `roundtrip_layers.py`,
+  `coverage_probe.py` (which common composite ops take the records path
+  end-to-end vs fall back — the data-driven priority map),
   `bench_records.py` (blockwise submission speedup), `e2e_transparent.py`.
 - Frisky `array-bulk-client` `9bf5760` (unchanged).
 
@@ -223,7 +235,7 @@ Mirror `blockwise.rs`/`creation.rs` and `_frisky/{blockwise,creation}.py`.
 - **Blockwise-shaped** — per output block → `func(input blocks) + literals`.
   Fits the current model (some need an `Alias` task and/or per-block `IntTuple`
   args). Elementwise/blockwise ✅, creation ✅, `from_array` ✅, simple transforms
-  (squeeze ✅, expand_dims ✅, broadcast_to ✅, reshape), aliasing (concatenate ✅,
+  (squeeze ✅, expand_dims ✅, broadcast_to ✅, reshape ✅), aliasing (concatenate ✅,
   stack ✅, blocks ✅, copy), indexed creation (arange ✅, linspace ✅, eye ✅ — fit
   the per-task scalar `ArgSlot::Scalar(Num)`; diag ✅ — `Diag1D`/`Diag2DSimple`,
   k=0; `Diag1D` introduced per-task kwargs `Compute::CallKw` for its off-diagonal
@@ -263,11 +275,18 @@ Mirror `blockwise.rs`/`creation.rs` and `_frisky/{blockwise,creation}.py`.
   kwargs, implemented as an additive `Compute::CallKw { func_idx, kwargs:
   Vec<(String, ArgSlot)> }` variant (merged over shared kwargs; each value a full
   `ArgSlot`) — chosen over a field-on-every-`NeutralTask` to avoid churning the 18
-  existing construction sites; per-task kwargs are rare (only diag so far). Next
-  candidates: `arg_reduction` (per-block scalar offset — fits Scalar; two-stage
-  like PartialReduce), then the long tail. Linalg (qr/svd/lu — the big multi-stage
-  lift), map_blocks, vindex, bool-index, setitem, general reshape, random,
-  `diagonal`, k≠0 diag are lower-frequency — defer.
+  existing construction sites; per-task kwargs are rare (only diag so far).
+  **`reshape` ✅ done (autopilot, agent-built)** — `coverage_probe.py` flagged it
+  as the top fall-back (reshape/ravel hit 3× in common workloads); one Rust
+  `ReshapeLayer` (1:1 C-order block map + per-block `IntTuple` shape) serves both
+  `ReshapeLowered` and `ReshapeBlockwise`, no `common.rs` change. Next data-driven
+  candidates (from the probe): `cumulative` (cumsum — intricate: chunk + sequential
+  correction-chain + an inline `getitem` + an `apply`+kwargs `full_like`; also a
+  `CumReductionBlelloch` variant — needs care, possibly a lead-first port) and
+  `arg_reduction` (argmin/argmax — entangled with the reduction combine; the ravel
+  case needs a nested-tuple offset). Linalg (qr/svd/lu — the big multi-stage lift),
+  map_blocks, vindex, bool-index, setitem, random, `diagonal`, k≠0 diag, overlap
+  (delegates to dask's `ArrayOverlapLayer`) are lower-frequency or large — defer.
 - **Data-source layers are a Python seam, not Rust.** `from_array` (and other I/O
   sources) have no per-task computation to accelerate — each block is a numpy
   slice — so they build records directly in Python (`_frisky/from_array.py`: a
