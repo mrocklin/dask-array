@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/dask-array-python"]
+resolver = "2"

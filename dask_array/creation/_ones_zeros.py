@@ -39,6 +39,11 @@ class BroadcastTrick(ArrayExpr):
         return partial(func, meta=self._meta, dtype=self.dtype, **k)
 
     def _layer(self) -> dict:
+        try:
+            return self._frisky_layer().to_dask_graph()
+        except NotImplementedError:
+            pass
+
         from itertools import product
 
         result = {}
@@ -46,6 +51,16 @@ class BroadcastTrick(ArrayExpr):
             key = (self._name, *block_id)
             result[key] = self._task(key, block_id)
         return result
+
+    def _frisky_layer(self):
+        from dask_array._frisky import CreationLayer
+
+        try:
+            chunks = [[int(s) for s in c] for c in self.chunks]
+        except (TypeError, ValueError):
+            # Unknown (nan) chunk sizes can't be expanded; fall back.
+            raise NotImplementedError("non-concrete chunks")
+        return CreationLayer(self._name, self._wrapped_func, chunks)
 
     def _task(self, key, block_id: tuple[int, ...]) -> Task:
         """Generate task for a specific output block."""
