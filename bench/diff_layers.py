@@ -125,6 +125,25 @@ def cases():
     yield "stack axis=1", da.stack([arr((4, 6), (2, 3)), arr((4, 6), (2, 3))], axis=1)
     yield "stack axis=2", da.stack([arr((4, 6), (2, 3)), arr((4, 6), (2, 3))], axis=2)
     yield "stack 3 arrays", da.stack([arr((4, 6), (2, 3)), arr((4, 6), (2, 3)), arr((4, 6), (2, 3))], axis=0)
+    # basic slicing / getitem
+    yield "slice 1d basic", arr((12,), (4,))[2:10]
+    yield "slice 1d step", arr((20,), (5,))[1:18:2]
+    yield "slice 1d full step", arr((20,), (5,))[::3]
+    yield "slice 1d neg step full", arr((20,), (5,))[::-1]
+    yield "slice 1d neg step partial", arr((20,), (5,))[15:3:-2]
+    yield "slice 1d neg bounds", arr((12,), (4,))[-8:-2]
+    yield "slice 2d", arr((10, 10), (3, 3))[2:8, 1:9]
+    yield "slice 2d step", arr((12, 12), (4, 4))[::2, 1::3]
+    yield "slice 2d neg step", arr((10, 10), (3, 3))[::-1, 2:9]
+    yield "integer index 1d", arr((12,), (4,))[5]
+    yield "integer index 1d neg", arr((12,), (4,))[-3]
+    yield "integer index 2d row", arr((10, 10), (3, 3))[4]
+    yield "integer + slice", arr((10, 10), (3, 3))[3, 2:8]
+    yield "slice + integer", arr((10, 10), (3, 3))[2:8, 3]
+    yield "scalar index 2d", arr((10, 10), (3, 3))[3, 4]
+    yield "slice 3d mixed", arr((9, 8, 7), (2, 3, 4))[1:8, 5, ::2]
+    yield "slice then slice (fusion)", arr((20,), (5,))[2:18][1:10]
+    yield "slice partial alias", arr((10, 10), (3, 3))[:, 1:9]
 
 
 def main():

@@ -23,7 +23,7 @@
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PySlice, PyString, PyTuple};
+use pyo3::types::{PyDict, PyList, PyString, PyTuple};
 
 /// One positional argument of a task, resolved per output block.
 pub enum ArgSlot {
@@ -39,8 +39,18 @@ pub enum ArgSlot {
     /// in the records path a plain Python list (the worker resolves
     /// placeholders nested in lists).
     List(Vec<ArgSlot>),
-    /// A per-block tuple of `slice(start, stop)` (a rechunk getitem index).
-    Slices(Vec<(i64, i64)>),
+    /// A per-block getitem index tuple — each element a `slice(start, stop,
+    /// step)` (Python `None` for a missing bound) or an integer (which drops
+    /// that dimension). Used by rechunk's split slices and basic slicing.
+    Index(Vec<IndexElem>),
+}
+
+/// One element of a getitem index tuple.
+pub enum IndexElem {
+    /// `slice(start, stop, step)`; a `None` maps to Python `None`.
+    Slice { start: Option<i64>, stop: Option<i64>, step: Option<i64> },
+    /// An integer index (drops the dimension).
+    Int(i64),
 }
 
 /// What a task computes.
@@ -106,12 +116,31 @@ fn int_tuple<'py>(py: Python<'py>, vals: &[i64]) -> PyResult<Bound<'py, PyTuple>
     PyTuple::new(py, elems)
 }
 
-fn slice_tuple<'py>(py: Python<'py>, slices: &[(i64, i64)]) -> PyResult<Bound<'py, PyTuple>> {
-    let mut elems: Vec<Bound<'py, PyAny>> = Vec::with_capacity(slices.len());
-    for (start, stop) in slices {
-        elems.push(PySlice::new(py, *start as isize, *stop as isize, 1).into_any());
+fn opt_obj<'py>(py: Python<'py>, v: Option<i64>) -> PyResult<Bound<'py, PyAny>> {
+    Ok(match v {
+        Some(x) => x.into_pyobject(py)?.into_any(),
+        None => py.None().into_bound(py),
+    })
+}
+
+/// Build a getitem index tuple — `slice(start, stop, step)` or an int per
+/// element. `slice_cls` is Python's `slice` builtin (fetched once per convert).
+fn index_tuple<'py>(
+    py: Python<'py>,
+    elems: &[IndexElem],
+    slice_cls: &Bound<'py, PyAny>,
+) -> PyResult<Bound<'py, PyTuple>> {
+    let mut out: Vec<Bound<'py, PyAny>> = Vec::with_capacity(elems.len());
+    for e in elems {
+        let item = match e {
+            IndexElem::Slice { start, stop, step } => {
+                slice_cls.call1((opt_obj(py, *start)?, opt_obj(py, *stop)?, opt_obj(py, *step)?))?
+            }
+            IndexElem::Int(i) => i.into_pyobject(py)?.into_any(),
+        };
+        out.push(item);
     }
-    PyTuple::new(py, elems)
+    PyTuple::new(py, out)
 }
 
 /// Build one task argument for the dask path. A dependency becomes a `TaskRef`,
@@ -123,6 +152,7 @@ fn build_arg_dask<'py>(
     slot: &ArgSlot,
     taskref_cls: &Bound<'py, PyAny>,
     list_cls: &Bound<'py, PyAny>,
+    slice_cls: &Bound<'py, PyAny>,
 ) -> PyResult<Bound<'py, PyAny>> {
     match slot {
         ArgSlot::Literal(i) => Ok(exp.literals[*i].bind(py).clone()),
@@ -131,11 +161,11 @@ fn build_arg_dask<'py>(
             Ok(taskref_cls.call1((dep_key,))?)
         }
         ArgSlot::IntTuple(v) => Ok(int_tuple(py, v)?.into_any()),
-        ArgSlot::Slices(s) => Ok(slice_tuple(py, s)?.into_any()),
+        ArgSlot::Index(s) => Ok(index_tuple(py, s, slice_cls)?.into_any()),
         ArgSlot::List(items) => {
             let mut elems: Vec<Bound<'py, PyAny>> = Vec::with_capacity(items.len());
             for it in items {
-                elems.push(build_arg_dask(py, exp, it, taskref_cls, list_cls)?);
+                elems.push(build_arg_dask(py, exp, it, taskref_cls, list_cls, slice_cls)?);
             }
             // dask._task_spec.List(*elems)
             Ok(list_cls.call1(PyTuple::new(py, elems)?)?)
@@ -154,6 +184,7 @@ pub fn to_dask_graph<'py>(py: Python<'py>, exp: &Expanded) -> PyResult<Bound<'py
     let taskref_cls = ts.getattr("TaskRef")?;
     let list_cls = ts.getattr("List")?;
     let alias_cls = ts.getattr("Alias")?;
+    let slice_cls = py.import("builtins")?.getattr("slice")?;
     let kwargs = exp.kwargs.bind(py).downcast::<PyDict>()?.clone();
 
     let dsk = PyDict::new(py);
@@ -174,7 +205,7 @@ pub fn to_dask_graph<'py>(py: Python<'py>, exp: &Expanded) -> PyResult<Bound<'py
                 call.push(key.clone().into_any());
                 call.push(func.clone());
                 for slot in &task.slots {
-                    call.push(build_arg_dask(py, exp, slot, &taskref_cls, &list_cls)?);
+                    call.push(build_arg_dask(py, exp, slot, &taskref_cls, &list_cls, &slice_cls)?);
                 }
                 let t = task_cls.call(PyTuple::new(py, call)?, Some(&kwargs))?;
                 dsk.set_item(key, t)?;
@@ -193,6 +224,7 @@ fn build_arg_rec<'py>(
     exp: &Expanded,
     slot: &ArgSlot,
     taskref_cls: &Bound<'py, PyAny>,
+    slice_cls: &Bound<'py, PyAny>,
     deps: &mut Vec<String>,
 ) -> PyResult<Bound<'py, PyAny>> {
     match slot {
@@ -203,11 +235,11 @@ fn build_arg_rec<'py>(
             Ok(taskref_cls.call1((dep_key,))?)
         }
         ArgSlot::IntTuple(v) => Ok(int_tuple(py, v)?.into_any()),
-        ArgSlot::Slices(s) => Ok(slice_tuple(py, s)?.into_any()),
+        ArgSlot::Index(s) => Ok(index_tuple(py, s, slice_cls)?.into_any()),
         ArgSlot::List(items) => {
             let out = PyList::empty(py);
             for it in items {
-                out.append(build_arg_rec(py, exp, it, taskref_cls, deps)?)?;
+                out.append(build_arg_rec(py, exp, it, taskref_cls, slice_cls, deps)?)?;
             }
             Ok(out.into_any())
         }
@@ -230,6 +262,7 @@ fn build_arg_rec<'py>(
 /// records the same way and the Frisky client stays generic.
 pub fn to_task_records<'py>(py: Python<'py>, exp: &Expanded) -> PyResult<Bound<'py, PyList>> {
     let taskref_cls = py.import("dask._task_spec")?.getattr("TaskRef")?;
+    let slice_cls = py.import("builtins")?.getattr("slice")?;
     let kwargs = exp.kwargs.bind(py);
     let mut identity: Option<Bound<'py, PyAny>> = None;
 
@@ -260,7 +293,7 @@ pub fn to_task_records<'py>(py: Python<'py>, exp: &Expanded) -> PyResult<Bound<'
                 let func = exp.funcs[*func_idx].bind(py);
                 let mut args: Vec<Bound<'py, PyAny>> = Vec::with_capacity(task.slots.len());
                 for slot in &task.slots {
-                    args.push(build_arg_rec(py, exp, slot, &taskref_cls, &mut deps)?);
+                    args.push(build_arg_rec(py, exp, slot, &taskref_cls, &slice_cls, &mut deps)?);
                 }
                 let args_tuple = PyTuple::new(py, args)?;
                 records.append((key, func.clone(), args_tuple, kwargs.clone(), deps))?;

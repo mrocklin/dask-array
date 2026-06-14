@@ -476,7 +476,24 @@ class SliceSlicesIntegers(Slice):
         ]
         return tuple(map(tuple, new_blockdims))
 
+    def _frisky_layer(self):
+        from dask_array._frisky.slicing import SliceLayer
+
+        return SliceLayer(
+            self._name,
+            self.array._name,
+            self.index,
+            self.array.shape,
+            self.array.chunks,
+            self.allow_getitem_optimization,
+        )
+
     def _layer(self) -> dict:
+        try:
+            return self._frisky_layer().to_dask_graph()
+        except (NotImplementedError, ImportError):
+            pass
+
         # Get a list (for each dimension) of dicts{blocknum: slice()}
         block_slices = list(map(_slice_1d, self.array.shape, self.array.chunks, self.index))
         sorted_block_slices = [sorted(i.items()) for i in block_slices]
