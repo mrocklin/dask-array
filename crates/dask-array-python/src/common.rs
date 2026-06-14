@@ -1,18 +1,29 @@
 //! Shared scaffolding for the layer modules.
 //!
 //! A layer expands (pure Rust) into an [`Expanded`] form: the shared per-layer
-//! Python payloads (`func`, `kwargs`, literal values) plus a `Vec` of per-task
-//! records that are entirely raw Rust — output coordinate + [`ArgSlot`]s, where
-//! a dependency is a `(dep_name_index, coord)` and a literal is an index into
-//! the shared literals. Nothing per-task is a Python object.
+//! Python payloads (`funcs`, `kwargs`, literal values) plus a `Vec` of
+//! [`NeutralTask`] records that are entirely raw Rust — an output key
+//! (`name_idx` + coord), which function to call, and the argument
+//! [`ArgSlot`]s, where a dependency is a `(dep_name_index, coord)` and a
+//! literal is an index into the shared literals. Nothing per-task is a Python
+//! object.
 //!
 //! Two generic converters consume that form: [`to_dask_graph`] builds a dask
 //! task graph (the correctness path, validated by the test suite) and
-//! [`to_frisky_tasks`] builds the compact form the Frisky client serializes.
-//! New layer kinds only implement the expansion; the converters are shared.
+//! [`to_task_records`] builds the plain `(key, func, args, kwargs, deps)`
+//! records the Frisky client serializes. New layer kinds only implement the
+//! expansion; the converters are shared.
+//!
+//! The form covers three task structures: the *fast path* (one shared func,
+//! flat args, keys `(name, *coord)`) used by blockwise/creation; *nested /
+//! variable-length dep args* ([`ArgSlot::List`]) used by reductions and
+//! rechunk's `concatenate3`; and *per-task func + free-form keys* (multiple
+//! `funcs`, multiple `names`, [`Compute::Alias`]) used by rechunk's
+//! split/merge/alias tasks within one layer.
 
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyString, PyTuple};
+use pyo3::types::{PyDict, PyList, PySlice, PyString, PyTuple};
 
 /// One positional argument of a task, resolved per output block.
 pub enum ArgSlot {
@@ -22,17 +33,48 @@ pub enum ArgSlot {
     Dep { name_idx: usize, coord: Vec<u32> },
     /// A per-block computed integer tuple (e.g. a creation block shape).
     IntTuple(Vec<i64>),
+    /// A nested list of args (a reduction's lol_tuples, a rechunk's
+    /// `concatenate3` argument). In the dask path it becomes a
+    /// `dask._task_spec.List` so embedded `TaskRef`s register as dependencies;
+    /// in the records path a plain Python list (the worker resolves
+    /// placeholders nested in lists).
+    List(Vec<ArgSlot>),
+    /// A per-block tuple of `slice(start, stop)` (a rechunk getitem index).
+    Slices(Vec<(i64, i64)>),
+}
+
+/// What a task computes.
+pub enum Compute {
+    /// Apply `funcs[func_idx]` to the args (with the layer's shared kwargs).
+    Call { func_idx: usize },
+    /// An alias: the key resolves directly to its single dependency (`slots[0]`,
+    /// a [`ArgSlot::Dep`]). The dask path emits a `dask._task_spec.Alias`; the
+    /// records path emits a `toolz.identity` task (Frisky has no alias node).
+    Alias,
+}
+
+/// One task in the expanded subgraph. Its key is `(names[name_idx], *coord)`.
+pub struct NeutralTask {
+    pub name_idx: usize,
+    pub coord: Vec<u32>,
+    pub compute: Compute,
+    pub slots: Vec<ArgSlot>,
 }
 
 /// A layer's fully expanded subgraph. Shared payloads borrow from the layer;
 /// the per-task records are owned and raw Rust.
 pub struct Expanded<'a> {
-    pub name: &'a str,
-    pub func: &'a PyObject,
+    /// Names of the keys this layer produces; [`NeutralTask::name_idx`] indexes.
+    pub names: Vec<&'a str>,
+    /// Distinct task functions; [`Compute::Call`]'s `func_idx` indexes.
+    pub funcs: Vec<&'a PyObject>,
+    /// Shared keyword arguments applied to every `Call` (usually empty).
     pub kwargs: &'a PyObject,
     pub literals: &'a [PyObject],
+    /// Names of dependencies referenced by [`ArgSlot::Dep`] (external arrays and
+    /// this layer's own intermediates); the slot's `name_idx` indexes.
     pub dep_names: &'a [String],
-    pub tasks: Vec<(Vec<u32>, Vec<ArgSlot>)>,
+    pub tasks: Vec<NeutralTask>,
 }
 
 /// Build the Python tuple key `(name, *coord)`.
@@ -64,48 +106,123 @@ fn int_tuple<'py>(py: Python<'py>, vals: &[i64]) -> PyResult<Bound<'py, PyTuple>
     PyTuple::new(py, elems)
 }
 
+fn slice_tuple<'py>(py: Python<'py>, slices: &[(i64, i64)]) -> PyResult<Bound<'py, PyTuple>> {
+    let mut elems: Vec<Bound<'py, PyAny>> = Vec::with_capacity(slices.len());
+    for (start, stop) in slices {
+        elems.push(PySlice::new(py, *start as isize, *stop as isize, 1).into_any());
+    }
+    PyTuple::new(py, elems)
+}
+
+/// Build one task argument for the dask path. A dependency becomes a `TaskRef`,
+/// a nested list a `dask._task_spec.List` (so its embedded `TaskRef`s register
+/// as dependencies).
+fn build_arg_dask<'py>(
+    py: Python<'py>,
+    exp: &Expanded,
+    slot: &ArgSlot,
+    taskref_cls: &Bound<'py, PyAny>,
+    list_cls: &Bound<'py, PyAny>,
+) -> PyResult<Bound<'py, PyAny>> {
+    match slot {
+        ArgSlot::Literal(i) => Ok(exp.literals[*i].bind(py).clone()),
+        ArgSlot::Dep { name_idx, coord } => {
+            let dep_key = key_tuple(py, &exp.dep_names[*name_idx], coord)?;
+            Ok(taskref_cls.call1((dep_key,))?)
+        }
+        ArgSlot::IntTuple(v) => Ok(int_tuple(py, v)?.into_any()),
+        ArgSlot::Slices(s) => Ok(slice_tuple(py, s)?.into_any()),
+        ArgSlot::List(items) => {
+            let mut elems: Vec<Bound<'py, PyAny>> = Vec::with_capacity(items.len());
+            for it in items {
+                elems.push(build_arg_dask(py, exp, it, taskref_cls, list_cls)?);
+            }
+            // dask._task_spec.List(*elems)
+            Ok(list_cls.call1(PyTuple::new(py, elems)?)?)
+        }
+    }
+}
+
 /// Generic correctness/legacy path: convert the expanded form to a dask task
-/// graph (`{key: dask._task_spec.Task}`). Builds `Task`/`TaskRef` via pyo3, so
-/// dask-array's existing single-threaded test suite validates the Rust
-/// expansion. This is the only place that materializes Python per task, and
+/// graph (`{key: dask._task_spec.Task | Alias}`). Builds `Task`/`TaskRef`/`List`
+/// via pyo3, so dask-array's existing single-threaded test suite validates the
+/// Rust expansion. This is the only place that materializes Python per task, and
 /// only for the dask path.
 pub fn to_dask_graph<'py>(py: Python<'py>, exp: &Expanded) -> PyResult<Bound<'py, PyDict>> {
     let ts = py.import("dask._task_spec")?;
     let task_cls = ts.getattr("Task")?;
     let taskref_cls = ts.getattr("TaskRef")?;
-    let func = exp.func.bind(py);
+    let list_cls = ts.getattr("List")?;
+    let alias_cls = ts.getattr("Alias")?;
     let kwargs = exp.kwargs.bind(py).downcast::<PyDict>()?.clone();
 
     let dsk = PyDict::new(py);
-    for (coord, slots) in &exp.tasks {
-        let key = key_tuple(py, exp.name, coord)?;
-        let mut call: Vec<Bound<'py, PyAny>> = Vec::with_capacity(slots.len() + 2);
-        call.push(key.clone().into_any());
-        call.push(func.clone());
-        for slot in slots {
-            match slot {
-                ArgSlot::Literal(i) => call.push(exp.literals[*i].bind(py).clone()),
-                ArgSlot::Dep { name_idx, coord } => {
-                    let dep_key = key_tuple(py, &exp.dep_names[*name_idx], coord)?;
-                    call.push(taskref_cls.call1((dep_key,))?);
+    for task in &exp.tasks {
+        let key = key_tuple(py, exp.names[task.name_idx], &task.coord)?;
+        match &task.compute {
+            Compute::Alias => {
+                let src = match &task.slots[0] {
+                    ArgSlot::Dep { name_idx, coord } => key_tuple(py, &exp.dep_names[*name_idx], coord)?,
+                    _ => return Err(PyValueError::new_err("alias source must be a Dep")),
+                };
+                let alias = alias_cls.call1((key.clone(), src))?;
+                dsk.set_item(key, alias)?;
+            }
+            Compute::Call { func_idx } => {
+                let func = exp.funcs[*func_idx].bind(py);
+                let mut call: Vec<Bound<'py, PyAny>> = Vec::with_capacity(task.slots.len() + 2);
+                call.push(key.clone().into_any());
+                call.push(func.clone());
+                for slot in &task.slots {
+                    call.push(build_arg_dask(py, exp, slot, &taskref_cls, &list_cls)?);
                 }
-                ArgSlot::IntTuple(v) => call.push(int_tuple(py, v)?.into_any()),
+                let t = task_cls.call(PyTuple::new(py, call)?, Some(&kwargs))?;
+                dsk.set_item(key, t)?;
             }
         }
-        let task = task_cls.call(PyTuple::new(py, call)?, Some(&kwargs))?;
-        dsk.set_item(key, task)?;
     }
     Ok(dsk)
+}
+
+/// Build one task argument for the records path, collecting dependency key
+/// strings into `deps`. A dependency becomes a `TaskRef` (Frisky converts it to
+/// its own placeholder at submit time); a nested list a plain Python list (the
+/// worker resolves placeholders nested in lists).
+fn build_arg_rec<'py>(
+    py: Python<'py>,
+    exp: &Expanded,
+    slot: &ArgSlot,
+    taskref_cls: &Bound<'py, PyAny>,
+    deps: &mut Vec<String>,
+) -> PyResult<Bound<'py, PyAny>> {
+    match slot {
+        ArgSlot::Literal(i) => Ok(exp.literals[*i].bind(py).clone()),
+        ArgSlot::Dep { name_idx, coord } => {
+            let dep_key = key_tuple(py, &exp.dep_names[*name_idx], coord)?;
+            deps.push(key_string(&exp.dep_names[*name_idx], coord));
+            Ok(taskref_cls.call1((dep_key,))?)
+        }
+        ArgSlot::IntTuple(v) => Ok(int_tuple(py, v)?.into_any()),
+        ArgSlot::Slices(s) => Ok(slice_tuple(py, s)?.into_any()),
+        ArgSlot::List(items) => {
+            let out = PyList::empty(py);
+            for it in items {
+                out.append(build_arg_rec(py, exp, it, taskref_cls, deps)?)?;
+            }
+            Ok(out.into_any())
+        }
+    }
 }
 
 /// Generic Frisky path: convert the expanded form to a plain list of task
 /// records the Frisky client serializes as it would any task graph. Each record
 /// is `(key, func, args, kwargs, deps)`:
 ///   - `key`  — `str((name, *coord))` (built in Rust).
-///   - `func` / `kwargs` — the layer's shared Python objects (one ref per task).
+///   - `func` — one of the layer's shared functions (an alias uses
+///     `toolz.identity`); `kwargs` — the layer's shared dict.
 ///   - `args` — a Python tuple; a dependency is a dask `TaskRef(dep_key_tuple)`
-///     (dask-native — Frisky converts it to its own placeholder at submit time),
-///     a literal is the shared Python value, a per-block value is an int tuple.
+///     (Frisky converts it to its own placeholder at submit time), a literal is
+///     the shared Python value, nested deps are plain Python lists.
 ///   - `deps` — the dependency key strings (built in Rust).
 ///
 /// This mirrors a dask Task per task (no shared template, no packed buffers, no
@@ -113,27 +230,42 @@ pub fn to_dask_graph<'py>(py: Python<'py>, exp: &Expanded) -> PyResult<Bound<'py
 /// records the same way and the Frisky client stays generic.
 pub fn to_task_records<'py>(py: Python<'py>, exp: &Expanded) -> PyResult<Bound<'py, PyList>> {
     let taskref_cls = py.import("dask._task_spec")?.getattr("TaskRef")?;
-    let func = exp.func.bind(py);
     let kwargs = exp.kwargs.bind(py);
+    let mut identity: Option<Bound<'py, PyAny>> = None;
 
     let records = PyList::empty(py);
-    for (coord, slots) in &exp.tasks {
-        let key = key_string(exp.name, coord);
-        let mut args: Vec<Bound<'py, PyAny>> = Vec::with_capacity(slots.len());
+    for task in &exp.tasks {
+        let key = key_string(exp.names[task.name_idx], &task.coord);
         let mut deps: Vec<String> = Vec::new();
-        for slot in slots {
-            match slot {
-                ArgSlot::Literal(i) => args.push(exp.literals[*i].bind(py).clone()),
-                ArgSlot::Dep { name_idx, coord } => {
-                    let dep_key = key_tuple(py, &exp.dep_names[*name_idx], coord)?;
-                    args.push(taskref_cls.call1((dep_key,))?);
-                    deps.push(key_string(&exp.dep_names[*name_idx], coord));
+        match &task.compute {
+            Compute::Alias => {
+                let (src_name, src_coord) = match &task.slots[0] {
+                    ArgSlot::Dep { name_idx, coord } => (&exp.dep_names[*name_idx], coord),
+                    _ => return Err(PyValueError::new_err("alias source must be a Dep")),
+                };
+                let dep_key = key_tuple(py, src_name, src_coord)?;
+                deps.push(key_string(src_name, src_coord));
+                let func = match &identity {
+                    Some(f) => f.clone(),
+                    None => {
+                        let f = py.import("toolz")?.getattr("identity")?;
+                        identity = Some(f.clone());
+                        f
+                    }
+                };
+                let args = PyTuple::new(py, [taskref_cls.call1((dep_key,))?])?;
+                records.append((key, func, args, kwargs.clone(), deps))?;
+            }
+            Compute::Call { func_idx } => {
+                let func = exp.funcs[*func_idx].bind(py);
+                let mut args: Vec<Bound<'py, PyAny>> = Vec::with_capacity(task.slots.len());
+                for slot in &task.slots {
+                    args.push(build_arg_rec(py, exp, slot, &taskref_cls, &mut deps)?);
                 }
-                ArgSlot::IntTuple(v) => args.push(int_tuple(py, v)?.into_any()),
+                let args_tuple = PyTuple::new(py, args)?;
+                records.append((key, func.clone(), args_tuple, kwargs.clone(), deps))?;
             }
         }
-        let args_tuple = PyTuple::new(py, args)?;
-        records.append((key, func.clone(), args_tuple, kwargs.clone(), deps))?;
     }
     Ok(records)
 }

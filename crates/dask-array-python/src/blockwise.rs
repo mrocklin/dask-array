@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use crate::common::{to_dask_graph, to_task_records, ArgSlot, Expanded};
+use crate::common::{to_dask_graph, to_task_records, ArgSlot, Compute, Expanded, NeutralTask};
 
 /// How an input dimension's block id is derived from the output block id.
 enum Axis {
@@ -138,7 +138,12 @@ impl BlockwiseLayer {
                     }
                 })
                 .collect();
-            tasks.push((coord.clone(), slots));
+            tasks.push(NeutralTask {
+                name_idx: 0,
+                coord: coord.clone(),
+                compute: Compute::Call { func_idx: 0 },
+                slots,
+            });
 
             for d in (0..ndim).rev() {
                 coord[d] += 1;
@@ -150,8 +155,8 @@ impl BlockwiseLayer {
         }
 
         Expanded {
-            name: &self.name,
-            func: &self.func,
+            names: vec![&self.name],
+            funcs: vec![&self.func],
             kwargs: &self.kwargs,
             literals: &self.literals,
             dep_names: &self.dep_names,
