@@ -312,6 +312,60 @@ Mirror `blockwise.rs`/`creation.rs` and `_frisky/{blockwise,creation}.py`.
   `kwargs` off each dask `Task` (subclass-agnostic; falls back if a distribution
   parameter is itself an array). Only *computed* layers go through Rust + `common.rs`.
 
+## Working the tail (the loop we converged on)
+
+The remaining layers are a *specialized* tail. Don't grind through all ~79 — port
+whichever ones real workloads hit. The records path is **all-or-nothing**:
+`collect_task_records` falls back to legacy dask if *any* node in the lowered tree
+lacks a `_frisky_layer`. So one uncovered source (e.g. `random`) drags a whole
+`random→rechunk→sum` graph back to legacy — which is why porting one well-chosen
+layer often unblocks a whole class of workloads. The loop:
+
+1. **Find the culprit.** Run/extend `bench/coverage_probe.py`, or just
+   `dask.compute(x)` and watch for the fallback. To see exactly which node is
+   uncovered, walk the lowered tree (this exact snippet found the gaps for argmin /
+   cumsum / random):
+   ```python
+   e = collection.expr.lower_completely()
+   seen, stack = set(), [e]
+   while stack:
+       n = stack.pop()
+       if n._name in seen: continue
+       seen.add(n._name)
+       cov = hasattr(n, "_frisky_layer")
+       if cov:
+           try: n._frisky_layer()
+           except Exception as ex: cov = f"raises {type(ex).__name__}"
+       print(type(n).__name__, cov)
+       stack.extend(n.dependencies())
+   ```
+2. **Check if it's a contained win.** Often an op lowers to one uncovered node plus
+   already-covered ones — e.g. `argmin` = `ArgChunk` (new) + `PartialReduce`
+   (covered combine), so porting just the chunk completed it. The tree-walk tells
+   you whether one port finishes the op or several nodes are uncovered.
+3. **Classify the shape** from the legacy `_layer` (landscape categories), then port
+   per "Adding a layer". Validate 3 ways (suite + `diff_layers` + `roundtrip`).
+
+### Reusable techniques (each earned in a recent round)
+
+- **Per-task kwargs** → `Compute::CallKw` (a kwarg value is any `ArgSlot`), merged
+  over the layer's shared kwargs. (diag's `np.zeros_like(meta, shape=…)`.)
+- **A nested tuple arg, no array deps** → `ArgSlot::List([IntTuple, …])`; a Python
+  list tuple-unpacks like a tuple, so no new vocab. (ravel argmin's `(offsets,
+  shape)` offset.)
+- **An inline nested subtask** (legacy nests `(getitem, dep, slc)` inside another
+  task's args) → flatten it into its own named intermediate task and depend on it;
+  the neutral form has no nested-task arg. (cumsum's tail-getitem.)
+- **A string-in-key intermediate** like `(name, "extra", *coord)` → give it its own
+  layer name with an integer coord; only internal keys change, not outputs/values.
+  (cumsum's carry.)
+- **A subclass-heavy or data-source expr** → don't reimplement the per-task logic.
+  Reuse the expr's own `_task`/`_layer` to build the dask `Task`s and read
+  `func`/`args`/`kwargs` straight off each one (`Task` exposes them) for the records
+  path. This is how `random` (many distribution subclasses) was ported with zero
+  reconstruction; the same trick fits any awkward layer where a faithful Rust port
+  would be error-prone and Rust expansion buys little.
+
 ## First round: PartialReduce + Rechunk (DONE — model de-risked)
 
 Goal was to extend the neutral form to the two structures the rest of the API
@@ -398,6 +452,10 @@ Once the recipe is mechanical and the vocabulary is settled:
   `PYTHONPATH=~/workspace/dask-array`, `MATURIN_IMPORT_HOOK_ENABLED=0`).
 - **Simplicity:** the Rust layer should be comparable in size/clarity to the
   dask Python `_layer` it replaces.
+- **Local notebook playground:** `~/workspace/dask-array-play/` (a uv project with
+  editable path sources for both `../dask-array` and `../frisky/crates/frisky-python`,
+  plus `demo.ipynb`). `cd` there and `uv run jupyter lab demo.ipynb`. Pure-Python
+  layer edits show up on a kernel restart; Rust edits need `maturin develop` first.
 
 ## Open questions / model decisions
 
