@@ -1,22 +1,38 @@
 """Generic records adapter: reuse an expr's own legacy ``_layer()`` graph.
 
-Most of the *specialized tail* (diagonal, setitem, unique, bincount, histogram,
-fancy/boolean indexing, …) lowers to standard ``dask._task_spec`` nodes — ``Task``,
-``Alias``, ``DataNode``. Rather than reimplement each one's task structure in Rust
-(perf is deferred for the tail), an expr can opt into the records path by reusing
-the graph its ``_layer()`` already builds and translating those nodes into the
-flat ``(key, func, args, kwargs, deps)`` records Frisky submits.
+The *specialized tail* (diagonal, setitem, unique, bincount, histogram, fancy/
+boolean indexing, overlap, percentile, apply_along_axis, …) is long, and perf is
+deferred there. Rather than port a bespoke Rust layer for each, this adapter reuses
+the graph an expr's ``_layer()`` already builds and translates it into the flat
+``(key, func, args, kwargs, deps)`` records Frisky submits. It's the generalization
+of the "reuse the expr's own ``_task``/``_layer``" technique that ported ``random``:
+zero reconstruction, faithful by construction (the suite validates ``_layer``
+directly), and the rest of a graph stays on the fast Rust path — only this node
+materializes its (small) subgraph in Python.
 
-This is the generalization of the "reuse the expr's own ``_task``/``_layer``"
-technique that ported ``random``: zero reconstruction, faithful by construction
-(the suite validates ``_layer`` directly), and it keeps the rest of a graph on the
-fast Rust path — only this node materializes its (small) subgraph in Python.
+``collect_task_records`` falls back to this adapter for any node with no native
+``_frisky_layer`` (or whose layer raises ``NotImplementedError`` for the variant),
+so no per-expr wiring is needed. It calls ``_layer()`` directly; that builds the
+legacy graph without re-entering the records path, so there's no recursion and the
+dask/correctness path is unchanged.
 
-``collect_task_records`` falls back to this adapter for any node that has no
-native ``_frisky_layer`` (or whose layer raises ``NotImplementedError`` for the
-given variant), so no per-expr wiring is needed. It calls the expr's ``_layer()``
-directly; that method builds the legacy graph without re-entering the records
-path, so there is no recursion and the dask/correctness path is unchanged.
+Translating the graph involves three wrinkles:
+
+  - *Key normalization.* dask-expr emits block coords as ``np.int64``; the Rust /
+    from_array layers emit plain ``int``, and Frisky matches deps by the *string* of
+    the key (``str(('x', np.int64(0)))`` != ``str(('x', 0))``). So every key — output,
+    each dep, and every embedded ``TaskRef`` — is normalized to plain ints.
+  - *Inline subtasks.* ``_task_spec`` nests freely (``concatenate3([[Task(getitem,
+    …)]])``) but a Frisky record is flat. An inline ``Task`` is lifted into its own
+    synthesized record and replaced by a ``TaskRef``; an inline ``Alias`` becomes a
+    ref to its target (see ``_Flattener``).
+  - *Old-style layers.* a few (e.g. overlap) still emit legacy ``(func, *args)``
+    tuples whose cross-layer block refs are bare key tuples. ``convert_legacy_graph``,
+    given the full keyset (this layer's keys + every dependency's block keys),
+    resolves the tuple-vs-key ambiguity; it's idempotent on already-converted graphs.
+
+If a node still can't be expressed (an unhandled ``GraphNode`` type), the adapter
+raises ``NotImplementedError`` and the whole graph falls back to stock dask.
 
 Key normalization: dask-expr emits block coordinates as ``np.int64``; the Rust /
 from_array layers emit plain ``int``. Frisky matches a dependency by the *string*
@@ -31,7 +47,7 @@ import numbers
 
 import toolz
 
-from dask._task_spec import Alias, DataNode, GraphNode, NestedContainer, Task, TaskRef
+from dask._task_spec import Alias, DataNode, GraphNode, NestedContainer, Task, TaskRef, convert_legacy_graph
 
 
 def _norm_key(key):
@@ -41,58 +57,82 @@ def _norm_key(key):
     return key
 
 
-def _resolve(arg):
-    """Resolve a ``_task_spec`` argument into a plain Python value the Frisky
-    records path understands: a ``TaskRef`` (canonical key) marks a dependency,
-    ``NestedContainer`` becomes the plain list/tuple/set/dict, ``DataNode`` its
-    value, and literals pass through. An inline nested ``Task``/``Alias`` can't be
-    expressed in a flat record, so raise ``NotImplementedError`` — the caller then
-    falls back to stock dask for the whole graph."""
-    if isinstance(arg, TaskRef):
-        return TaskRef(_norm_key(arg.key))
-    if isinstance(arg, NestedContainer):
-        resolved = [_resolve(a) for a in arg.args]
-        if arg.klass is dict:
-            return dict(zip(resolved[::2], resolved[1::2]))
-        return arg.klass(resolved)
-    if isinstance(arg, DataNode):
-        return arg.value
-    if isinstance(arg, (Task, Alias)):
-        raise NotImplementedError(f"inline {type(arg).__name__} in args")
-    if isinstance(arg, list):
-        return [_resolve(a) for a in arg]
-    if isinstance(arg, tuple):
-        return tuple(_resolve(a) for a in arg)
-    if isinstance(arg, dict):
-        return {k: _resolve(v) for k, v in arg.items()}
-    return arg
+class _Flattener:
+    """Resolve a node's args/kwargs into flat record form, collecting the keys it
+    depends on and emitting ``extra`` records for any inline subtask.
+
+    Frisky records are flat — args hold ``TaskRef`` deps, plain containers, and
+    literals, but no inline-computed subtask. dask's ``_task_spec`` nests freely
+    (e.g. ``concatenate3([[Task(getitem, ...), ...]])``). So an inline ``Task`` is
+    lifted into its own synthesized record (key = ``"<parent>-subN"``, unique:
+    parent keys are unique and N increments) and replaced by a ``TaskRef`` to it;
+    an inline ``Alias`` is just a reference to its target."""
+
+    def __init__(self, parent_key):
+        self.parent_key = parent_key
+        self.extra = []
+        self._n = 0
+
+    def resolve(self, arg, deps):
+        if isinstance(arg, TaskRef):
+            k = _norm_key(arg.key)
+            deps.add(str(k))
+            return TaskRef(k)
+        if isinstance(arg, Alias):
+            k = _norm_key(arg.target)
+            deps.add(str(k))
+            return TaskRef(k)
+        if isinstance(arg, DataNode):
+            return arg.value
+        if isinstance(arg, Task):
+            self._n += 1
+            sub_key = f"{self.parent_key}-sub{self._n}"
+            sub_deps = set()
+            sub_args = tuple(self.resolve(a, sub_deps) for a in arg.args)
+            sub_kwargs = {k: self.resolve(v, sub_deps) for k, v in (arg.kwargs or {}).items()}
+            self.extra.append((sub_key, arg.func, sub_args, sub_kwargs, sorted(sub_deps)))
+            deps.add(sub_key)
+            return TaskRef(sub_key)
+        if isinstance(arg, NestedContainer):
+            resolved = [self.resolve(a, deps) for a in arg.args]
+            if arg.klass is dict:
+                return dict(zip(resolved[::2], resolved[1::2]))
+            return arg.klass(resolved)
+        if isinstance(arg, GraphNode):
+            raise NotImplementedError(f"unhandled inline {type(arg).__name__}")
+        if isinstance(arg, list):
+            return [self.resolve(a, deps) for a in arg]
+        if isinstance(arg, tuple):
+            return tuple(self.resolve(a, deps) for a in arg)
+        if isinstance(arg, dict):
+            return {k: self.resolve(v, deps) for k, v in arg.items()}
+        return arg
 
 
-def _record(key, node):
-    """Translate one ``_task_spec`` graph node into a Frisky task record."""
+def _records(key, node):
+    """Translate one ``_task_spec`` graph node into one or more Frisky records
+    (one for the node, plus any lifted inline subtasks)."""
     out_key = str(_norm_key(key))
-    if isinstance(node, Task):
-        deps = sorted(str(_norm_key(k)) for k in node.dependencies)
-        args = tuple(_resolve(a) for a in node.args)
-        kwargs = {k: _resolve(v) for k, v in (node.kwargs or {}).items()}
-        return (out_key, node.func, args, kwargs, deps)
     if isinstance(node, Alias):
-        return (out_key, toolz.identity, (TaskRef(_norm_key(node.target)),), {}, [str(_norm_key(node.target))])
+        return [(out_key, toolz.identity, (TaskRef(_norm_key(node.target)),), {}, [str(_norm_key(node.target))])]
     if isinstance(node, DataNode):
-        return (out_key, toolz.identity, (node.value,), {}, [])
+        return [(out_key, toolz.identity, (node.value,), {}, [])]
+    fl = _Flattener(out_key)
+    deps = set()
+    if isinstance(node, Task):
+        args = tuple(fl.resolve(a, deps) for a in node.args)
+        kwargs = {k: fl.resolve(v, deps) for k, v in (node.kwargs or {}).items()}
+        return [(out_key, node.func, args, kwargs, sorted(deps)), *fl.extra]
     if isinstance(node, NestedContainer):
         # The key's value is itself a container of refs (e.g. a list of blocks);
         # identity over the resolved container yields it once deps are filled in.
-        deps = sorted(str(_norm_key(k)) for k in node.dependencies)
-        return (out_key, toolz.identity, (_resolve(node),), {}, deps)
+        resolved = fl.resolve(node, deps)
+        return [(out_key, toolz.identity, (resolved,), {}, sorted(deps)), *fl.extra]
     if isinstance(node, GraphNode):
         raise NotImplementedError(f"unhandled GraphNode {type(node).__name__}")
-    if isinstance(node, tuple):
-        # A bare tuple is ambiguous (could be a legacy (func, *args) task); don't
-        # guess — fall back to stock dask for this graph.
-        raise NotImplementedError("bare tuple graph value")
     # A bare non-node value is data (e.g. setitem stores a plain ndarray block).
-    return (out_key, toolz.identity, (node,), {}, [])
+    # convert_legacy_graph wraps real tasks in nodes, so anything left is data.
+    return [(out_key, toolz.identity, (node,), {}, [])]
 
 
 class GraphRecordsLayer:
@@ -105,4 +145,17 @@ class GraphRecordsLayer:
         return self.expr._layer()
 
     def to_task_records(self):
-        return [_record(key, node) for key, node in self.expr._layer().items()]
+        # Normalize the legacy graph to _task_spec nodes first: some layers (e.g.
+        # overlap) still emit old-style (func, *args) tuples whose cross-layer block
+        # references are bare key tuples. convert_legacy_graph resolves the
+        # tuple-vs-key ambiguity against a keyset, so pass it this layer's own keys
+        # plus every dependency's block keys (else a cross-layer ref looks like data
+        # and gets passed literally). It's idempotent on already-converted graphs.
+        from dask.core import flatten
+
+        local = self.expr._layer()
+        all_keys = set(local)
+        for dep in self.expr.dependencies():
+            all_keys.update(flatten(dep.__dask_keys__()))
+        dsk = convert_legacy_graph(local, all_keys)
+        return [rec for key, node in dsk.items() for rec in _records(key, node)]

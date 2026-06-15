@@ -55,6 +55,32 @@ def cases():
     yield ("take irregular chunks", lambda: da.from_array(a, chunks=(2, 5))[[0, 3, 5]], a[[0, 3, 5]])
     yield ("diagonal irregular", lambda: da.diagonal(da.from_array(sq, chunks=(2, 4))), np.diagonal(sq))
 
+    # overlap variants (old-style HLG, cross-layer key refs — the fragile case)
+    yield (
+        "overlap reflect+sum",
+        lambda: fa().map_overlap(lambda b: b * 2, depth=1, boundary="reflect").sum(),
+        (a * 2).sum(),
+    )
+    yield ("overlap depth2 none", lambda: fa().map_overlap(lambda b: b + 1, depth=2, boundary="none"), a + 1)
+    yield ("overlap 1d periodic", lambda: fv().map_overlap(lambda b: b + 1, depth=2, boundary="periodic"), v + 1)
+    yield (
+        "overlap then take",
+        lambda: fa().map_overlap(lambda b: b + 1, depth=1, boundary="none")[[0, 2]],
+        (a + 1)[[0, 2]],
+    )
+    yield ("overlap reflect identity", lambda: fa().map_overlap(lambda b: b, depth=1, boundary="reflect"), a)
+    # single chunk so dask's percentile is exact (multi-chunk dask is approximate)
+    yield (
+        "percentile then *2",
+        lambda: da.percentile(fv(-1), [25, 50, 75]) * 2.0,
+        np.percentile(v, [25, 50, 75]) * 2.0,
+    )
+    yield (
+        "apply_along then sum",
+        lambda: da.apply_along_axis(np.cumsum, 1, fa()).sum(),
+        np.apply_along_axis(np.cumsum, 1, a).sum(),
+    )
+
 
 def _set(x, idx, val):
     x[idx] = val
