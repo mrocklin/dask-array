@@ -81,6 +81,19 @@ def cases():
     yield ("random+rechunk+sum", lambda: da.random.random((40, 40), chunks=(1, -1)).rechunk((-1, 1)).sum(), None)
     yield ("normal mean", lambda: da.random.normal(0, 1, (30, 20), chunks=(10, 10)).mean(), None)
 
+    # --- structural ops with inline constant arrays (FromArray broadened) ---
+    yield ("pad", lambda: da.pad(fa(), 1, mode="constant"), np.pad(a, 1, mode="constant"))
+    yield ("triu", lambda: da.triu(da.from_array(sq, chunks=(3, 3))), np.triu(sq))
+    yield ("tril", lambda: da.tril(da.from_array(sq, chunks=(3, 3))), np.tril(sq))
+    yield ("isin", lambda: da.isin(fa(), np.array([1.0, 5.0, 9.0])), np.isin(a, np.array([1.0, 5.0, 9.0])))
+
+    # --- unknown-chunk ops (ChunksOverride alias; nan-chunk metadata) ---
+    v = np.arange(12, dtype="f8")
+    fv = lambda c=4: da.from_array(v, chunks=c)
+    yield ("nonzero", lambda: fv().nonzero()[0], v.nonzero()[0])
+    yield ("argwhere", lambda: da.argwhere(fv() > 3), np.argwhere(v > 3))
+    yield ("topk", lambda: da.topk(fv(), 3), np.array([11.0, 10.0, 9.0]))
+
     # --- known-uncovered (expect records=False, fall back) ---
     yield ("cumsum [tail]", lambda: fa().cumsum(axis=0), a.cumsum(0))
     yield ("argmin [tail]", lambda: fa().argmin(axis=0), a.argmin(0))

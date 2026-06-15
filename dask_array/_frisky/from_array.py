@@ -9,8 +9,9 @@ source layers are the seam where records originate in Python.)
 It mirrors dask's plain-ndarray path: eager per-block slices as data nodes
 (`{(name, *idx): array[slc]}`; a single block is copied). The dask path emits the
 bare values; the records path wraps each in a `toolz.identity` task, since Frisky
-submits tasks, not bare data nodes. Anything outside the plain-ndarray case
-(non-ndarray, lock, region, custom getter) falls back to dask — see
+submits tasks, not bare data nodes. Any plain ndarray without a lock/region is
+handled here (dask itself eager-slices that case and ignores getitem/inline_array/
+asarray); non-ndarray / lock / region fall back to dask — see
 `FromArray._frisky_layer`.
 """
 

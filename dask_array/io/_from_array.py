@@ -172,13 +172,12 @@ class FromArray(IO):
         from dask_array._frisky import FromArrayLayer
 
         is_ndarray = type(self.array) in (np.ndarray, np.ma.core.MaskedArray)
-        if (
-            not is_ndarray
-            or self.operand("lock")
-            or self.operand("_region") is not None
-            or self.operand("getitem") is not None
-        ):
-            raise NotImplementedError("from_array: only plain ndarray, no lock/region/getitem")
+        if not is_ndarray or self.operand("lock") or self.operand("_region") is not None:
+            raise NotImplementedError("from_array: only plain ndarray, no lock/region")
+        # For a plain ndarray without lock/region, dask's own `_layer` always takes
+        # the eager-slice branch and ignores getitem/inline_array/asarray — so the
+        # eager-slice FromArrayLayer matches regardless of those operands (this is
+        # what unblocks the small inline constant arrays in pad/triu/tril/isin/…).
         return FromArrayLayer(self._name, self.array, self.chunks)
 
     def __str__(self):
