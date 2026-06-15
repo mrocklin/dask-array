@@ -77,6 +77,10 @@ def cases():
     yield ("arange + reshape", lambda: da.arange(24, chunks=6).reshape(4, 6), np.arange(24).reshape(4, 6))
     yield ("eye @ x", lambda: da.eye(6, chunks=3) @ fa(), np.eye(6) @ a)
 
+    # --- random (data-source layer; check records-path + finite, not exact) ---
+    yield ("random+rechunk+sum", lambda: da.random.random((40, 40), chunks=(1, -1)).rechunk((-1, 1)).sum(), None)
+    yield ("normal mean", lambda: da.random.normal(0, 1, (30, 20), chunks=(10, 10)).mean(), None)
+
     # --- known-uncovered (expect records=False, fall back) ---
     yield ("cumsum [tail]", lambda: fa().cumsum(axis=0), a.cumsum(0))
     yield ("argmin [tail]", lambda: fa().argmin(axis=0), a.argmin(0))
@@ -102,7 +106,11 @@ def main():
                 try:
                     (got,) = dask.compute(build())
                     used = calls["n"] > before
-                    ok = np.allclose(np.asarray(got), expected) and np.shape(got) == np.shape(expected)
+                    if expected is None:
+                        # random: no exact reference — just require finite output.
+                        ok = bool(np.all(np.isfinite(np.asarray(got))))
+                    else:
+                        ok = np.allclose(np.asarray(got), expected) and np.shape(got) == np.shape(expected)
                 except Exception as e:  # noqa: BLE001
                     failed.append((label, f"{type(e).__name__}: {str(e)[:70]}"))
                     print(f"  ERR  {label:<22} {type(e).__name__}: {str(e)[:60]}")

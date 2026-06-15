@@ -101,17 +101,17 @@ creation) are just the common case: one entry in `names`/`funcs`, every task a
 
 ## Status — 21 layers; now in the completeness/correctness phase
 
-- **Coverage frontier (`bench/coverage_probe.py`):** **35/35** probed common
-  composite operations take the records path **end-to-end** (fully Rust-generated,
-  matching numpy), **zero fall-backs** — all elementwise/ufunc/where/clip/astype,
+- **Coverage frontier (`bench/coverage_probe.py`):** **37/37** probed common
+  composite operations take the records path **end-to-end** (matching numpy / finite
+  for random), **zero fall-backs** — all elementwise/ufunc/where/clip/astype,
   transpose, every reduction (sum/mean/std/var/min/prod), matmul/tensordot/dot,
   slicing compositions, rechunk, concatenate/stack/coarsen/broadcast, diag,
-  `eye @ x`, reshape/ravel, argmin/argmax (axis-wise AND ravel), cumsum/cumprod.
-  NOTE: this is a 35-op *sample* of common workloads, not exhaustive — the still
-  uncovered layers are the more specialized tail (see the landscape): linalg,
-  fancy/boolean indexing (take/vindex/bool-index), setitem, overlap, histogram/
-  unique/bincount, random, pad/roll/flip, `diagonal`, k≠0 diag. Extend
-  `coverage_probe.py` with more ops to re-map the frontier before picking the next.
+  `eye @ x`, reshape/ravel, argmin/argmax (axis-wise AND ravel), cumsum/cumprod,
+  and **`da.random.random`/normal/poisson** (incl. random→rechunk→sum). NOTE: this
+  is a *sample* of common workloads, not exhaustive — the still uncovered layers are
+  the more specialized tail (see the landscape): linalg, fancy/boolean indexing
+  (take/vindex/bool-index), setitem, overlap, histogram/unique/bincount, pad/roll/
+  flip, `diagonal`, k≠0 diag. Extend `coverage_probe.py` to re-map before picking.
 
 - **Done (committed on `rust-layers`):** blockwise (+ grid-preserving
   `adjust_chunks`), creation, **from_array** (Python data source — see note in the
@@ -132,7 +132,9 @@ creation) are just the common case: one entry in `names`/`funcs`, every task a
   non-ravel; the combine is the already-covered `PartialReduce`), and
   **CumReduction** (cumsum/cumprod, sequential algorithm — the most intricate
   layer: chunk + per-block identity (`CallKw` `full_like`) + tail-`getitem` +
-  `binop` carry along the axis; four task-kinds/names in one layer). ~21 of ~79
+  `binop` carry along the axis; four task-kinds/names in one layer), and **random**
+  (`da.random.*` — a Python data-source layer like from_array; reuses the expr's
+  `_task` and reads the flat record off each dask `Task`). ~22 of ~79
   layer classes. PROTOCOL_REVISION 19.
 - dask-array suite green (**2808 pass**; the 3 masked-array failures are
   pre-existing — numpy-2.2.6 masked `.view('i1')` in dask's tokenize, fail at
@@ -300,13 +302,15 @@ Mirror `blockwise.rs`/`creation.rs` and `_frisky/{blockwise,creation}.py`.
   35-op probe is now at **35/35, zero fall-backs**. The remaining uncovered layers
   are specialized (not in the common probe): Linalg (qr/svd/lu — the big multi-stage
   lift),
-  map_blocks, vindex, bool-index, setitem, random, `diagonal`, k≠0 diag, overlap
+  map_blocks, vindex, bool-index, setitem, `diagonal`, k≠0 diag, overlap
   (delegates to dask's `ArrayOverlapLayer`) are lower-frequency or large — defer.
-- **Data-source layers are a Python seam, not Rust.** `from_array` (and other I/O
-  sources) have no per-task computation to accelerate — each block is a numpy
-  slice — so they build records directly in Python (`_frisky/from_array.py`: a
-  plain object, not a Rust layer; data nodes wrapped as `toolz.identity` tasks).
-  Only *computed* layers go through Rust + `common.rs`.
+- **Data-source layers are a Python seam, not Rust.** `from_array` and `random`
+  have no cross-block graph structure to expand in Rust — the per-block work is a
+  numpy slice (from_array) or a spawned RNG state (random) — so they build records
+  directly in Python (`_frisky/from_array.py`, `_frisky/random.py`: plain objects,
+  not Rust layers). `random` reuses the expr's `_task` and reads `func`/`args`/
+  `kwargs` off each dask `Task` (subclass-agnostic; falls back if a distribution
+  parameter is itself an array). Only *computed* layers go through Rust + `common.rs`.
 
 ## First round: PartialReduce + Rechunk (DONE — model de-risked)
 

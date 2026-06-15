@@ -112,7 +112,21 @@ class Random(IO):
     def bitgens(self):
         return self._info[0]
 
+    def _frisky_layer(self):
+        from dask_array._frisky.random import RandomLayer
+
+        # Array-valued distribution parameters become task-refs nested in the
+        # arg/kwarg containers; defer those to legacy dask.
+        if self.dependencies():
+            raise NotImplementedError("random with array-valued parameters")
+        return RandomLayer(self)
+
     def _layer(self):
+        try:
+            return self._frisky_layer().to_dask_graph()
+        except (NotImplementedError, ImportError):
+            pass
+
         result = {}
         for block_id in product(*[range(len(bd)) for bd in self.chunks]):
             key = (self._name, *block_id)
