@@ -15,6 +15,13 @@ two ways:
     the rest of the graph still takes the fast path. If even that can't represent a
     node (an unhandled ``_task_spec`` type), it raises ``NotImplementedError`` and
     the caller falls back to stock dask for the whole graph.
+
+Finally the assembled graph is checked for completeness: every dependency must be
+produced by some record. A dangling reference means the translation wasn't faithful
+— e.g. an *optimized/fused* expr (``x.sum().compute()`` fuses mul→add→chunk into a
+SubgraphCallable) whose ``_layer()`` still references the fused-away block keys. The
+records path can't express that, so we raise ``NotImplementedError`` and fall back to
+stock dask rather than submit an incomplete graph (which would silently hang).
 """
 
 from __future__ import annotations
@@ -45,4 +52,9 @@ def collect_task_records(collection):
         records.extend(layer.to_task_records())
 
         stack.extend(e.dependencies())
+
+    produced = {r[0] for r in records}
+    dangling = {dep for r in records for dep in r[4]} - produced
+    if dangling:
+        raise NotImplementedError(f"records graph has {len(dangling)} dangling dep(s), e.g. {next(iter(dangling))}")
     return records
