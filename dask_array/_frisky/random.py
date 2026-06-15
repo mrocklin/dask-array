@@ -1,9 +1,10 @@
 """random data-source layer (``da.random.random``, ``.normal``, ``.poisson``, …).
 
 Like ``from_array``, ``Random`` is a *source*: each output block draws from a
-per-block RNG bit-generator. There's no cross-block graph structure to expand in
-Rust — the per-block state (a spawned ``SeedSequence`` / RNG state) is the work —
-so this is a plain Python layer.
+per-block RNG seed. There's no cross-block graph structure to expand in Rust —
+the per-block seed (a compact ~97-byte integer for the RandomState path, or a
+``SeedSequence`` for the Generator path; see ``Random._info``) is the work — so
+this is a plain Python layer.
 
 ``to_dask_graph`` reuses the expr's own ``_task`` (which handles every distribution
 subclass and the ``extra_chunks`` book-keeping). ``to_task_records`` is the hot

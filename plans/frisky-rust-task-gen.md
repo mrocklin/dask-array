@@ -311,11 +311,25 @@ Mirror `blockwise.rs`/`creation.rs` and `_frisky/{blockwise,creation}.py`.
   (delegates to dask's `ArrayOverlapLayer`) are lower-frequency or large — defer.
 - **Data-source layers are a Python seam, not Rust.** `from_array` and `random`
   have no cross-block graph structure to expand in Rust — the per-block work is a
-  numpy slice (from_array) or a spawned RNG state (random) — so they build records
+  numpy slice (from_array) or a per-block RNG seed (random) — so they build records
   directly in Python (`_frisky/from_array.py`, `_frisky/random.py`: plain objects,
   not Rust layers). `random` reuses the expr's `_task` and reads `func`/`args`/
   `kwargs` off each dask `Task` (subclass-agnostic; falls back if a distribution
   parameter is itself an array). Only *computed* layers go through Rust + `common.rs`.
+  - **Perf, RandomState path (`da.random.random`):** the per-block arg is now a
+    compact ~97-byte integer seed, not the upstream-dask 2.6 KB MT19937 state
+    array. `Random._info` derives one 128-bit entropy per block from the root RNG
+    via `SeedSequence.generate_state`; `_apply_random` rebuilds the state on the
+    worker as `RandomState(MT19937(SeedSequence(seed)))`. **This deliberately
+    changes the produced values** vs upstream dask / the old code (the suite has no
+    golden-value assertion on `da.random.random`, so it stayed green at 2808;
+    recompute-determinism and `da.random.seed` control are preserved). Wins:
+    submit ~4.7× on random-dominated graphs (per-block arg pickle 2.6→0.5 µs, the
+    ~55%-of-submit `dumps_value`), wire 28× (2.7 GB→0.10 GB at 1M blocks), client
+    build ~5–10× (`generate_state` ≫ `random_state_data`). Don't revert it to ship
+    the full state to "match upstream" — the divergence is intentional. (A further
+    ~5× worker-construct win is available by routing through PCG64/Generator, but
+    that changes the RNG algorithm + method set — left as a separate decision.)
 
 ## Working the tail — SOLVED generically via GraphRecordsLayer
 

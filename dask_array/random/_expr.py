@@ -12,7 +12,7 @@ from dask_array.io import IO
 from dask_array._core_utils import broadcast_shapes, normalize_chunks
 from dask_array._backends_array import array_creation_dispatch
 from dask.tokenize import tokenize
-from dask.utils import cached_property, random_state_data, typename
+from dask.utils import cached_property, typename
 
 from ._generator import Generator
 from ._random_state import RandomState
@@ -41,11 +41,21 @@ def _apply_random_func(rng, funcname, bitgen, size, args, kwargs):
     return func(*args, size=size, **kwargs)
 
 
-def _apply_random(RandomState, funcname, state_data, size, args, kwargs):
-    """Apply RandomState method with seed"""
+def _apply_random(RandomState, funcname, seed, size, args, kwargs):
+    """Apply RandomState method with a compact per-block seed.
+
+    ``seed`` is a small integer (128-bit entropy) generated on the client from
+    the root RNG via ``SeedSequence`` (see ``Random._info``). We rebuild the
+    full MT19937 state on the worker through ``SeedSequence`` -> ``MT19937`` so
+    independent blocks get statistically-independent streams (numpy's
+    recommended mechanism), while the shipped task argument stays ~97 bytes
+    instead of the 2.6 KB full Mersenne-Twister state array.
+    """
     if RandomState is None:
         RandomState = array_creation_dispatch.RandomState
-    state = RandomState(state_data)
+    # numpy bit-generator; non-numpy backends (cupy) were already numpy-seeded
+    # on this path (the old code passed a numpy MT-state array), so no regression.
+    state = RandomState(np.random.MT19937(np.random.SeedSequence(seed)))
     func = getattr(state, funcname)
     return func(*args, size=size, **kwargs)
 
@@ -93,7 +103,18 @@ class Random(IO):
             func_applier = _apply_random_func
             gen = type(self.rng._bit_generator)
         elif isinstance(self.rng, RandomState):
-            bitgens = random_state_data(len(sizes), self.rng._numpy_state)
+            # Ship a compact per-block seed instead of the full 2.6 KB MT19937
+            # state array. Derive a 128-bit entropy for every block from the
+            # root RNG via one SeedSequence — deterministic from the root, so
+            # recompute is stable and da.random.seed still controls it — and let
+            # the worker rebuild the state (see _apply_random).
+            root_entropy = int.from_bytes(self.rng._numpy_state.bytes(16), "little")
+            words = (
+                np.random.SeedSequence(root_entropy)
+                .generate_state(len(sizes) * 4, dtype=np.uint32)
+                .reshape(len(sizes), 4)
+            )
+            bitgens = [int.from_bytes(w.tobytes(), "little") for w in words]
             bitgen_token = tokenize(bitgens)
             func_applier = _apply_random
             gen = self.rng._RandomState
