@@ -84,6 +84,14 @@ class _Flattener:
             return TaskRef(k)
         if isinstance(arg, DataNode):
             return arg.value
+        # NestedContainer subclasses Task, so this must precede the Task check.
+        # Inline a list/tuple here — Frisky's lower_dep_refs recurses both and
+        # resolves embedded TaskRefs, so no extra task is needed (concatenate3 etc.
+        # nest these heavily). dict/set fall through to the generic Task lift below:
+        # lower_dep_refs doesn't recurse a set or dict *keys*, but the lifted
+        # subtask runs `to_container` after its (resolved) args, rebuilding them.
+        if isinstance(arg, NestedContainer) and arg.klass in (list, tuple):
+            return arg.klass(self.resolve(a, deps) for a in arg.args)
         if isinstance(arg, Task):
             self._n += 1
             sub_key = f"{self.parent_key}-sub{self._n}"
@@ -93,11 +101,6 @@ class _Flattener:
             self.extra.append((sub_key, arg.func, sub_args, sub_kwargs, sorted(sub_deps)))
             deps.add(sub_key)
             return TaskRef(sub_key)
-        if isinstance(arg, NestedContainer):
-            resolved = [self.resolve(a, deps) for a in arg.args]
-            if arg.klass is dict:
-                return dict(zip(resolved[::2], resolved[1::2]))
-            return arg.klass(resolved)
         if isinstance(arg, GraphNode):
             raise NotImplementedError(f"unhandled inline {type(arg).__name__}")
         if isinstance(arg, list):
@@ -119,15 +122,17 @@ def _records(key, node):
         return [(out_key, toolz.identity, (node.value,), {}, [])]
     fl = _Flattener(out_key)
     deps = set()
+    # NestedContainer subclasses Task — handle the list/tuple case (the key's value
+    # is itself a container of block refs) before the Task check: identity over the
+    # inlined container yields it once deps are filled in. dict/set containers, and
+    # genuine inline subtasks, go through the Task branch (generic to_container lift).
+    if isinstance(node, NestedContainer) and node.klass in (list, tuple):
+        resolved = fl.resolve(node, deps)
+        return [(out_key, toolz.identity, (resolved,), {}, sorted(deps)), *fl.extra]
     if isinstance(node, Task):
         args = tuple(fl.resolve(a, deps) for a in node.args)
         kwargs = {k: fl.resolve(v, deps) for k, v in (node.kwargs or {}).items()}
         return [(out_key, node.func, args, kwargs, sorted(deps)), *fl.extra]
-    if isinstance(node, NestedContainer):
-        # The key's value is itself a container of refs (e.g. a list of blocks);
-        # identity over the resolved container yields it once deps are filled in.
-        resolved = fl.resolve(node, deps)
-        return [(out_key, toolz.identity, (resolved,), {}, sorted(deps)), *fl.extra]
     if isinstance(node, GraphNode):
         raise NotImplementedError(f"unhandled GraphNode {type(node).__name__}")
     # A bare non-node value is data (e.g. setitem stores a plain ndarray block).
