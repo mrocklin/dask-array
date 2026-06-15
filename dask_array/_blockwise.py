@@ -319,14 +319,25 @@ class Blockwise(ArrayExpr):
         """Describe this Blockwise as a BlockwiseLayer for direct task emission.
 
         Raises NotImplementedError for anything outside the same-grid /
-        broadcast elementwise subset (contractions, new axes, concatenation,
-        adjusted chunks, ArrayBlockwiseDep, or dask collections embedded in
-        args/kwargs); _layer catches that and falls back to dask.blockwise.
+        broadcast elementwise subset (contractions via concatenate, adjusted
+        chunks that change counts, ArrayBlockwiseDep, or dask collections
+        embedded in args/kwargs); _layer catches that and falls back to
+        dask.blockwise.
         """
         from dask_array._frisky import BlockwiseLayer
 
-        if self.new_axes or self.concatenate:
-            raise NotImplementedError("new_axes / concatenate")
+        # concatenate=True is a contraction: each output block depends on a LIST
+        # of input blocks along the contracted axis, concatenated before func —
+        # variable fan-in the BlockwiseLayer doesn't model. Defer to dask.
+        if self.concatenate:
+            raise NotImplementedError("concatenate (variable fan-in)")
+        # new_axes adds output dims absent from every input. They appear in
+        # out_ind (so each is iterated as an output block dimension) but in no
+        # input's index, so no input coord ever references them — the per-block
+        # task is just func(input blocks) with the new-axis coord ignored on the
+        # input side. The BlockwiseLayer already handles that, so new_axes needs
+        # no special casing here.
+        #
         # adjust_chunks only relabels output chunk *sizes*; the block grid and
         # per-block tasks are unchanged. If it instead changed a block *count*,
         # the alignment check below rejects it (an array dep's numblocks would no

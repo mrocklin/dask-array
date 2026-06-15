@@ -70,6 +70,9 @@ def cases():
     yield ("dot 1d", lambda: da.from_array(a[0], chunks=4) @ da.from_array(b[0], chunks=4), a[0] @ b[0])
 
     # --- slicing + compute compositions ---
+    # pure slice pushed into the source ndarray as a FromArray _region (native path)
+    yield ("fromarray region", lambda: fa()[1:5, 2:7], a[1:5, 2:7])
+    yield ("fromarray region 1block", lambda: da.from_array(a, chunks=-1)[2:5, 3:7], a[2:5, 3:7])
     yield ("slice + add", lambda: fa()[1:5, 2:7] + 1, a[1:5, 2:7] + 1)
     yield ("slice neg step", lambda: fa()[::-1] * 2, a[::-1] * 2)
     yield ("rechunk + sum", lambda: fa().rechunk((2, 8)).sum(axis=1), a.sum(1))
