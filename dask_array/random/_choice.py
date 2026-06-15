@@ -12,7 +12,7 @@ from dask_array.io import IO
 from dask_array._core_utils import normalize_chunks
 from dask_array._utils import asarray_safe
 from dask_array._backends_array import array_creation_dispatch
-from dask.utils import cached_property, random_state_data
+from dask.utils import cached_property
 
 from ._expr import _spawn_bitgens
 from ._generator import Generator
@@ -26,8 +26,12 @@ def _choice_rng(state_data, a, size, replace, p, axis, shuffle):
     return state.choice(a, size=size, replace=replace, p=p, axis=axis, shuffle=shuffle)
 
 
-def _choice_rs(state_data, a, size, replace, p):
-    state = array_creation_dispatch.RandomState(state_data)
+def _choice_rs(seed, a, size, replace, p):
+    # ``seed`` is a compact per-block int (see RandomChoice.state_data); rebuild
+    # the MT19937 state on the worker, mirroring _expr._apply_random. numpy
+    # bit-generator — non-numpy backends (cupy) were already numpy-seeded on this
+    # path (the old code passed a numpy MT-state array), so no regression.
+    state = array_creation_dispatch.RandomState(np.random.MT19937(np.random.SeedSequence(seed)))
     return state.choice(a, size=size, replace=replace, p=p)
 
 
@@ -125,7 +129,17 @@ class RandomChoice(IO):
 
     @cached_property
     def state_data(self):
-        return random_state_data(len(self.sizes), self._state)
+        # Ship a compact per-block seed instead of the full 2.6 KB MT19937 state
+        # array (mirrors _expr.Random._info). Derive a 128-bit entropy per block
+        # from the root RNG via one SeedSequence — deterministic from the root,
+        # so recompute is stable — and let the worker rebuild the state.
+        root_entropy = int.from_bytes(self._state.bytes(16), "little")
+        words = (
+            np.random.SeedSequence(root_entropy)
+            .generate_state(len(self.sizes) * 4, dtype=np.uint32)
+            .reshape(len(self.sizes), 4)
+        )
+        return [int.from_bytes(w.tobytes(), "little") for w in words]
 
     @cached_property
     def _meta(self):
