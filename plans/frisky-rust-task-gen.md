@@ -109,9 +109,14 @@ creation) are just the common case: one entry in `names`/`funcs`, every task a
   specialized tail (fancy/bool/mixed indexing, setitem, diagonal/pad/triu/tril/flip/
   roll/repeat/tile, unique/bincount/histogram/isin/nonzero/argwhere/topk/digitize,
   overlap variants, percentile/cov/corrcoef/gradient, cumulatives, compositions);
-  `bench/adapter_stress.py` 24/24. Only genuinely-unsupported shapes fall back now —
-  chiefly linalg (qr/svd/cholesky/solve/inv: needs `scipy` + special chunking) —
-  and they fall back *correctly*.
+  `bench/adapter_stress.py` 24/24. **Even linalg works through the adapter** once
+  `scipy` is installed: qr/svd/cholesky/solve/inv/lstsq/norm all take the records
+  path and are byte-faithful to plain dask (verified records-vs-`synchronous`). The
+  earlier "linalg falls back" was purely a missing-`scipy` artifact, not an adapter
+  limitation — the generic adapter covers the whole API. The only remaining
+  fallbacks are genuinely-unsupported graph shapes (an unhandled `_task_spec` node or
+  an incomplete fused subgraph), which fall back *correctly* via the completeness
+  check in `collect_task_records`.
 
 - **Done (committed on `rust-layers`):** blockwise (+ grid-preserving
   `adjust_chunks`), creation, **from_array** (Python data source — see note in the
