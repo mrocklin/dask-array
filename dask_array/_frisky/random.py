@@ -5,12 +5,13 @@ per-block RNG bit-generator. There's no cross-block graph structure to expand in
 Rust — the per-block state (a spawned ``SeedSequence`` / RNG state) is the work —
 so this is a plain Python layer.
 
-We reuse the expr's own ``_task`` (which already handles every distribution
-subclass and the ``extra_chunks`` book-keeping) to build each per-block dask
-``Task``, then read its ``func``/``args``/``kwargs`` straight off for the records
-path. ``Random._frisky_layer`` falls back to legacy dask when a distribution
-parameter is itself an array (a dependency), since that would need task-refs
-threaded through the nested arg/kwarg containers.
+``to_dask_graph`` reuses the expr's own ``_task`` (which handles every distribution
+subclass and the ``extra_chunks`` book-keeping). ``to_task_records`` is the hot
+path for big random graphs, so it builds the flat record directly — mirroring the
+no-dependency branch of ``_task`` — instead of constructing a throwaway dask
+``Task`` per block and reading it back. ``Random._frisky_layer`` only routes here
+when no distribution parameter is an array (no dependencies), so every per-block
+task is the same positional call with block-specific bit-generator state and size.
 """
 
 from __future__ import annotations
@@ -31,10 +32,22 @@ class RandomLayer:
 
     def to_task_records(self):
         e = self.expr
+        # Hoist the per-layer state out of the per-block loop (these are otherwise
+        # re-fetched through dask's _expr __getattr__ on every block).
+        bitgens, name, sizes, gen, func_applier = e._info
+        distribution = e.distribution
+        args = tuple(e.args)  # no array deps (guaranteed by _frisky_layer)
+        kwargs = e.kwargs or {}
         records = []
-        for bid in self._block_ids():
-            key = (e._name, *bid)
-            task = e._task(key, bid)
-            # `_task` builds a positional-only Task; read the flat record off it.
-            records.append((str(key), task.func, tuple(task.args), task.kwargs or {}, []))
+        if not e.extra_chunks:
+            # chunks == base_chunks, so block ids enumerate in flat C order — the
+            # same index into bitgens/sizes — and the stride math is unnecessary.
+            for flat_idx, bid in enumerate(self._block_ids()):
+                rec_args = (gen, distribution, bitgens[flat_idx], sizes[flat_idx], args, kwargs)
+                records.append((str((name, *bid)), func_applier, rec_args, {}, []))
+        else:
+            for bid in self._block_ids():
+                flat_idx = e._block_id_to_flat_index(bid)
+                rec_args = (gen, distribution, bitgens[flat_idx], sizes[flat_idx], args, kwargs)
+                records.append((str((name, *bid)), func_applier, rec_args, {}, []))
         return records
