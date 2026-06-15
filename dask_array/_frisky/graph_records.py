@@ -88,8 +88,9 @@ class _Flattener:
         # Inline a list/tuple here — Frisky's lower_dep_refs recurses both and
         # resolves embedded TaskRefs, so no extra task is needed (concatenate3 etc.
         # nest these heavily). dict/set fall through to the generic Task lift below:
-        # lower_dep_refs doesn't recurse a set or dict *keys*, but the lifted
-        # subtask runs `to_container` after its (resolved) args, rebuilding them.
+        # lower_dep_refs recurses dict *values* but not dict *keys* or sets, so a
+        # ref there wouldn't be resolved; the lifted subtask instead runs
+        # `to_container` over its already-resolved args, rebuilding them safely.
         if isinstance(arg, NestedContainer) and arg.klass in (list, tuple):
             return arg.klass(self.resolve(a, deps) for a in arg.args)
         if isinstance(arg, Task):
@@ -143,11 +144,6 @@ def _records(key, node):
 class GraphRecordsLayer:
     def __init__(self, expr):
         self.expr = expr
-
-    def to_dask_graph(self):
-        # The legacy graph itself — used only if an expr routes its dask path
-        # through _frisky_layer (most opt-in exprs don't; they keep _layer legacy).
-        return self.expr._layer()
 
     def to_task_records(self):
         # Normalize the legacy graph to _task_spec nodes first: some layers (e.g.
