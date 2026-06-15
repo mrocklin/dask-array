@@ -68,3 +68,40 @@ def test_random_distributions_unchanged_shape_and_stats(build):
     v = x.compute()
     assert v.shape == (20000,)
     assert np.isfinite(v).all()
+
+
+# --- da.random.choice (RandomState path) — same compact-seed contract ---
+
+
+def test_choice_ships_compact_int_seed():
+    """choice's per-block RNG seed is a small int, not the full MT19937 state."""
+    x = da.random.choice(10, size=(400,), chunks=100)
+    recs = collect_task_records(x)
+    assert len(recs) == 4
+    seeds = [args[0] for _key, _func, args, _kwargs, _deps in recs]  # _choice_rs(seed, ...)
+    assert all(isinstance(s, int) for s in seeds), [type(s) for s in seeds]
+    assert len(set(seeds)) == len(seeds)
+    assert all(0 <= s < (1 << 128) for s in seeds)
+
+
+def test_choice_deterministic_on_recompute():
+    x = da.random.choice(100, size=(300,), chunks=100)
+    assert np.array_equal(x.compute(), x.compute())
+
+
+def test_choice_seed_is_reproducible():
+    a = da.random.RandomState(7).choice(100, size=(500,), chunks=500)
+    b = da.random.RandomState(7).choice(100, size=(500,), chunks=500)
+    c = da.random.RandomState(8).choice(100, size=(500,), chunks=500)
+    assert np.array_equal(a.compute(), b.compute())
+    assert not np.array_equal(a.compute(), c.compute())
+
+
+def test_choice_array_with_p():
+    """Array-valued `a` with explicit probabilities draws from the population."""
+    population = da.from_array(np.arange(20) * 10, chunks=20)
+    p = np.ones(20) / 20
+    x = da.random.choice(population, size=(300,), chunks=100, p=p)
+    v = x.compute()
+    assert v.shape == (300,)
+    assert set(np.unique(v)).issubset(set((np.arange(20) * 10).tolist()))
