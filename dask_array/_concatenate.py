@@ -40,16 +40,13 @@ class Concatenate(ArrayExpr):
         return "stack-" + self.deterministic_token
 
     def _frisky_layer(self):
-        import math
-
         from dask_array._frisky.concatenate import ConcatenateLayer
 
         axis = self.axis
-        # Reject unknown chunk sizes (NaN) — we can't compute offsets.
-        for a in self.args:
-            if any(math.isnan(s) for s in a.shape):
-                raise NotImplementedError("unknown chunk sizes")
-
+        # Concatenate is pure alias routing: each output block maps 1:1 to an
+        # input block by block *index*. The layer (mirroring `_layer` below)
+        # needs only block *counts* — which are known even when chunk *sizes*
+        # are unknown (NaN). So no nan-chunk guard is needed here.
         dep_names = [a._name for a in self.args]
         blocks_per_arr = [len(a.chunks[axis]) for a in self.args]
         out_numblocks = [len(c) for c in self.chunks]

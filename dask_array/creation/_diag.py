@@ -31,9 +31,16 @@ class Diag1D(ArrayExpr):
         return (chunks_1d, chunks_1d)
 
     def _frisky_layer(self):
+        import math
+
         from dask_array._frisky.diag import Diag1DLayer
 
-        return Diag1DLayer(self._name, self._meta, self.x._name, self.x.chunks[0])
+        chunks_1d = self.x.chunks[0]
+        # Unknown chunk sizes (NaN) can't be turned into int block sizes; fall
+        # back to the legacy path (mirrors Concatenate._frisky_layer).
+        if any(math.isnan(c) for c in chunks_1d):
+            raise NotImplementedError("unknown chunk sizes")
+        return Diag1DLayer(self._name, self._meta, self.x._name, chunks_1d)
 
     def _layer(self) -> dict:
         try:

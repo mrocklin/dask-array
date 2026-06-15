@@ -166,19 +166,21 @@ class FromArray(IO):
         return dict(dsk)  # this comes as a legacy HLG for now
 
     def _frisky_layer(self):
-        """from_array as a records-path data source. Only the plain-ndarray case
-        (no lock / region / custom getter) is handled here; everything else falls
-        back to the dask path in `_layer`."""
+        """from_array as a records-path data source. The plain-ndarray case (no
+        lock, custom getter ignored) is handled here, including a pushed-in
+        `_region` (deferred slice — `from_array(arr)[a:b]`); lock / non-ndarray
+        fall back to the dask path in `_layer`."""
         from dask_array._frisky import FromArrayLayer
 
         is_ndarray = type(self.array) in (np.ndarray, np.ma.core.MaskedArray)
-        if not is_ndarray or self.operand("lock") or self.operand("_region") is not None:
-            raise NotImplementedError("from_array: only plain ndarray, no lock/region")
-        # For a plain ndarray without lock/region, dask's own `_layer` always takes
-        # the eager-slice branch and ignores getitem/inline_array/asarray — so the
-        # eager-slice FromArrayLayer matches regardless of those operands (this is
-        # what unblocks the small inline constant arrays in pad/triu/tril/isin/…).
-        return FromArrayLayer(self._name, self.array, self.chunks)
+        if not is_ndarray or self.operand("lock"):
+            raise NotImplementedError("from_array: only plain ndarray, no lock")
+        # For a plain ndarray without a lock, dask's own `_layer` always takes the
+        # eager-slice branch (region or not) and ignores getitem/inline_array/
+        # asarray — so the eager-slice FromArrayLayer matches regardless of those
+        # operands (this is what unblocks the small inline constant arrays in
+        # pad/triu/tril/isin/… and slices pushed into the source).
+        return FromArrayLayer(self._name, self.array, self.chunks, self.operand("_region"))
 
     def __str__(self):
         return "FromArray(...)"

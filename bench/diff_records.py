@@ -46,6 +46,45 @@ def ops():
     yield "setitem slice", lambda: _set(fa(), (slice(2, 4), slice(0, 3)), 7.0)
     yield "setitem bool", lambda: _set(fa(), fa() > 30, 0.0)
 
+    # concatenate / stack on unknown (nan) chunks — pure block-index alias; the
+    # layer needs only block counts, which are known even when sizes are NaN.
+    # `_unk` keeps every element but marks chunk sizes unknown (boolean index).
+    _unk = lambda x: x[x.reshape(-1)[: x.shape[0]] >= -1e18] if x.ndim == 1 else x[x[:, 0] >= -1e18]
+    yield "concat nan-chunks ax0", lambda: da.concatenate([_unk(fa()), _unk(fa())], axis=0)
+    yield "concat nan-chunks 3way", lambda: da.concatenate([_unk(fa()), _unk(fa()), _unk(fa())], axis=0)
+    yield (
+        "concat nan-chunks ax1",
+        lambda: da.concatenate([_unk(fa()), _unk(fa())], axis=1, allow_unknown_chunksizes=True),
+    )
+    yield "stack nan-chunks", lambda: da.stack([_unk(fv()), _unk(fv())])
+
+    # from_array with a pushed-in _region (deferred slice into the source ndarray)
+    yield "fromarray region 2d", lambda: fa()[1:5, 2:8]
+    yield "fromarray region single", lambda: da.from_array(a, chunks=-1)[2:5, 3:9]
+    yield "fromarray region int", lambda: fa()[1:5, 3]
+    yield "fromarray region+reduce", lambda: fa()[1:5, 2:8].sum()
+    yield "fromarray region+add", lambda: fa()[1:5, 2:8] + 1.0
+
+    # blockwise with new_axes (map_blocks adding a dim) — output dim absent from
+    # every input; native BlockwiseLayer iterates it, inputs ignore its coord.
+    yield (
+        "map_blocks new_axis",
+        lambda: fv().map_blocks(
+            lambda b: b[:, None] * np.ones(3), new_axis=1, chunks=(fv().chunks[0], (3,)), dtype="f8"
+        ),
+    )
+    yield (
+        "blockwise new_axes multi",
+        lambda: da.blockwise(
+            lambda b: np.broadcast_to(b[:, None], (b.shape[0], 10)).copy(),
+            "az",
+            fv(),
+            "a",
+            new_axes={"z": (5, 5)},
+            dtype="f8",
+        ),
+    )
+
     # creation-ish / structural
     yield "diagonal", lambda: da.diagonal(fsq())
     yield "diag offset", lambda: da.diagonal(fsq(), offset=1)
