@@ -99,19 +99,19 @@ deps, aliases and per-block slices. Single-func/flat layers (blockwise,
 creation) are just the common case: one entry in `names`/`funcs`, every task a
 `Call{0}`.
 
-## Status — 21 layers; now in the completeness/correctness phase
+## Status — 22 Rust layers + generic tail adapter; completeness essentially done
 
-- **Coverage frontier (`bench/coverage_probe.py`):** **37/37** probed common
-  composite operations take the records path **end-to-end** (matching numpy / finite
-  for random), **zero fall-backs** — all elementwise/ufunc/where/clip/astype,
-  transpose, every reduction (sum/mean/std/var/min/prod), matmul/tensordot/dot,
-  slicing compositions, rechunk, concatenate/stack/coarsen/broadcast, diag,
-  `eye @ x`, reshape/ravel, argmin/argmax (axis-wise AND ravel), cumsum/cumprod,
-  and **`da.random.random`/normal/poisson** (incl. random→rechunk→sum). NOTE: this
-  is a *sample* of common workloads, not exhaustive — the still uncovered layers are
-  the more specialized tail (see the landscape): linalg, fancy/boolean indexing
-  (take/vindex/bool-index), setitem, overlap, histogram/unique/bincount, pad/roll/
-  flip, `diagonal`, k≠0 diag. Extend `coverage_probe.py` to re-map before picking.
+- **Coverage is broad and now mostly generic.** 22 native Rust layers cover the
+  common composite ops on the fast path; the **`GraphRecordsLayer` adapter** (see
+  "Working the tail") covers the rest of the API by reusing each expr's legacy
+  `_layer()`. `bench/coverage_probe.py` **57/57** records-path (zero fall-backs);
+  `bench/diff_records.py` **48/48** byte-identical to plain dask across the
+  specialized tail (fancy/bool/mixed indexing, setitem, diagonal/pad/triu/tril/flip/
+  roll/repeat/tile, unique/bincount/histogram/isin/nonzero/argwhere/topk/digitize,
+  overlap variants, percentile/cov/corrcoef/gradient, cumulatives, compositions);
+  `bench/adapter_stress.py` 24/24. Only genuinely-unsupported shapes fall back now —
+  chiefly linalg (qr/svd/cholesky/solve/inv: needs `scipy` + special chunking) —
+  and they fall back *correctly*.
 
 - **Done (committed on `rust-layers`):** blockwise (+ grid-preserving
   `adjust_chunks`), creation, **from_array** (Python data source — see note in the
@@ -312,19 +312,54 @@ Mirror `blockwise.rs`/`creation.rs` and `_frisky/{blockwise,creation}.py`.
   `kwargs` off each dask `Task` (subclass-agnostic; falls back if a distribution
   parameter is itself an array). Only *computed* layers go through Rust + `common.rs`.
 
-## Working the tail (the loop we converged on)
+## Working the tail — SOLVED generically via GraphRecordsLayer
 
-The remaining layers are a *specialized* tail. Don't grind through all ~79 — port
-whichever ones real workloads hit. The records path is **all-or-nothing**:
-`collect_task_records` falls back to legacy dask if *any* node in the lowered tree
-lacks a `_frisky_layer`. So one uncovered source (e.g. `random`) drags a whole
-`random→rechunk→sum` graph back to legacy — which is why porting one well-chosen
-layer often unblocks a whole class of workloads. The loop:
+**The specialized tail is now covered wholesale, not layer-by-layer.** Porting a
+bespoke Rust layer for each of the ~79 classes was the wrong cost/benefit for the
+long tail (perf is deferred there anyway). Instead `collect_task_records` now falls
+back **per node** to a generic adapter, `dask_array/_frisky/graph_records.py`
+(`GraphRecordsLayer`): for any expr without a native `_frisky_layer` (or whose
+layer raises `NotImplementedError` for a variant), it reuses the expr's own legacy
+`_layer()` graph and translates the `dask._task_spec` nodes into flat
+`(key, func, args, kwargs, deps)` records. The native Rust layers still run for the
+ops that have them (the fast path); only tail nodes materialize their small
+subgraph in Python.
 
-1. **Find the culprit.** Run/extend `bench/coverage_probe.py`, or just
-   `dask.compute(x)` and watch for the fallback. To see exactly which node is
-   uncovered, walk the lowered tree (this exact snippet found the gaps for argmin /
-   cumsum / random):
+This is the generalization of the "reuse the expr's own `_task`/`_layer`" technique
+(below) from one expr (`random`) to *all* of them. It's faithful by construction —
+the suite already validates `_layer` — so it needs no per-expr wiring. Three
+wrinkles it handles (see the module docstring): np.int64→int **key normalization**
+(Frisky matches deps by key string); **inline-subtask flattening** (a nested `Task`
+in args is lifted to its own synthesized `<parent>-subN` record + `TaskRef`); and
+**old-style HLG** layers (overlap) via dask's `convert_legacy_graph`, passing the
+full keyset (own keys + every dependency's block keys) so cross-layer key tuples
+aren't mistaken for data. If a node still can't be expressed (an unhandled
+`GraphNode`), it raises `NotImplementedError` and the whole graph falls back to
+stock dask — correct, just not records-path.
+
+Coverage now: `bench/coverage_probe.py` 57/57 records-path; `bench/diff_records.py`
+48/48 byte-identical to plain dask across fancy/bool/mixed indexing, setitem,
+diagonal/pad/triu/tril/flip/roll/repeat/tile, unique/bincount/histogram/isin/
+nonzero/argwhere/topk/digitize, all overlap variants, percentile/cov/corrcoef/
+gradient, cumulatives, and adapter↔Rust compositions; `bench/adapter_stress.py`
+24/24. Suite unchanged at 2808.
+
+**What's left for the tail:** (a) genuinely unsupported shapes — linalg (qr/svd/
+cholesky/solve/inv) needs `scipy` (not installed here) and special chunking; they
+fall back cleanly. (b) Optional **Rust ports of hot tail ops for perf** — only once
+the completeness phase gives way to performance; the recipe + techniques below are
+for that. Validate any such port with the three sweeps above (records must stay
+faithful to plain dask).
+
+### When you DO port a tail layer to Rust (perf phase) — the loop
+
+Don't grind through all ~79 — port whichever hot ones a real workload profiles to.
+To see exactly which node would benefit / is uncovered, walk the lowered tree
+(`bench/tail_probe.py` automates this across a batch):
+
+1. **Find the culprit.** `bench/tail_probe.py` walks a batch; for one collection,
+   this snippet (which found the gaps for argmin / cumsum / random) prints per-node
+   coverage:
    ```python
    e = collection.expr.lower_completely()
    seen, stack = set(), [e]
