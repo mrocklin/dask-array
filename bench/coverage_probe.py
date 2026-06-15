@@ -21,6 +21,17 @@ import frisky.dask as fdask
 from frisky import Client, LocalCluster
 
 
+def _setitem(x, idx, val):
+    x[idx] = val
+    return x
+
+
+def _np_setitem(arr, idx, val):
+    out = arr.copy()
+    out[idx] = val
+    return out
+
+
 def cases():
     # (label, build dask-array collection, numpy expected)
     a = np.arange(48, dtype="f8").reshape(6, 8)
@@ -93,6 +104,23 @@ def cases():
     yield ("nonzero", lambda: fv().nonzero()[0], v.nonzero()[0])
     yield ("argwhere", lambda: da.argwhere(fv() > 3), np.argwhere(v > 3))
     yield ("topk", lambda: da.topk(fv(), 3), np.array([11.0, 10.0, 9.0]))
+
+    # --- specialized tail, now covered via GraphRecordsLayer (reuse _layer) ---
+    sq = np.arange(36, dtype="f8").reshape(6, 6)
+    fsq = lambda c=(3, 3): da.from_array(sq, chunks=c)
+    yield ("take list-index", lambda: fa()[[0, 2, 4]], a[[0, 2, 4]])
+    yield ("take axis1", lambda: fa()[:, [1, 3, 5]], a[:, [1, 3, 5]])
+    yield ("bool mask 1d", lambda: fv()[fv() > 5], v[v > 5])
+    yield ("vindex", lambda: fa().vindex[[0, 2], [1, 3]], a[[0, 2], [1, 3]])
+    yield ("setitem scalar", lambda: _setitem(fa(), (0, 0), 99.0), _np_setitem(a, (0, 0), 99.0))
+    yield ("setitem slice", lambda: _setitem(fa(), (slice(0, 2),), 0.0), _np_setitem(a, (slice(0, 2),), 0.0))
+    yield ("diagonal", lambda: da.diagonal(fsq()), np.diagonal(sq))
+    yield ("map_overlap +1", lambda: fa().map_overlap(lambda b: b + 1, depth=1, boundary="none"), a + 1)
+    yield ("apply_along_axis", lambda: da.apply_along_axis(np.cumsum, 0, fa()), np.apply_along_axis(np.cumsum, 0, a))
+    yield ("histogram", lambda: da.histogram(fv(), bins=4, range=(0, 12))[0], np.histogram(v, bins=4, range=(0, 12))[0])
+    yield ("unique", lambda: da.unique(fv()), np.unique(v))
+    yield ("bincount", lambda: da.bincount(fv().astype("i8")), np.bincount(v.astype("i8")))
+    yield ("percentile", lambda: da.percentile(fv(), [50]), np.percentile(v, [50]))
 
     # --- known-uncovered (expect records=False, fall back) ---
     yield ("cumsum [tail]", lambda: fa().cumsum(axis=0), a.cumsum(0))
