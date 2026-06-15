@@ -120,7 +120,8 @@ def cases():
     yield ("histogram", lambda: da.histogram(fv(), bins=4, range=(0, 12))[0], np.histogram(v, bins=4, range=(0, 12))[0])
     yield ("unique", lambda: da.unique(fv()), np.unique(v))
     yield ("bincount", lambda: da.bincount(fv().astype("i8")), np.bincount(v.astype("i8")))
-    yield ("percentile", lambda: da.percentile(fv(), [50]), np.percentile(v, [50]))
+    # single chunk: dask's multi-chunk percentile is approximate (≠ np.percentile)
+    yield ("percentile", lambda: da.percentile(fv(-1), [50]), np.percentile(v, [50]))
 
     # --- known-uncovered (expect records=False, fall back) ---
     yield ("cumsum [tail]", lambda: fa().cumsum(axis=0), a.cumsum(0))
