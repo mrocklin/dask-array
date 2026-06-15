@@ -530,7 +530,20 @@ class ChunksOverride(ArrayExpr):
     def chunks(self):
         return self._chunks
 
+    def _frisky_layer(self):
+        from dask_array._frisky.blocks import BlocksLayer
+
+        # Pure 1:1 alias of every block (same coord). That is BlocksLayer with an
+        # identity remap per dimension — output position d maps to input block d.
+        index_maps = [list(range(len(c))) for c in self._chunks]
+        return BlocksLayer(self._name, self.array._name, index_maps)
+
     def _layer(self) -> dict:
+        try:
+            return self._frisky_layer().to_dask_graph()
+        except (NotImplementedError, ImportError):
+            pass
+
         from itertools import product
 
         from dask._task_spec import Alias
