@@ -153,14 +153,19 @@ class Array(DaskMethodsMixin):
         out = self.expr.lower_completely()
         return out.__dask_keys__()
 
-    def __frisky_task_records__(self):
+    def __frisky_task_records__(self, seen=None):
         """Frisky submission protocol (duck-typed; Frisky never imports
         dask_array). Returns a flat list of ``(key, func, args, kwargs, deps)``
         task records, or raises ``NotImplementedError`` if any layer has no
-        Frisky layer (so the caller falls back to the materialized-graph path)."""
+        Frisky layer (so the caller falls back to the materialized-graph path).
+
+        ``seen`` is an optional set of already-walked expr ``_name``s, threaded
+        by Frisky across the collections of one ``dask.compute(x, y)`` so a
+        shared subgraph is expanded once; in that mode completeness is checked by
+        the caller over the combined records (see ``collect_task_records``)."""
         from dask_array._frisky import collect_task_records
 
-        return collect_task_records(self)
+        return collect_task_records(self, seen=seen)
 
     def __dask_tokenize__(self):
         return "Array", self.expr._name

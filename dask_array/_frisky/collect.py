@@ -29,11 +29,12 @@ from __future__ import annotations
 from dask_array._frisky.graph_records import GraphRecordsLayer
 
 
-def collect_task_records(collection):
-    expr = collection.expr.lower_completely()
-    stack = [expr]
-    seen = set()
-    records = []
+def _walk_records(roots, seen, records):
+    """Depth-first walk over already-lowered ``roots``, appending each node's
+    records to ``records`` and deduping every node by ``_name`` against the
+    shared ``seen`` set. Passing several roots with one ``seen`` is what lets a
+    subgraph shared across collections be expanded exactly once."""
+    stack = list(roots)
     while stack:
         e = stack.pop()
         if e._name in seen:
@@ -53,8 +54,35 @@ def collect_task_records(collection):
 
         stack.extend(e.dependencies())
 
+
+def _check_complete(records):
+    """Every dependency must be produced by some record, else the translation
+    wasn't faithful (e.g. a fused expr referencing fused-away keys) — raise so
+    the caller falls back to stock dask rather than submit an incomplete graph."""
     produced = {r[0] for r in records}
     dangling = {dep for r in records for dep in r[4]} - produced
     if dangling:
         raise NotImplementedError(f"records graph has {len(dangling)} dangling dep(s), e.g. {next(iter(dangling))}")
+
+
+def collect_task_records(collection, seen=None):
+    """Flat ``(key, func, args, kwargs, deps)`` records for ``collection``.
+
+    ``seen`` is the set of already-walked expr ``_name``s. Pass a shared set
+    across several collections in one submission (``dask.compute(x, y)``) and a
+    subgraph common to them is expanded exactly once — the costly per-node
+    ``_frisky_layer``/``GraphRecordsLayer`` materialization is skipped for nodes
+    an earlier collection already produced. In that shared mode this returns only
+    *this* collection's contribution and does **not** check completeness: its
+    records reference shared keys produced by another collection, so completeness
+    is the caller's job over the combined union. With ``seen=None`` (single
+    collection / legacy callers) a fresh set is used and completeness is checked
+    here as before."""
+    shared = seen is not None
+    if seen is None:
+        seen = set()
+    records = []
+    _walk_records([collection.expr.lower_completely()], seen, records)
+    if not shared:
+        _check_complete(records)
     return records
