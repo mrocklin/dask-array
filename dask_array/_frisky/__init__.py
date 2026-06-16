@@ -26,6 +26,7 @@ from dask_array._frisky.diag import Diag1DLayer, Diag2DSimpleLayer
 from dask_array._frisky.expand_dims import ExpandDimsLayer
 from dask_array._frisky.eye import EyeLayer
 from dask_array._frisky.from_array import FromArrayLayer
+from dask_array._frisky.fused_blockwise import FusedBlockwiseLayer
 from dask_array._frisky.linspace import LinspaceLayer
 from dask_array._frisky.random import RandomLayer
 from dask_array._frisky.rechunk import RechunkLayer
@@ -51,6 +52,7 @@ __all__ = [
     "ExpandDimsLayer",
     "EyeLayer",
     "FromArrayLayer",
+    "FusedBlockwiseLayer",
     "LinspaceLayer",
     "PartialReduceLayer",
     "RandomLayer",

@@ -1413,7 +1413,17 @@ class FusedBlockwise(ArrayExpr):
                     seen.add(dep._name)
         return external_deps
 
+    def _frisky_layer(self):
+        from dask_array._frisky.fused_blockwise import FusedBlockwiseLayer
+
+        return FusedBlockwiseLayer(self)
+
     def _layer(self):
+        try:
+            return self._frisky_layer().to_dask_graph()
+        except (NotImplementedError, ImportError):
+            pass
+
         result = {}
         for block_id in product(*[range(n) for n in self.numblocks]):
             key = (self._name, *block_id)

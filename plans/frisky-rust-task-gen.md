@@ -204,9 +204,22 @@ split this needs.
 - **Native Frisky `Alias` term** ("key X resolves to key Y", no task run) — removes
   per-task pickle for routing nodes; fixes the concatenate/stack full-pipeline
   regression. The records path currently fakes alias with `toolz.identity`.
-- **`FusedBlockwise` layer** — `x.compute()` fuses before submitting and the fused
-  layer has no `_frisky_layer`, so idiomatic compute falls back to dask. Cover it
-  (still blockwise-shaped) so the records path fires for real user code.
+- **`FusedBlockwise` layer** — DONE (pure-Python data-source-style layer,
+  `_frisky/fused_blockwise.py`; routing in `_blockwise.py`). `x.compute()` /
+  `x.optimize()` fuse a blockwise op-chain into one `_execute_subgraph` task per
+  output block, and that node now takes the records path instead of bailing to
+  dask. Like `random`/`from_array` it reuses the expr's own `_task`: the flat
+  record is `(key, _execute_subgraph, task.args, {}, real-source-deps)`, where
+  `task.args` carries the fused-away inner subgraph as an opaque literal dict and
+  the only deps are the chain's external source blocks. Frisky ships it with **zero
+  changes** — `lower_dep_refs` lowers the top-level source `TaskRef`s but leaves the
+  subgraph dict's inner `Task` values (opaque to it) and the literal `inkeys`
+  untouched, so `_execute_subgraph` resolves the internal refs on the worker exactly
+  as stock dask does. Validated byte-faithful on a real cluster via both
+  `x.compute()` and `dask.compute(x.optimize())` (`bench/diff_records.py` +69,
+  `bench/coverage_probe.py` 63/63). Task-count win: an N-op chain over a block drops
+  from N compute tasks to 1 fused task. No fused shape needed to be deferred — the
+  layer reuses `_task`, so anything `FusedBlockwise` produces is representable.
 - **`optimize_graph` / low-level fusion** in the records path (currently skipped).
 - "Lower deps in Rust" (build dep placeholders in Rust, drop `lower_dep_refs`) is a
   ~20%-of-`submit` subset of the serialized-state work — fold it into that, not as
@@ -309,13 +322,18 @@ Mirror `blockwise.rs`/`creation.rs` and `_frisky/{blockwise,creation}.py`.
   lift),
   map_blocks, vindex, bool-index, setitem, `diagonal`, k≠0 diag, overlap
   (delegates to dask's `ArrayOverlapLayer`) are lower-frequency or large — defer.
-- **Data-source layers are a Python seam, not Rust.** `from_array` and `random`
-  have no cross-block graph structure to expand in Rust — the per-block work is a
-  numpy slice (from_array) or a per-block RNG seed (random) — so they build records
-  directly in Python (`_frisky/from_array.py`, `_frisky/random.py`: plain objects,
-  not Rust layers). `random` reuses the expr's `_task` and reads `func`/`args`/
-  `kwargs` off each dask `Task` (subclass-agnostic; falls back if a distribution
-  parameter is itself an array). Only *computed* layers go through Rust + `common.rs`.
+- **Data-source / reuse-`_task` layers are a Python seam, not Rust.** `from_array`,
+  `random`, and now `FusedBlockwise` have no cross-block graph structure for Rust to
+  expand — the per-block work is a numpy slice (from_array), a per-block RNG seed
+  (random), or an already-built fused `_execute_subgraph` task (FusedBlockwise) — so
+  they build records directly in Python (`_frisky/from_array.py`, `_frisky/random.py`,
+  `_frisky/fused_blockwise.py`: plain objects, not Rust layers). `random` and
+  `FusedBlockwise` reuse the expr's own `_task` and read `func`/`args`/`kwargs`/`deps`
+  off each dask `Task`; `FusedBlockwise` ships the fused-away subgraph as an opaque
+  literal dict arg and lists only the chain's external source blocks as deps (so the
+  completeness check passes — the generic adapter mis-read the inner subgraph's
+  internal keys as deps and forced a whole-graph fallback). Only *computed* layers go
+  through Rust + `common.rs`.
   - **Perf, RandomState path (`da.random.random`):** the per-block arg is now a
     compact ~97-byte integer seed, not the upstream-dask 2.6 KB MT19937 state
     array. `Random._info` derives one 128-bit entropy per block from the root RNG
