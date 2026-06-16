@@ -103,9 +103,11 @@ def test_transpose_slice_task_count():
 
     x = da.ones((4, 6), chunks=2)
 
-    # Without optimization: slice(transpose(ones)) has transpose layer
+    # Without optimization: slice(transpose(ones)) has transpose layer.
+    # __dask_graph__ now simplifies by default (array.optimize-graph), so read
+    # the raw un-simplified graph directly off the lowered expr.
     result = x.T[0]
-    unopt_graph = dict(result.__dask_graph__())
+    unopt_graph = dict(result.expr.lower_completely().__dask_graph__())
 
     # With optimization: transpose is eliminated, becomes slice(ones)
     optimized = result.expr.optimize()

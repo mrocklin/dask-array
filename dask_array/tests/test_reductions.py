@@ -856,7 +856,10 @@ def test_median_does_not_rechunk_if_whole_axis_in_one_chunk(axis, func):
     actual = getattr(da, func)(d, axis=axis)
     expected = getattr(np, func)(x, axis=axis)
     assert_eq(actual, expected)
-    does_rechunk = "rechunk" in str(dict(actual.__dask_graph__()))
+    # Inspect the raw un-simplified graph: __dask_graph__ simplifies by default
+    # (array.optimize-graph), which would push/elide the rechunk this asserts on.
+    with config.set({"array.optimize-graph": False}):
+        does_rechunk = "rechunk" in str(dict(actual.__dask_graph__()))
     if axis == 1:
         assert does_rechunk
     else:

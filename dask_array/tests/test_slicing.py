@@ -774,7 +774,10 @@ def test_take_sorted_indexer():
 def test_all_none_slices_just_mappings():
     arr = da.ones((10, 10), chunks=(1, 5))
     result = arr[slice(None, 6), slice(None)]
-    dsk = dict(result.dask)
+    # result.dask simplifies by default (array.optimize-graph), which would fuse
+    # away the Alias-mapping getitem layer this asserts on; inspect the raw graph.
+    with dask.config.set({"array.optimize-graph": False}):
+        dsk = dict(result.dask)
     assert len([k for k in dsk if "getitem" in k[0]]) == 12
     # check that we are just mapping the keys
     assert all(isinstance(v, Alias) for k, v in dsk.items() if "getitem" in k[0])

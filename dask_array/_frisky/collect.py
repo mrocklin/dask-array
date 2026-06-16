@@ -82,7 +82,20 @@ def collect_task_records(collection, seen=None):
     if seen is None:
         seen = set()
     records = []
-    _walk_records([collection.expr.lower_completely()], seen, records)
+    # Lower via the same helper __dask_graph__/__dask_keys__ use, gated on the same
+    # array.optimize-graph flag (default True). simplify() before lowering mirrors
+    # optimize() == simplify().lower_completely().fuse() minus the final fuse(). simplify
+    # runs the expression rewrites (e.g. collapsing Rechunk(Rechunk(x)) and pushing a
+    # rechunk into a rechunk-capable IO read) that the legacy optimizing path always runs;
+    # without it a user .chunk() over a chunks="auto" open emits redundant
+    # rechunk-split/merge tasks (~2x). fuse() is still skipped here (it would build
+    # SubgraphCallables this path can't represent — the deferred perf item).
+    # Gating here and in __dask_keys__ on the SAME flag keeps them consistent: Frisky
+    # derives this collection's output keys from __dask_keys__(), so both must agree on
+    # whether they simplified or the client hangs.
+    from dask_array._collection import _lower
+
+    _walk_records([_lower(collection.expr)], seen, records)
     if not shared:
         _check_complete(records)
     return records
