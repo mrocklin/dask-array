@@ -131,6 +131,24 @@ def ops():
     yield "unique+add+sum", lambda: (da.unique(fv()) + 1).sum()
     yield "overlap+slice+mean", lambda: fa().map_overlap(lambda b: b + 1, depth=1, boundary="none")[1:5].mean()
 
+    # FusedBlockwise: an op-chain fused into one task/block (what x.compute() and
+    # x.optimize() produce). `.optimize()` forces the fusion so the records path
+    # sees the FusedBlockwise node; the synchronous reference uses its legacy
+    # `to_dask_graph` form. The embedded subgraph (a dict of fused-away Tasks) must
+    # ship and run on the worker byte-faithfully, with only the source blocks as
+    # real deps.
+    fb_ = lambda c=(3, 5): da.from_array(a + 100, chunks=c)
+    yield "fused elemwise chain", lambda: da.sqrt(fa() * 2 + 1).optimize()
+    yield "fused two-input", lambda: (fa() * fb_() + 1).optimize()
+    yield "fused deep", lambda: da.exp(da.sqrt(fa() * 2 + 1) - fa() / 3).optimize()
+    yield "fused 1d chain", lambda: (da.sqrt(da.abs(fv()) + 1) * 2).optimize()
+    yield "fused irregular chunks", lambda: da.sqrt(da.from_array(a, chunks=((2, 1, 3), (4, 6))) * 2 + 1).optimize()
+    yield "fused transpose chain", lambda: (fa().T * 2 + 1).optimize()
+    yield "fused where", lambda: (da.where(fa() > 20, fa() * 2, 0.0) + 1).optimize()
+    yield "fused chain -> reduction", lambda: da.sqrt(fa() * 2 + 1).sum().optimize()
+    yield "fused slice -> chain", lambda: da.sqrt(fa()[1:5, 2:9] * 2 + 1).optimize()
+    yield "fused chain -> rechunk", lambda: ((fa() * 2 + 1).rechunk((2, 5))).optimize()
+
 
 def _set(x, idx, val):
     x[idx] = val

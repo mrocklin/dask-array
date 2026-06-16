@@ -126,6 +126,15 @@ def cases():
     # single chunk: dask's multi-chunk percentile is approximate (≠ np.percentile)
     yield ("percentile", lambda: da.percentile(fv(-1), [50]), np.percentile(v, [50]))
 
+    # --- FusedBlockwise: an op-chain fused into one task/block ---
+    # `.optimize()` performs the blockwise fusion that `x.compute()` does, so the
+    # records path sees a FusedBlockwise node (covered natively). Without the fix
+    # these fell back to legacy dask; now they take the records path end-to-end.
+    yield ("fused chain", lambda: da.sqrt(fa() * 2 + 1).optimize(), np.sqrt(a * 2 + 1))
+    yield ("fused two-input", lambda: (fa() * fb() + 1).optimize(), a * b + 1)
+    yield ("fused -> reduction", lambda: da.sqrt(fa() * 2 + 1).sum().optimize(), np.sqrt(a * 2 + 1).sum())
+    yield ("fused transpose chain", lambda: (fa().T * 2 + 1).optimize(), a.T * 2 + 1)
+
     # --- known-uncovered (expect records=False, fall back) ---
     yield ("cumsum [tail]", lambda: fa().cumsum(axis=0), a.cumsum(0))
     yield ("argmin [tail]", lambda: fa().argmin(axis=0), a.argmin(0))
