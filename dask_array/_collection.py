@@ -106,6 +106,29 @@ __all__ = [
 ]
 
 
+def _lower(expr):
+    """Lower an expression to its task graph for ``__dask_graph__``/``__dask_keys__``
+    and the Frisky records walk.
+
+    When ``array.optimize-graph`` is True (the default) we ``simplify()`` first,
+    running the expression rewrites the legacy optimizing path always runs (e.g.
+    collapsing ``Rechunk(Rechunk(x))`` and pushing a rechunk into a rechunk-capable
+    IO read). Without simplify, a user ``.chunk()`` over a ``chunks="auto"`` open
+    emits redundant rechunk-split/merge tasks (~2x). Set it False to observe the
+    raw, un-simplified graph (e.g. structural tests asserting on task counts).
+
+    All three lowering sites (``__dask_graph__``, ``__dask_keys__``, and the Frisky
+    records walk in ``_frisky/collect.py``) gate on this one flag so they stay
+    mutually consistent: Frisky derives a records collection's output keys from
+    ``__dask_keys__()``, so the records walk and ``__dask_keys__`` must agree on
+    whether they simplified, or the client hangs waiting on keys the graph never
+    produces.
+    """
+    if config.get("array.optimize-graph", True):
+        expr = expr.simplify()
+    return expr.lower_completely()
+
+
 class Array(DaskMethodsMixin):
     __dask_scheduler__ = staticmethod(named_schedulers.get("threads", named_schedulers["sync"]))
     __dask_optimize__ = staticmethod(lambda dsk, keys, **kwargs: dsk)
@@ -146,11 +169,11 @@ class Array(DaskMethodsMixin):
         return self.__dask_graph__()
 
     def __dask_graph__(self):
-        out = self.expr.lower_completely()
+        out = _lower(self.expr)
         return out.__dask_graph__()
 
     def __dask_keys__(self):
-        out = self.expr.lower_completely()
+        out = _lower(self.expr)
         return out.__dask_keys__()
 
     def __frisky_task_records__(self, seen=None):
@@ -166,6 +189,18 @@ class Array(DaskMethodsMixin):
         from dask_array._frisky import collect_task_records
 
         return collect_task_records(self, seen=seen)
+
+    def __frisky_output_keys__(self):
+        """Frisky expression-submission protocol (duck-typed). The flat,
+        stringified output keys this collection wants results for. Both the
+        client (to build futures) and the scheduler (to register the client's
+        desire when it expands the submitted expression) derive these from the
+        small expression — they are never sent over the wire. Matches the
+        records path's output-key derivation exactly, so the keys line up with
+        the record graph the expander produces."""
+        from dask.core import flatten
+
+        return list(dict.fromkeys(str(k) for k in flatten(self.__dask_keys__())))
 
     def __dask_tokenize__(self):
         return "Array", self.expr._name
