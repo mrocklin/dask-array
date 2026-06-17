@@ -161,21 +161,49 @@ class FromArray(IO):
         return dict(dsk)  # this comes as a legacy HLG for now
 
     def _frisky_layer(self):
-        """from_array as a records-path data source. The plain-ndarray case (no
-        lock, custom getter ignored) is handled here, including a pushed-in
-        `_region` (deferred slice — `from_array(arr)[a:b]`); lock / non-ndarray
-        fall back to the dask path in `_layer`."""
-        from dask_array._frisky import FromArrayLayer
+        """from_array as a records-path data source.
+
+        Two native cases, both honoring a pushed-in `_region` (a deferred slice,
+        `from_array(arr)[a:b]`):
+
+        - Plain ndarray (no lock): the eager-slice `FromArrayLayer`. dask's own
+          `_layer` always takes the eager-slice branch here and ignores
+          getitem/inline_array/asarray, so it matches regardless of those operands
+          (this unblocks the small inline constant arrays in pad/triu/tril/isin/…).
+        - Any other array-like slicing target (zarr/h5py/icechunk/…): the native
+          `FromArrayGetterLayer`, mirroring `graph_from_arraylike` — array placed
+          once, each block `getter(ref, slice)`.
+
+        A lock, or a user-supplied custom `getitem`, falls back to the dask path
+        in `_layer` (the getter layer is faithful only for the default
+        getter/getter_nofancy)."""
+        from dask_array._frisky import FromArrayGetterLayer, FromArrayLayer
+
+        if self.operand("lock"):
+            raise NotImplementedError("from_array: lock is not supported on the records path")
 
         is_ndarray = type(self.array) in (np.ndarray, np.ma.core.MaskedArray)
-        if not is_ndarray or self.operand("lock"):
-            raise NotImplementedError("from_array: only plain ndarray, no lock")
-        # For a plain ndarray without a lock, dask's own `_layer` always takes the
-        # eager-slice branch (region or not) and ignores getitem/inline_array/
-        # asarray — so the eager-slice FromArrayLayer matches regardless of those
-        # operands (this is what unblocks the small inline constant arrays in
-        # pad/triu/tril/isin/… and slices pushed into the source).
-        return FromArrayLayer(self._name, self.array, self.chunks, self.operand("_region"))
+        if is_ndarray:
+            return FromArrayLayer(self._name, self.array, self.chunks, self.operand("_region"))
+
+        # Array-like getter path. Only the default getter/getter_nofancy are
+        # faithfully represented — a custom getitem falls back. fancy selects
+        # between them exactly as `_layer` does.
+        getitem = self.operand("getitem")
+        if getitem is None:
+            getitem = getter if self.operand("fancy") else getter_nofancy
+        elif getitem not in (getter, getter_nofancy):
+            raise NotImplementedError("from_array: custom getitem is not supported on the records path")
+
+        return FromArrayGetterLayer(
+            self._name,
+            self.array,
+            self.chunks,
+            getitem,
+            self.asarray_arg,
+            self.inline_array,
+            self.operand("_region"),
+        )
 
     def __str__(self):
         return "FromArray(...)"

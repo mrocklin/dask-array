@@ -22,7 +22,45 @@ from itertools import product
 
 import toolz
 
+from dask_array import _rust
 from dask_array._core_utils import slices_from_chunks
+
+
+class FromArrayGetterLayer:
+    """Array-like (zarr / h5py / icechunk / any slicing target) from_array.
+
+    The native counterpart to dask's ``graph_from_arraylike(inline_array=...)``:
+    the source array is placed once as a data node (``original-<name>``) and each
+    block is ``getter(array_ref, block_slice)``. The Rust layer does the
+    O(n_tasks) cartesian-product expansion (key strings + per-block slices)
+    without re-lowering a legacy dict — the ~8x the generic ``GraphRecordsLayer``
+    pays. ``FromArray._frisky_layer`` builds this for the array-like case; the
+    plain-ndarray case stays on the eager-slice ``FromArrayLayer`` below.
+
+    Faithful only for ``getitem`` = ``getter``/``getter_nofancy`` and no lock;
+    a user-supplied custom getter or a lock falls back upstream.
+    """
+
+    def __init__(self, name, array, chunks, getitem, asarray, inline_array, region):
+        # Per-dim (chunk_sizes, region_offset). graph_from_arraylike offsets each
+        # block slice by the region start; offset is 0 when there is no region.
+        if region is not None:
+            offsets = tuple(slc.indices(dim)[0] for slc, dim in zip(region, array.shape))
+        else:
+            offsets = (0,) * len(chunks)
+        dims = [(list(sizes), int(off)) for sizes, off in zip(chunks, offsets)]
+        # Mirror graph_from_arraylike's kwargs branch: it only passes asarray/lock
+        # (the 5-arg getter call) when getitem takes both keywords and the common
+        # case doesn't hold. lock is always False here (lock falls back upstream),
+        # so the extra args are needed only when asarray is False.
+        extra_args = (bool(asarray), False) if not asarray else None
+        self._rust = _rust.FromArrayGetterLayer(name, array, getitem, dims, bool(inline_array), extra_args)
+
+    def to_dask_graph(self):
+        return self._rust.to_dask_graph()
+
+    def to_task_records(self):
+        return self._rust.to_task_records()
 
 
 class FromArrayLayer:
