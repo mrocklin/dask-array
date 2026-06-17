@@ -127,3 +127,117 @@ def test_records_from_zarr():
     z = zarr.array(base, chunks=(8, 15))
     arr = da.from_array(z, chunks=(3, 5))
     _assert_records_match(arr, base)
+
+
+def _from_array_expr(arr):
+    """The FromArray node underneath a (possibly wrapped) from_array collection."""
+    from dask_array.io._from_array import FromArray
+
+    seen = set()
+
+    def walk(e):
+        if isinstance(e, FromArray):
+            return e
+        for op in getattr(e, "operands", []):
+            if hasattr(op, "operands") and id(op) not in seen:
+                seen.add(id(op))
+                r = walk(op)
+                if r is not None:
+                    return r
+        return None
+
+    fa = walk(arr.expr)
+    assert fa is not None, "no FromArray node found"
+    return fa
+
+
+class _FlakyTokenSource(_ArrayLike):
+    """Array-like whose ``__dask_tokenize__`` returns a *different* value on
+    every call — a stand-in for a source (e.g. an xarray/icechunk lazy-indexing
+    adapter) whose token is not reproducible. Used to prove the FromArray token
+    is *cached* (two calls must agree)."""
+
+    _counter = 0
+
+    def __dask_tokenize__(self):
+        type(self)._counter += 1
+        return ("flaky", type(self)._counter)
+
+
+def test_from_array_token_is_cached_not_recomputed():
+    """``FromArray.__dask_tokenize__`` must return a cached, stable token rather
+    than re-tokenizing its source on every call.
+
+    Parent nodes (e.g. the Blockwise / PartialReduce a reduction lowers to)
+    tokenize the FromArray to build *their* keys. If that re-walked an unstable
+    source each call, the lowered keys would differ between the client (live
+    array) and the scheduler (the same array unpickled in another process) —
+    exactly the cross-process output-key mismatch that silently dropped a
+    Frisky gather and hung ``.mean().compute()`` while ``.sum()`` happened to
+    survive. A source that tokenizes differently every call makes the
+    regression deterministic: without caching, two calls disagree.
+    """
+    base = np.arange(120.0).reshape(8, 15)
+    fa = _from_array_expr(da.from_array(_FlakyTokenSource(base), chunks=(3, 5)))
+    assert fa.__dask_tokenize__() == fa.__dask_tokenize__()
+
+
+def test_reduction_output_key_stable_across_processes():
+    """The behavioral invariant at the boundary Frisky's expression submission
+    relies on: a reduction-over-FromArray must advertise the *same* output key
+    in the client (live array) and in the scheduler (the same array cloudpickled
+    and re-derived in another process).
+
+    This must run in a real subprocess. An in-process pickle round-trip cannot
+    reproduce the bug: ``SingletonExpr._instances`` is keyed by ``_name`` (which
+    is pickle-stable via the cached ``deterministic_token``), so the live and
+    unpickled FromArray dedupe to one instance and the divergence never shows.
+    The source below tokenizes off ``os.getpid()`` — identical within a process,
+    different across processes — i.e. exactly the cross-process non-determinism
+    that an xarray/icechunk lazy-indexing adapter exhibits in the wild. Without
+    the FromArray token cache, the scheduler re-tokenizes the source under its
+    own pid and the keys diverge."""
+    import subprocess
+    import sys
+
+    import cloudpickle
+
+    # Self-contained (no inheritance from a module-level helper) so cloudpickle
+    # serializes it by value — the subprocess needs only dask_array + cloudpickle.
+    class _PidTokenSource:
+        def __init__(self, base):
+            self._base = base
+
+        def __dask_tokenize__(self):
+            import os
+
+            return ("pid-token", os.getpid())
+
+        @property
+        def shape(self):
+            return self._base.shape
+
+        @property
+        def dtype(self):
+            return self._base.dtype
+
+        @property
+        def ndim(self):
+            return self._base.ndim
+
+        def __getitem__(self, idx):
+            return np.asarray(self._base[idx])
+
+    base = np.arange(120.0).reshape(8, 15)
+    arr = da.from_array(_PidTokenSource(base), chunks=(3, 5)).mean()
+    client_keys = [str(k) for k in arr.__frisky_output_keys__()]
+    blob = cloudpickle.dumps(arr)
+
+    script = (
+        "import sys, cloudpickle; arr = cloudpickle.loads(sys.stdin.buffer.read()); "
+        "print(chr(10).join(str(k) for k in arr.__frisky_output_keys__()))"
+    )
+    proc = subprocess.run([sys.executable, "-c", script], input=blob, capture_output=True)
+    assert proc.returncode == 0, proc.stderr.decode()[-2000:]
+    scheduler_keys = [line for line in proc.stdout.decode().splitlines() if line]
+    assert client_keys == scheduler_keys
