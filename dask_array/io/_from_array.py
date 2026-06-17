@@ -214,21 +214,35 @@ class FromArray(IO):
         return "FromArray(...)"
 
     def __dask_tokenize__(self):
-        from dask.tokenize import _tokenize_deterministic
+        # Cache the token in `_determ_token` (and return it on subsequent
+        # calls) exactly like the base `Expr.__dask_tokenize__`. This matters
+        # because `_determ_token` is what `__reduce__` pickles and restores: a
+        # source array whose own tokenization is not stable across a pickle
+        # round-trip (e.g. an xarray/icechunk lazy-indexing adapter, which
+        # tokenizes differently in a fresh process) would otherwise produce a
+        # *different* token every time a parent expr re-tokenizes this node.
+        # That broke expression submission: the client derives the output key
+        # from the live array while the scheduler re-derives it from the
+        # unpickled array, and the two disagreed, so the gather hung. Honoring
+        # the cached/pickled token keeps a parent's view of this node identical
+        # to the value baked into our own `_name`.
+        if not self._determ_token:
+            from dask.tokenize import _tokenize_deterministic
 
-        # Handle non-serializable locks by using their id()
-        # Locks are identity-based objects, so using id() is semantically correct
-        lock = self.operand("lock")
-        if lock and not isinstance(lock, (bool, SerializableLock)):
-            lock_token = ("lock-id", id(lock))
-        else:
-            lock_token = lock
+            # Handle non-serializable locks by using their id()
+            # Locks are identity-based objects, so using id() is semantically correct
+            lock = self.operand("lock")
+            if lock and not isinstance(lock, (bool, SerializableLock)):
+                lock_token = ("lock-id", id(lock))
+            else:
+                lock_token = lock
 
-        if self.operand("_name_is_exact"):
-            return (type(self), self.operand("_name_override"))
-
-        operands = [lock_token if p == "lock" else self.operand(p) for p in self._parameters]
-        return _tokenize_deterministic(type(self), *operands)
+            if self.operand("_name_is_exact"):
+                self._determ_token = (type(self), self.operand("_name_override"))
+            else:
+                operands = [lock_token if p == "lock" else self.operand(p) for p in self._parameters]
+                self._determ_token = _tokenize_deterministic(type(self), *operands)
+        return self._determ_token
 
     def _simplify_up(self, parent, dependents):
         """Allow slice operations to push into FromArray."""
