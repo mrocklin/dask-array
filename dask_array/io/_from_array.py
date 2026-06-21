@@ -95,11 +95,6 @@ class FromArray(IO):
             return self.operand("asarray")
 
     def _layer(self):
-        try:
-            return self._frisky_layer().to_dask_graph()
-        except NotImplementedError:
-            pass
-
         lock = self.operand("lock")
         region = self.operand("_region")
         # Note: lock=True is already normalized to SerializableLock() in from_array()

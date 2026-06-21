@@ -489,11 +489,6 @@ class SliceSlicesIntegers(Slice):
         )
 
     def _layer(self) -> dict:
-        try:
-            return self._frisky_layer().to_dask_graph()
-        except (NotImplementedError, ImportError):
-            pass
-
         # Get a list (for each dimension) of dicts{blocknum: slice()}
         block_slices = list(map(_slice_1d, self.array.shape, self.array.chunks, self.index))
         sorted_block_slices = [sorted(i.items()) for i in block_slices]

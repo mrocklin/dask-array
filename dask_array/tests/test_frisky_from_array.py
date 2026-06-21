@@ -1,10 +1,8 @@
-"""Records-path (``to_task_records``) parity for the native FromArray getter layer.
+"""Frisky-graph parity for the native FromArray getter layer.
 
-The rest of the suite validates ``to_dask_graph`` indirectly (via ``.compute()``),
-but ``to_task_records`` — the path that actually executes on Frisky — is built
-separately in Rust (``crates/dask-array-python/src/from_array.rs``). These tests
-run the records through a trivial dependency-ordered resolver and assert the
-reassembled array equals the numpy ground truth, for a *generic array-like*
+``__frisky_graph__`` emits the records that actually execute on Frisky. These
+tests run those records through a trivial dependency-ordered resolver and assert
+the reassembled array equals the numpy ground truth, for a *generic array-like*
 source (which takes the getter layer, not the ndarray eager-slice layer): plain,
 ``_region`` slice-pushdown, ``asarray=False``, and a real zarr array.
 """
@@ -17,7 +15,6 @@ import pytest
 import dask_array as da
 from dask._task_spec import TaskRef
 from dask.core import flatten
-from dask_array._frisky import collect_task_records
 
 
 class _ArrayLike:
@@ -89,7 +86,8 @@ def _reassemble(arr, by_key):
 
 
 def _assert_records_match(arr, expected):
-    by_key = _run_records(collect_task_records(arr))
+    assert not hasattr(arr, "__frisky_task_records__")
+    by_key = _run_records(arr.__frisky_graph__())
     # every advertised output key is actually produced by the records
     assert set(arr.__frisky_output_keys__()) <= set(by_key)
     np.testing.assert_array_equal(_reassemble(arr, by_key), expected)

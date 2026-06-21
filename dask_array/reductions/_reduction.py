@@ -619,11 +619,6 @@ class PartialReduce(ArrayExpr):
         return tuple(chunks)
 
     def _layer(self):
-        try:
-            return self._frisky_layer().to_dask_graph()
-        except NotImplementedError:
-            pass
-
         x = self.array
         parts = [list(partition_all(self.split_every.get(i, 1), range(n))) for (i, n) in enumerate(x.numblocks)]
         keys = product(*map(range, map(len, parts)))

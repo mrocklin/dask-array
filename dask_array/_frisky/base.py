@@ -1,11 +1,11 @@
 """Base ``Layer``: a thin wrapper over the Rust layer.
 
-The expansion and both converters now live in Rust (``dask_array._rust``): each
-layer expands (pure Rust) into a neutral form held as a Rust ``Vec``, and the
-generic Rust converters turn that into either a dask task graph
-(``to_dask_graph`` — the correctness/legacy path that ``Expr._layer`` routes
-through, validated by the test suite) or the compact form the Frisky client
-serializes (``to_frisky_tasks``). Subclasses just build ``self._rust``.
+The expansion and both converters live in Rust (``dask_array._rust``): each layer
+expands (pure Rust) into a neutral form held as a Rust ``Vec``, and the generic
+Rust converters turn that into either a dask task graph (useful for focused
+parity checks) or the compact form the Frisky client serializes
+(``to_task_records``). Ordinary ``Expr._layer`` implementations stay on the
+Python Dask path; these layers are only used by the Frisky graph protocol.
 """
 
 from __future__ import annotations
@@ -33,6 +33,5 @@ class Layer:
         return self._rust.to_dask_graph()
 
     def to_task_records(self):
-        """Plain ``(key, func, args, kwargs, deps)`` records, one per task — the
-        boring mirror the Frisky client serializes (see ``collect_task_records``)."""
+        """Plain ``(key, func, args, kwargs, deps)`` records, one per task."""
         return self._rust.to_task_records()

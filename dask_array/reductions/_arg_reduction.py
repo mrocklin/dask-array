@@ -64,11 +64,6 @@ class ArgChunk(ArrayExpr):
         )
 
     def _layer(self):
-        try:
-            return self._frisky_layer().to_dask_graph()
-        except (NotImplementedError, ImportError):
-            pass
-
         x = self.array
         axis = self.axis
         ravel = self.ravel

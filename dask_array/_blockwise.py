@@ -270,11 +270,6 @@ class Blockwise(ArrayExpr):
         return f"{prefix}-{self.deterministic_token}"
 
     def _layer(self):
-        try:
-            return self._frisky_layer().to_dask_graph()
-        except NotImplementedError:
-            pass
-
         arginds = [(a, i) for (a, i) in toolz.partition(2, self.args)]
 
         numblocks = {}
@@ -1419,11 +1414,6 @@ class FusedBlockwise(ArrayExpr):
         return FusedBlockwiseLayer(self)
 
     def _layer(self):
-        try:
-            return self._frisky_layer().to_dask_graph()
-        except (NotImplementedError, ImportError):
-            pass
-
         result = {}
         for block_id in product(*[range(n) for n in self.numblocks]):
             key = (self._name, *block_id)

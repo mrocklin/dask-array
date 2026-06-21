@@ -54,11 +54,6 @@ class ExpandDims(ArrayExpr):
         return tuple(None if i in self.axes else slice(None) for i in range(out_ndim))
 
     def _layer(self) -> dict:
-        try:
-            return self._frisky_layer().to_dask_graph()
-        except NotImplementedError:
-            pass
-
         indexer = self._indexer
         axes = sorted(self.axes)
         input_name = self.array._name

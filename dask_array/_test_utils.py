@@ -134,7 +134,7 @@ def assert_eq(
     check_type=True,
     check_dtype=True,
     equal_nan=True,
-    scheduler="sync",
+    scheduler=None,
     **kwargs,
 ):
     """Assert that two arrays are equal.
@@ -162,8 +162,10 @@ def assert_eq(
         Whether to check that dtypes match
     equal_nan : bool
         Whether to treat NaN values as equal
-    scheduler : str
-        Scheduler to use for computing dask arrays
+    scheduler : str or object, optional
+        Scheduler to use for computing dask arrays. By default this follows
+        ``dask.config["scheduler"]`` so the test suite can run under alternate
+        schedulers.
 
     Returns
     -------

@@ -39,11 +39,6 @@ class BroadcastTrick(ArrayExpr):
         return partial(func, meta=self._meta, dtype=self.dtype, **k)
 
     def _layer(self) -> dict:
-        try:
-            return self._frisky_layer().to_dask_graph()
-        except NotImplementedError:
-            pass
-
         from itertools import product
 
         result = {}

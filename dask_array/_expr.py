@@ -508,11 +508,6 @@ class ChunksOverride(ArrayExpr):
         return BlocksLayer(self._name, self.array._name, index_maps)
 
     def _layer(self) -> dict:
-        try:
-            return self._frisky_layer().to_dask_graph()
-        except (NotImplementedError, ImportError):
-            pass
-
         from itertools import product
 
         from dask._task_spec import Alias

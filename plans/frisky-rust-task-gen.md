@@ -43,7 +43,7 @@ improvement, not 100x.
 
 We build Rust-side Layer objects, like Blockwise, Creation, PartialReduce, Rechunk, Slice, etc., that more or less correspond to our layers.  These  layer objects will build a Rust implementation of the Dask graph of that layer.  That dask graph will contain some Rust Task object that holds Python objects for func/args/kwargs, but otherwise uses rust concepts where it can for efficiency (dependencies, etc.)
 
-We also have a generic function that takes this layer and translates it, task by task, to the Python/Dask representation suitable for a dask scheduler.  We can use these then to drive tests.  The dask-array Expression class has a _layer method that can try to create the frisky layer if its around, then expand to rust tasks, then translate those tasks to Python/Dask to return to Dask.  We can then use the existing test suite to verify correctness.
+We also have a generic function that takes this layer and translates it, task by task, to the Python/Dask representation suitable for a dask scheduler.  We can use this in focused parity tests, but the normal dask-array `_layer` path stays Python/Dask-only.  Frisky-specific lowering is reached through `Array.__frisky_graph__()`.
 
 That Rust Layer can also be used by the frisky client to bypass Python and go straight to something that we can send up to the scheduler as normal (no scheduler-side improvements are expected in this work).
 
@@ -55,7 +55,7 @@ We're going to do a few of these in one smart / Opus agent to make sure that thi
 
 We can get feedback from a few things:
 
--   Dask-array test suite, which helps to ensure correctness of our rust work with the `to_dask_graph` function.
+-   Frisky-parameterized dask-array test runs, which exercise the Frisky graph protocol through an in-process Frisky client.
 -   Frisky roundtrip.  We can make sure that a simple workload with frisky computes properly.  We can use the Frisky in-process LocalCluster for this:  `frisky.LocalCluster(processes=False, dashboard_address="127.0.0.1:0")`.
 -   Code simplicity compared to Dask implementation.  They should be similar.
 
@@ -67,14 +67,14 @@ A Frisky **layer** is a Rust object, one per expression kind (`BlockwiseLayer`,
 `CreationLayer` in `crates/dask-array-python/src/`). It builds that expression's
 subgraph in Rust and exposes two generic converters:
 
-- `to_dask_graph` → `{key: dask Task}` (builds `Task`/`TaskRef`). The
-  correctness/legacy path; the dask-array test suite is its oracle.
+- `to_dask_graph` → `{key: dask Task}` (builds `Task`/`TaskRef`). This is useful
+  for focused parity checks, but is not the ordinary Dask `_layer` path.
 - `to_task_records` → a flat list of per-task `(key, func, args, kwargs, deps)`
   — a Rust-built mirror of the dask Task. `key`/`deps` are Rust strings;
   `func`/`kwargs` are the shared Python objects; `args` is a Python tuple whose
   dependency positions hold a dask `TaskRef(dep_key)`.
 
-Hand-off: `Array.__frisky_task_records__()` (duck-typed; Frisky never imports
+Hand-off: `Array.__frisky_graph__()` (duck-typed; Frisky never imports
 dask_array) returns the records; Frisky's `Client.submit_tasks` (client.rs)
 serializes them exactly as `submit`/`map` do — function serialized once per
 distinct `(func, kwargs)` (cached), `kwargs` bound via `functools.partial`,
@@ -84,11 +84,11 @@ untouched.** `dask.compute`/`dask.persist` are patched (from
 `install_dask_defaults`) so a bare `dask.compute(x)` takes this path
 transparently and anything unsupported falls back to stock dask.
 
-Routing per expression: `_layer()` = `try self._frisky_layer().to_dask_graph()
-except NotImplementedError: <legacy dask>`. `_frisky_layer()` validates +
-normalizes the operands and **raises `NotImplementedError` for any shape it
-doesn't fully handle** — the safety valve: when unsure, fall back to the correct
-legacy path.
+Routing per expression: ordinary `_layer()` implementations stay on the Python
+Dask path. Frisky collection walks call `_frisky_layer()` directly; that method
+validates + normalizes the operands and **raises `NotImplementedError` for any
+shape it doesn't fully handle** — the safety valve: when unsure, fall back to the
+generic records adapter or the correct legacy path.
 
 The neutral form (`common.rs`) now covers all three task structures. A
 `NeutralTask` carries its own key (`names[name_idx]` + coord) and a `Compute`
@@ -150,7 +150,7 @@ creation) are just the common case: one entry in `names`/`funcs`, every task a
   `dask_array/tests/test_reductions.py::test_weighted_reduction`,
   `dask_array/tests/test_slice_pushdown.py::test_masked_array`,
   `dask_array/tests/test_slicing.py::test_slice_masked_arrays`.)
-- Each layer validated **3 ways**: suite (`to_dask_graph` oracle) + `diff_layers.py`
+- Each layer validated **3 ways**: Frisky-parameterized suite + `diff_layers.py`
   (distinct-arange records-vs-dask per key — catches mis-assembly) +
   `roundtrip_layers.py` (real in-process Frisky, asserts the records path was
   taken). **Frisky needed zero changes across all 10** — the client stays
@@ -235,11 +235,11 @@ Mirror `blockwise.rs`/`creation.rs` and `_frisky/{blockwise,creation}.py`.
    delegate to `common::`. Register with `mod` + `add_class` in `lib.rs`.
 2. **Python wrapper** `dask_array/_frisky/<layer>.py`: thin `Layer` subclass
    building `self._rust = _rust.<Layer>(...)`; export in `_frisky/__init__.py`.
-3. **Routing** on the expr (`_layer` try/except + `_frisky_layer`
+3. **Routing** on the expr (`_frisky_layer`
    validate/normalize, NotImplementedError → fallback). Bump `PROTOCOL_REVISION`
    (lib.rs + `_frisky/base.py`) if the Rust↔Python surface changes.
-4. **Verify both paths.** The suite only exercises `to_dask_graph`; a layer can
-   pass it and still have a broken `to_task_records` (the two converters differ —
+4. **Verify both paths.** A layer can have a correct `to_dask_graph` parity check
+   and still have a broken `to_task_records` (the two converters differ —
    e.g. dask wraps nested deps in `_task_spec.List`, the records path uses a plain
    list). So also run the records path with **distinct** data: `bench/diff_layers.py`
    (records-vs-dask per key) is **required** for any layer that moves/slices/

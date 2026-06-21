@@ -36,11 +36,6 @@ class Stack(ArrayExpr):
         return "stack-" + self.deterministic_token
 
     def _layer(self) -> dict:
-        try:
-            return self._frisky_layer().to_dask_graph()
-        except NotImplementedError:
-            pass
-
         keys = list(product([self._name], *[range(len(bd)) for bd in self.chunks]))
         names = [a.name for a in self.args]
         axis = self.axis

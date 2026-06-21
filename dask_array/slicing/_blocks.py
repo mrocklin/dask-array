@@ -101,11 +101,6 @@ class Blocks(ArrayExpr):
 
         Each output block is an alias to the corresponding input block.
         """
-        try:
-            return self._frisky_layer().to_dask_graph()
-        except (NotImplementedError, ImportError):
-            pass
-
         # Pre-compute index mappings for each dimension
         index_maps = [np.arange(n)[idx] for n, idx in zip(self.array.numblocks, self.index)]
 

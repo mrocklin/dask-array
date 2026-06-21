@@ -133,11 +133,6 @@ class CumReduction(ArrayExpr):
         )
 
     def _layer(self):
-        try:
-            return self._frisky_layer().to_dask_graph()
-        except (NotImplementedError, ImportError):
-            pass
-
         from functools import partial
 
         from dask.utils import apply

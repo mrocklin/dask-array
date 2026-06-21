@@ -59,11 +59,6 @@ class Concatenate(ArrayExpr):
         )
 
     def _layer(self) -> dict:
-        try:
-            return self._frisky_layer().to_dask_graph()
-        except (NotImplementedError, ImportError):
-            pass
-
         axis = self.axis
         cum_dims = [0] + list(accumulate(add, [len(a.chunks[axis]) for a in self.args]))
         keys = list(product([self._name], *[range(len(bd)) for bd in self.chunks]))

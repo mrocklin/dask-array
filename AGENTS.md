@@ -88,21 +88,21 @@ and status: `plans/frisky-rust-task-gen.md`.
 **Structures.** One *layer* per expression kind — a Rust object in
 `crates/dask-array-python/src/` with a thin wrapper in `dask_array/_frisky/` —
 builds a neutral form (`common.rs`) expanded two ways: `to_dask_graph()` →
-`{key: dask Task}` (the legacy/correctness path the pytest suite validates) and
-`to_task_records()` → flat `(key, func, args, kwargs, deps)` records (the fast path
-Frisky submits). `collect_task_records` (`_frisky/collect.py`) walks the lowered
-tree; any node without a native layer (or whose layer defers) is translated by the
-generic `GraphRecordsLayer` (`_frisky/graph_records.py`), which reuses the expr's
-own legacy `_layer()` — faithful by construction.
+`{key: dask Task}` for focused parity checks and `to_task_records()` → flat
+`(key, func, args, kwargs, deps)` records (the fast path Frisky submits).
+`collect_task_records` (`_frisky/collect.py`) walks the lowered tree; any node
+without a native layer (or whose layer defers) is translated by the generic
+`GraphRecordsLayer` (`_frisky/graph_records.py`), which reuses the expr's own
+legacy `_layer()` — faithful by construction.
 
 **Protocols.**
 
-- Routing: `_layer()` is `try: self._frisky_layer().to_dask_graph() except
-  (NotImplementedError, ImportError): <legacy graph>`; `_frisky_layer()` raises for
-  any variant it doesn't fully handle.
+- Routing: ordinary `_layer()` implementations stay on the Python Dask graph path.
+  Frisky collection walks call `_frisky_layer()` directly; `_frisky_layer()` raises
+  for any variant it doesn't fully handle.
 - Records: `key`/`deps` are strings, `func`/`kwargs` shared Python objects, `args` a
   tuple whose dependency slots hold a `dask._task_spec.TaskRef(dep_key)`.
-- Hand-off: `Array.__frisky_task_records__()` (duck-typed — Frisky never imports
+- Hand-off: `Array.__frisky_graph__()` (duck-typed — Frisky never imports
   `dask_array`) returns them; `Client.submit_tasks(records, output_keys)` submits.
   The surface is versioned by `PROTOCOL_REVISION`, synced between `_frisky/base.py`
   and Frisky's `lib.rs` (mismatch fails loudly at import).

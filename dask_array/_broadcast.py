@@ -34,11 +34,6 @@ class BroadcastTo(ArrayExpr):
         return self._chunks
 
     def _layer(self) -> dict:
-        try:
-            return self._frisky_layer().to_dask_graph()
-        except NotImplementedError:
-            pass
-
         x = self.array
         shape = self._shape
         chunks = self._chunks

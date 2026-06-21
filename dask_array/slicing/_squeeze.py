@@ -55,11 +55,6 @@ class Squeeze(ArrayExpr):
         )
 
     def _layer(self) -> dict:
-        try:
-            return self._frisky_layer().to_dask_graph()
-        except (NotImplementedError, ImportError):
-            pass
-
         # Map from output chunk indices to input chunk indices
         # Input has more dimensions than output
         in_chunks = self.array.chunks

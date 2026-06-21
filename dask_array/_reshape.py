@@ -428,11 +428,6 @@ class ReshapeLowered(ArrayExpr):
         return self._outchunks
 
     def _layer(self) -> dict:
-        try:
-            return self._frisky_layer().to_dask_graph()
-        except (NotImplementedError, ImportError):
-            pass
-
         inchunks = self.array.chunks
         outchunks = self._outchunks
 
@@ -595,11 +590,6 @@ class ReshapeBlockwise(ArrayExpr):
         return tuple(reduce(mul, x) for x in output_shape)
 
     def _layer(self) -> dict:
-        try:
-            return self._frisky_layer().to_dask_graph()
-        except (NotImplementedError, ImportError):
-            pass
-
         in_keys = list(product([self.array._name], *[range(len(c)) for c in self.array.chunks]))
         out_keys = list(product([self._name], *[range(len(c)) for c in self.chunks]))
 

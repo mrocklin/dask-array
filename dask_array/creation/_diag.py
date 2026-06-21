@@ -43,11 +43,6 @@ class Diag1D(ArrayExpr):
         return Diag1DLayer(self._name, self._meta, self.x._name, chunks_1d)
 
     def _layer(self) -> dict:
-        try:
-            return self._frisky_layer().to_dask_graph()
-        except (NotImplementedError, ImportError):
-            pass
-
         dsk = {}
         x = self.x
         chunks_1d = x.chunks[0]
@@ -86,11 +81,6 @@ class Diag2DSimple(ArrayExpr):
         return Diag2DSimpleLayer(self._name, self.x._name, len(self.x.chunks[0]))
 
     def _layer(self) -> dict:
-        try:
-            return self._frisky_layer().to_dask_graph()
-        except (NotImplementedError, ImportError):
-            pass
-
         dsk = {}
         x = self.x
         x_keys = x.__dask_keys__()

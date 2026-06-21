@@ -143,11 +143,6 @@ class Random(IO):
         return RandomLayer(self)
 
     def _layer(self):
-        try:
-            return self._frisky_layer().to_dask_graph()
-        except (NotImplementedError, ImportError):
-            pass
-
         result = {}
         for block_id in product(*[range(len(bd)) for bd in self.chunks]):
             key = (self._name, *block_id)

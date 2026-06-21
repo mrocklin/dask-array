@@ -8,13 +8,14 @@ two ways:
   - A native Frisky layer (``_frisky_layer().to_task_records()``): the fast,
     Rust-generated path for the layers that have been ported (blockwise, reduction,
     rechunk, from_array, …).
-  - Otherwise — no ``_frisky_layer``, or it raises ``NotImplementedError`` for this
-    variant — the generic ``GraphRecordsLayer`` reuses the expression's own legacy
-    ``_layer()`` graph (``Task``/``Alias``/``DataNode``) and translates it. This
-    covers the specialized tail without a Rust port per op (perf is deferred there);
-    the rest of the graph still takes the fast path. If even that can't represent a
-    node (an unhandled ``_task_spec`` type), it raises ``NotImplementedError`` and
-    the caller falls back to stock dask for the whole graph.
+  - Otherwise — no ``_frisky_layer``, or it raises ``NotImplementedError`` /
+    ``ImportError`` for this variant — the generic ``GraphRecordsLayer`` reuses the
+    expression's own legacy ``_layer()`` graph (``Task``/``Alias``/``DataNode``)
+    and translates it. This covers the specialized tail without a Rust port per op
+    (perf is deferred there); the rest of the graph still takes the fast path. If
+    even that can't represent a node (an unhandled ``_task_spec`` type), it raises
+    ``NotImplementedError`` and the caller falls back to stock dask for the whole
+    graph.
 
 Finally the assembled graph is checked for completeness: every dependency must be
 produced by some record. A dangling reference means the translation wasn't faithful
@@ -46,7 +47,7 @@ def _walk_records(roots, seen, records):
         if make_layer is not None:
             try:
                 layer = make_layer()
-            except NotImplementedError:
+            except (NotImplementedError, ImportError):
                 layer = None
         if layer is None:
             layer = GraphRecordsLayer(e)
