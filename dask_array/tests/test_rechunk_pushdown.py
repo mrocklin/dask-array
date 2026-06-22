@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+import dask
 import dask_array as da
 from dask_array.io import FromArray
 from dask_array._test_utils import assert_eq
@@ -101,43 +102,45 @@ def test_rechunk_pushdown_broadcast_elemwise():
 
 def test_rechunk_pushdown_through_transpose():
     """Test rechunk pushes through transpose with correct chunk mapping."""
-    # Create array with shape (2, 3, 4) and specific chunks
-    x = da.ones((2, 3, 4), chunks=(1, 1, 2))
+    with dask.config.set({"array.rechunk.method": None}):
+        # Create array with shape (2, 3, 4) and specific chunks
+        x = da.ones((2, 3, 4), chunks=(1, 1, 2))
 
-    # Transpose with axes (2, 0, 1): output shape (4, 2, 3)
-    # Output axis 0 <- input axis 2
-    # Output axis 1 <- input axis 0
-    # Output axis 2 <- input axis 1
-    y = x.transpose((2, 0, 1))
+        # Transpose with axes (2, 0, 1): output shape (4, 2, 3)
+        # Output axis 0 <- input axis 2
+        # Output axis 1 <- input axis 0
+        # Output axis 2 <- input axis 1
+        y = x.transpose((2, 0, 1))
 
-    # Rechunk the transposed output to (2, 1, 3)
-    result = y.rechunk((2, 1, 3))
+        # Rechunk the transposed output to (2, 1, 3)
+        result = y.rechunk((2, 1, 3))
 
-    # Build expected expression: transpose of rechunked input
-    # Input axis 0 needs output axis 1's chunks = 1
-    # Input axis 1 needs output axis 2's chunks = 3
-    # Input axis 2 needs output axis 0's chunks = 2
-    # So input rechunk should be (1, 3, 2)
-    expected = x.rechunk((1, 3, 2)).transpose((2, 0, 1))
+        # Build expected expression: transpose of rechunked input
+        # Input axis 0 needs output axis 1's chunks = 1
+        # Input axis 1 needs output axis 2's chunks = 3
+        # Input axis 2 needs output axis 0's chunks = 2
+        # So input rechunk should be (1, 3, 2)
+        expected = x.rechunk((1, 3, 2)).transpose((2, 0, 1))
 
-    assert result.expr.simplify()._name == expected.expr.simplify()._name
+        assert result.expr.simplify()._name == expected.expr.simplify()._name
 
 
 def test_rechunk_pushdown_through_transpose_simple():
     """Test rechunk pushes through simple 2D transpose."""
-    x = da.arange(12, chunks=4).reshape(3, 4).rechunk((1, 2))
+    with dask.config.set({"array.rechunk.method": None}):
+        x = da.arange(12, chunks=4).reshape(3, 4).rechunk((1, 2))
 
-    y = x.T  # axes = (1, 0)
+        y = x.T  # axes = (1, 0)
 
-    # Rechunk transposed to (2, 3)
-    result = y.rechunk((2, 3))
+        # Rechunk transposed to (2, 3)
+        result = y.rechunk((2, 3))
 
-    # After pushdown: input should be rechunked to (3, 2)
-    # Because input axis 0 -> output axis 1 (needs chunks 3)
-    #         input axis 1 -> output axis 0 (needs chunks 2)
-    expected = x.rechunk((3, 2)).T
+        # After pushdown: input should be rechunked to (3, 2)
+        # Because input axis 0 -> output axis 1 (needs chunks 3)
+        #         input axis 1 -> output axis 0 (needs chunks 2)
+        expected = x.rechunk((3, 2)).T
 
-    assert result.expr.simplify()._name == expected.expr.simplify()._name
+        assert result.expr.simplify()._name == expected.expr.simplify()._name
 
 
 def test_rechunk_pushdown_through_transpose_dict():

@@ -483,7 +483,8 @@ def test_svd_full_matrices_not_supported():
 
 @pytest.mark.parametrize("iterator", ["power", "QR"])
 def test_svd_compressed_compute(iterator):
-    x = da.ones((100, 100), chunks=(10, 10))
+    a = np.random.default_rng(42).random((100, 100))
+    x = da.from_array(a, chunks=(10, 10))
     u, s, v = da.linalg.svd_compressed(x, k=2, iterator=iterator, n_power_iter=1, compute=True, seed=123)
     uu, ss, vv = da.linalg.svd_compressed(x, k=2, iterator=iterator, n_power_iter=1, seed=123)
 

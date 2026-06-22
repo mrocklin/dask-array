@@ -182,6 +182,12 @@ class Array(DaskMethodsMixin):
         out = self._lowered_expr
         return out.__dask_keys__()
 
+    def _check_frisky_supported(self):
+        if isinstance(self._meta, np.ma.MaskedArray):
+            raise NotImplementedError("masked arrays use the regular dask graph path")
+        if any(math.isnan(s) for dim in self.chunks for s in dim):
+            raise NotImplementedError("unknown chunks use the regular dask graph path")
+
     def __frisky_graph__(self, seen=None):
         """Frisky submission protocol (duck-typed; Frisky never imports
         dask_array). Returns a flat Frisky graph as ``(key, func, args, kwargs,
@@ -195,6 +201,7 @@ class Array(DaskMethodsMixin):
         the caller over the combined records (see ``collect_task_records``)."""
         from dask_array._frisky.collect import collect_task_records
 
+        self._check_frisky_supported()
         return collect_task_records(self, seen=seen)
 
     def __frisky_output_keys__(self):
@@ -207,6 +214,7 @@ class Array(DaskMethodsMixin):
         the record graph the expander produces."""
         from dask.core import flatten
 
+        self._check_frisky_supported()
         return list(dict.fromkeys(str(k) for k in flatten(self.__dask_keys__())))
 
     def __dask_tokenize__(self):

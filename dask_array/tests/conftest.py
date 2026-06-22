@@ -49,7 +49,7 @@ def array_scheduler(request):
 
     with frisky.LocalCluster(n_workers=2, processes=False, dashboard_address="127.0.0.1:0") as cluster:
         with frisky.Client(cluster.scheduler) as client:
-            with dask.config.set({"scheduler": client, "array.rechunk.method": "tasks"}):
+            with dask.config.set({"scheduler": client}):
                 yield "frisky"
 
 

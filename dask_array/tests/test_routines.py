@@ -390,9 +390,9 @@ def test_tensordot_double_contraction_ngt2():
 
 def test_tensordot_more_than_26_dims():
     ndim = 27
-    x = np.broadcast_to(1, [2] * ndim)
+    x = np.broadcast_to(1, (2,) + (1,) * (ndim - 1))
     dx = da.from_array(x, chunks=-1)
-    assert_eq(da.tensordot(dx, dx, ndim), np.array(2**ndim))
+    assert_eq(da.tensordot(dx, dx, ndim), np.array(2))
 
 
 def test_dot_method():
