@@ -19,6 +19,9 @@ from dask_array._core_utils import (
 from dask_array._utils import meta_from_array
 
 
+_NUMPY_SLICE_PUSHDOWN_NBYTES_LIMIT = 64 * 1024 * 1024
+
+
 class FromArray(IO):
     _parameters = [
         "array",
@@ -317,11 +320,25 @@ class FromArray(IO):
             for dim_chunks, slc, dim_size in zip(old_chunks, region_index, self._effective_shape)
         )
 
+        # Name the sliced node from the logical slice (before any NumPy
+        # source/region shrinking below) so it stays deterministic.
         name = f"{self._name}-getitem-{tokenize(old_region, region_index, new_region)}"
 
-        # Create new FromArray with region (deferred slice)
+        is_ndarray = type(source) in (np.ndarray, np.ma.core.MaskedArray)
+        region_shape = tuple(len(range(*slc.indices(dim_size))) for slc, dim_size in zip(new_region, source.shape))
+        region_nbytes = int(np.prod(region_shape, dtype=object)) * source.dtype.itemsize
+        if is_ndarray:
+            if region_nbytes == source.nbytes:
+                new_region = None
+            elif region_nbytes <= _NUMPY_SLICE_PUSHDOWN_NBYTES_LIMIT:
+                source = source[new_region].copy()
+                new_region = None
+
+        # Create new FromArray with region (deferred slice), except for NumPy
+        # arrays where a small slice avoids carrying the full source through
+        # later expression submission.
         new_io = FromArray(
-            source,  # Keep original source, don't slice
+            source,
             new_chunks,
             lock=self.operand("lock"),
             getitem=self.operand("getitem"),

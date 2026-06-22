@@ -163,8 +163,8 @@ def test_slice_then_reduction():
     assert_eq(x[0:4, 0:4].sum(), arr[0:4, 0:4].sum())
 
 
-def test_region_deferred_slice():
-    """Slice pushdown uses _region for deferred slicing (not eager read)."""
+def test_region_numpy_slice():
+    """Slice pushdown eagerly slices NumPy sources."""
     arr = np.arange(10000).reshape(100, 100)
     x = da.from_array(arr, chunks=(10, 10))
     # Use a slice that fits within a single chunk
@@ -172,15 +172,40 @@ def test_region_deferred_slice():
 
     opt = y.expr.optimize()
 
-    # Should use _region parameter, not slice the source eagerly
-    assert opt.operand("_region") == (slice(12, 18, None), slice(34, 39, None))
-    # Source array should still be the full array
-    assert opt.array.shape == (100, 100)
+    # NumPy arrays are cheap to slice during optimization, unlike zarr/h5py-like
+    # sources that need deferred region reads.
+    assert opt.operand("_region") is None
+    assert opt.array.shape == (6, 5)
+    np.testing.assert_array_equal(opt.array, arr[12:18, 34:39])
     # Chunks should be for the sliced region (6x5)
     assert opt.chunks == ((6,), (5,))
 
     # Verify correctness
     assert_eq(y, arr[12:18, 34:39])
+
+
+def test_region_numpy_full_slice_does_not_copy():
+    arr = np.arange(10000).reshape(100, 100)
+    x = da.from_array(arr, chunks=(10, 10))
+
+    opt = x[:, :].expr.optimize()
+
+    assert opt.array is x.expr.array
+    assert opt.operand("_region") is None
+
+
+def test_region_numpy_large_slice_stays_deferred(monkeypatch):
+    import dask_array.io._from_array as from_array_mod
+
+    monkeypatch.setattr(from_array_mod, "_NUMPY_SLICE_PUSHDOWN_NBYTES_LIMIT", 16)
+    arr = np.arange(100).reshape(10, 10)
+    x = da.from_array(arr, chunks=(5, 5))
+
+    opt = x[:5, :5].expr.optimize()
+
+    assert opt.array is x.expr.array
+    assert opt.operand("_region") == (slice(None, 5), slice(None, 5))
+    assert opt.chunks == ((5,), (5,))
 
 
 def test_region_single_chunk():
@@ -268,10 +293,11 @@ def test_integer_indexing_pushdown():
     opt = y.optimize()
     assert len(opt.__dask_graph__()) == 2
 
-    # The inner FromArray should have region centered on (3, 7)
+    # The inner FromArray should already hold the one-cell NumPy region.
     from_array_expr = opt.expr.array
-    assert from_array_expr.operand("_region") == (slice(3, 4), slice(7, 8))
-    assert from_array_expr.array.shape == (10, 10)  # Original array unchanged
+    assert from_array_expr.operand("_region") is None
+    assert from_array_expr.array.shape == (1, 1)
+    np.testing.assert_array_equal(from_array_expr.array, arr[3:4, 7:8])
 
     assert_eq(y, arr[3, 7])
 

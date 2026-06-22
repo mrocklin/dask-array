@@ -36,12 +36,8 @@ def _constant_block():
     return np.full((2, 2), 7.0)
 
 
-class _ConstantFriskyGraph:
-    def __init__(self, output_key):
-        self.output_key = output_key
-
-    def __call__(self, seen=None):
-        return [(self.output_key, _constant_block, (), {}, [])]
+def _constant_frisky_graph(self, seen=None):
+    return [(self.__frisky_output_keys__()[0], _constant_block, (), {}, [])]
 
 
 def test_frisky_scheduler_uses_frisky_graph(array_scheduler, monkeypatch):
@@ -49,7 +45,7 @@ def test_frisky_scheduler_uses_frisky_graph(array_scheduler, monkeypatch):
         pytest.skip("requires --scheduler=frisky")
 
     x = da.ones((2, 2), chunks=(2, 2)) + 1
-    monkeypatch.setattr(x, "__frisky_graph__", _ConstantFriskyGraph(x.__frisky_output_keys__()[0]))
+    monkeypatch.setattr(type(x), "__frisky_graph__", _constant_frisky_graph)
 
     (result,) = dask.compute(x)
 

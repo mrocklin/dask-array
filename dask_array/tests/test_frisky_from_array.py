@@ -127,6 +127,20 @@ def test_records_from_zarr():
     _assert_records_match(arr, base)
 
 
+def test_numpy_region_pushdown_slices_source_before_frisky_records():
+    base = np.arange(1_000_000.0).reshape(1000, 1000)
+    arr = da.from_array(base, chunks=(100, 100))[150:160, 230:240].optimize()
+
+    fa = _from_array_expr(arr)
+    assert fa.operand("_region") is None
+    assert fa.array.shape == (10, 10)
+    np.testing.assert_array_equal(fa.array, base[150:160, 230:240])
+
+    records = arr.__frisky_graph__()
+    assert len(records) == 1
+    np.testing.assert_array_equal(records[0][2][0], base[150:160, 230:240])
+
+
 def _from_array_expr(arr):
     """The FromArray node underneath a (possibly wrapped) from_array collection."""
     from dask_array.io._from_array import FromArray
