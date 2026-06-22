@@ -372,6 +372,68 @@ def _graph_size_threshold(old_chunks, new_chunks, threshold):
     return threshold * (_number_of_blocks(old_chunks) + _number_of_blocks(new_chunks))
 
 
+# Target for how many old blocks a single new block should depend on.  The
+# block-size planner bounds chunk *size*; this applies pressure on *fan-in* so we
+# don't build hub nodes with thousands of dependencies, which overwhelm the
+# scheduler.
+_default_fanin_limit = 100
+
+
+def _max_fanin(old_chunks, new_chunks):
+    """Upper bound on the number of old blocks feeding any single new block.
+
+    Fan-in is the product over axes of the most old chunks that overlap one new
+    chunk, so we take the per-axis maximum and multiply.
+    """
+    per_axis = (max(len(ins) for ins in axis) for axis in old_to_new(old_chunks, new_chunks))
+    return reduce(mul, per_axis, 1)
+
+
+def _bound_fanin(old_chunks, new_chunks, fanin_limit):
+    """Subdivide one rechunk step to keep per-block fan-in near *fanin_limit*.
+
+    Returns a list of chunkings ending in *new_chunks*.  When the step already
+    stays under the limit it is returned unchanged.  Otherwise it is replaced by a
+    geometric sequence of coarser steps: each merging axis has its block count
+    interpolated between old and new, while splitting axes (which contribute ~1 to
+    fan-in) jump straight to the target.  Interpolating only toward finer blocks
+    keeps every intermediate no larger than ``new_chunks``, so the block-size
+    bound from planning is preserved.
+
+    This is pressure, not a hard cap.  Fan-in from merges is bounded tightly, but
+    fan-in arising purely from many simultaneously boundary-misaligned axes (at
+    most ~2**ndim) cannot be reduced by adding steps, so it may slightly exceed
+    the limit in that rare case.
+    """
+    fanin_limit = max(2, fanin_limit)  # below 2 nothing can merge (and log(1) == 0)
+    fanin = _max_fanin(old_chunks, new_chunks)
+    if fanin <= fanin_limit:
+        return [new_chunks]
+
+    nsteps = math.ceil(math.log(fanin) / math.log(fanin_limit))
+    steps = []
+    prev = old_chunks
+    for t in range(1, nsteps):
+        intermediate = []
+        for oc, nc in zip(old_chunks, new_chunks):
+            no, nn = len(oc), len(nc)
+            if no <= nn:
+                # equal or splitting axis: ~1 fan-in, so go straight to target
+                intermediate.append(nc)
+            else:
+                # merging axis: interpolate block count geometrically
+                count = round(no * (nn / no) ** (t / nsteps))
+                count = min(max(count, nn), no)
+                intermediate.append(merge_to_number(oc, count))
+        intermediate = tuple(intermediate)
+        if intermediate != prev:  # drop steps that make no progress (e.g. all axes split)
+            steps.append(intermediate)
+            prev = intermediate
+    if not steps or steps[-1] != new_chunks:
+        steps.append(new_chunks)
+    return steps
+
+
 def plan_rechunk(old_chunks, new_chunks, itemsize, threshold=None, block_size_limit=None):
     """Plan an iterative rechunking from *old_chunks* to *new_chunks*.
     The plan aims to minimize the rechunk graph size.
@@ -391,44 +453,61 @@ def plan_rechunk(old_chunks, new_chunks, itemsize, threshold=None, block_size_li
     block_size_limit = block_size_limit or config.get("array.chunk-size")
     if isinstance(block_size_limit, str):
         block_size_limit = parse_bytes(block_size_limit)
+    fanin_limit = config.get("array.rechunk.fanin-limit", _default_fanin_limit)
 
     has_nans = (any(math.isnan(y) for y in x) for x in old_chunks)
 
-    if len(new_chunks) <= 1 or not all(new_chunks) or any(has_nans):
+    if not all(new_chunks) or any(has_nans):
+        # Empty or unknown chunks: leave planning (and fan-in) untouched.
         return [new_chunks]
 
-    block_size_limit /= itemsize
+    if len(new_chunks) <= 1:
+        # 0-D / 1-D: no block-size planning, but still bound fan-in below.
+        steps = [new_chunks]
+    else:
+        block_size_limit /= itemsize
 
-    largest_old_block = _largest_block_size(old_chunks)
-    largest_new_block = _largest_block_size(new_chunks)
-    block_size_limit = max([block_size_limit, largest_old_block, largest_new_block])
+        largest_old_block = _largest_block_size(old_chunks)
+        largest_new_block = _largest_block_size(new_chunks)
+        block_size_limit = max([block_size_limit, largest_old_block, largest_new_block])
 
-    graph_size_threshold = _graph_size_threshold(old_chunks, new_chunks, threshold)
+        graph_size_threshold = _graph_size_threshold(old_chunks, new_chunks, threshold)
 
-    current_chunks = old_chunks
-    first_pass = True
-    steps = []
+        current_chunks = old_chunks
+        first_pass = True
+        steps = []
 
-    while True:
-        graph_size = estimate_graph_size(current_chunks, new_chunks)
-        if graph_size < graph_size_threshold:
-            break
+        while True:
+            graph_size = estimate_graph_size(current_chunks, new_chunks)
+            if graph_size < graph_size_threshold:
+                break
 
-        if first_pass:
-            chunks = current_chunks
-        else:
-            chunks = find_split_rechunk(current_chunks, new_chunks, graph_size * threshold)
-        chunks, memory_limit_hit = find_merge_rechunk(chunks, new_chunks, block_size_limit)
-        if (chunks == current_chunks and not first_pass) or chunks == new_chunks:
-            break
-        if chunks != current_chunks:
-            steps.append(chunks)
-        current_chunks = chunks
-        if not memory_limit_hit:
-            break
-        first_pass = False
+            if first_pass:
+                chunks = current_chunks
+            else:
+                chunks = find_split_rechunk(current_chunks, new_chunks, graph_size * threshold)
+            chunks, memory_limit_hit = find_merge_rechunk(chunks, new_chunks, block_size_limit)
+            if (chunks == current_chunks and not first_pass) or chunks == new_chunks:
+                break
+            if chunks != current_chunks:
+                steps.append(chunks)
+            current_chunks = chunks
+            if not memory_limit_hit:
+                break
+            first_pass = False
 
-    return steps + [new_chunks]
+        steps = steps + [new_chunks]
+
+    # Separate pass: bound per-node fan-in.  The logic above caps each chunk's
+    # *size* but not how many inputs a merge node depends on, so a thin-to-fat
+    # rechunk can build hub nodes with thousands of dependencies.  Subdivide any
+    # step that would exceed the limit into a deeper, scheduler-friendly tree.
+    limited = []
+    prev = old_chunks
+    for step in steps:
+        limited.extend(_bound_fanin(prev, step, fanin_limit))
+        prev = step
+    return limited
 
 
 def _get_chunks(n, chunksize):
