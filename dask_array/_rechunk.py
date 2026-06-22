@@ -484,7 +484,9 @@ def _choose_rechunk_method(old_chunks, new_chunks, threshold=None):
 
     _old_to_new = old_to_new(old_chunks, new_chunks)
     graph_size = math.prod(sum(len(ins) for ins in axis) for axis in _old_to_new)
-    threshold = threshold or config.get("array.rechunk.threshold")
+    # Keep dask's historical 4 here so distributed clusters still prefer p2p;
+    # the bumped 32 default only governs the task planner's copy count.
+    threshold = threshold or 4
     graph_size_threshold = _graph_size_threshold(old_chunks, new_chunks, threshold)
     return "tasks" if graph_size < graph_size_threshold else "p2p"
 

@@ -1,6 +1,15 @@
 from __future__ import annotations
 
+import dask
 import numpy as np
+
+# Rechunk's threshold trades data copies for tasks: a higher value means fewer
+# intermediate copies and more tasks. Frisky makes tasks cheap, so we raise the
+# planner's default from dask's 4 to 32 (benchmarks: single-copy rechunks win
+# 15-35%). update_defaults respects an explicit user setting (but a
+# dask.config.refresh() would revert it to 4). The separate p2p-vs-tasks choice
+# stays at 4 (see _choose_rechunk_method).
+dask.config.update_defaults({"array": {"rechunk": {"threshold": 32}}})
 
 import dask_array._backends
 from dask_array import _chunk as chunk
