@@ -215,7 +215,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "dask", specifier = ">=2024.1.0" },
+    { name = "dask", specifier = ">=2025.4.0" },
     { name = "h5py", marker = "extra == 'complete'" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "numba", marker = "python_full_version < '3.13' and extra == 'sparse'", specifier = ">=0.60" },

@@ -197,17 +197,20 @@ def from_array(
 
     normalize_chunks(chunks, x.shape, dtype=x.dtype)  # validates
 
-    # Determine name prefix for the expression
-    # User-provided name is used as prefix, deterministic token always appended
+    # Determine name for the expression. User-provided string names match
+    # dask.array.from_array and are used exactly.
     if name in (None, True):
         # Deterministic: use "array" prefix, token computed from operands
         name_prefix = "array"
+        name_is_exact = False
     elif name is False:
         # Non-deterministic: include UUID in prefix to ensure uniqueness
         name_prefix = f"array-{uuid.uuid1()}"
+        name_is_exact = False
     else:
-        # Custom: use user-provided name as prefix
+        # Custom: use user-provided name exactly
         name_prefix = name
+        name_is_exact = True
 
     # Normalize lock=True to SerializableLock() for actual use
     if lock is True:
@@ -225,6 +228,7 @@ def from_array(
             meta=meta,
             inline_array=inline_array,
             _name_override=name_prefix,
+            _name_is_exact=name_is_exact,
         )
     )
 

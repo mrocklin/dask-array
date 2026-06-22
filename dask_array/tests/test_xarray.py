@@ -43,6 +43,7 @@ class TestDaskArrayExprManager:
         manager = DaskArrayExprManager()
         assert manager.array_cls is da.Array
         assert manager.available is True
+        assert manager.vectorized_indexing_returns_numpy_order is True
 
     def test_is_chunked_array(self):
         manager = DaskArrayExprManager()
@@ -140,6 +141,19 @@ class TestXarrayIntegration:
         assert isinstance(rebuilt, da.Array)
         np.testing.assert_array_equal(rebuilt.compute(), np.arange(6) + 1)
 
+    def test_xarray_register_restores_dask_collection_dispatch_after_legacy_import(self):
+        """Test Dask rebuild dispatch survives importing legacy dask.array."""
+        import dask.array  # noqa: F401
+        from dask._collections import new_collection
+
+        da.xarray.register()
+        arr = da.arange(6, chunks=(3,)) + 1
+
+        rebuilt = new_collection(arr.expr)
+
+        assert isinstance(rebuilt, da.Array)
+        np.testing.assert_array_equal(rebuilt.compute(), np.arange(6) + 1)
+
     def test_dataarray_from_dask_array(self):
         """Test creating a DataArray from a dask_array.Array."""
         arr = da.ones((10, 20), chunks=(5, 10))
@@ -177,6 +191,29 @@ class TestXarrayIntegration:
 
         rechunked = da_xr.chunk({"x": 10, "y": 5})
         assert rechunked.chunks == ((10,), (5, 5, 5, 5))
+
+    def test_dataarray_cftime_auto_rechunk(self):
+        pytest.importorskip("cftime")
+
+        years = np.arange(2000, 2120)
+        dates = xr.date_range(
+            start=f"{years[0]}-01-01",
+            end=f"{years[-1]}-12-31",
+            freq="1YE",
+            use_cftime=True,
+        )
+        data = np.tile(dates.values, (10, 1))
+        da_xr = xr.DataArray(
+            data,
+            dims=["x", "t"],
+            coords={"x": np.arange(10), "t": dates},
+        ).chunk({"x": 4, "t": 5})
+
+        rechunked = da_xr.chunk("auto")
+
+        assert isinstance(rechunked.data, da.Array)
+        assert rechunked.chunks == ((10,), (120,))
+        np.testing.assert_array_equal(rechunked.compute().values, data)
 
     def test_dataset_from_dask_arrays(self):
         """Test creating a Dataset from dask_array.Arrays."""

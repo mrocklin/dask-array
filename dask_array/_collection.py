@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import operator
 import warnings
+from functools import cached_property
 
 import numpy as np
 
@@ -118,15 +119,19 @@ class Array(DaskMethodsMixin):
     def expr(self) -> ArrayExpr:
         return self._expr
 
+    @cached_property
+    def _lowered_expr(self):
+        return self.expr.lower_completely()
+
     @property
     def _name(self):
-        return self.expr._name
+        return self._lowered_expr._name
 
     def __dask_postcompute__(self):
         return finalize, ()
 
     def __dask_postpersist__(self):
-        state = self.expr.lower_completely()
+        state = self.expr.optimize()
         # Use original array's meta like legacy implementation
         meta = self._meta
         if meta is None:
@@ -136,7 +141,6 @@ class Array(DaskMethodsMixin):
         return from_graph, (
             meta,
             self.chunks,
-            # FIXME: This is using keys of the unoptimized graph
             list(flatten(state.__dask_keys__())),
             key_split(state._name),
         )
@@ -146,15 +150,17 @@ class Array(DaskMethodsMixin):
         return self.__dask_graph__()
 
     def __dask_graph__(self):
-        out = self.expr.lower_completely()
-        return out.__dask_graph__()
+        from dask._expr import Expr
+
+        out = self._lowered_expr
+        return Expr.__dask_graph__(out)
 
     def __dask_keys__(self):
-        out = self.expr.lower_completely()
+        out = self._lowered_expr
         return out.__dask_keys__()
 
     def __dask_tokenize__(self):
-        return "Array", self.expr._name
+        return "Array", self._name
 
     def compute(self, **kwargs):
         return DaskMethodsMixin.compute(self.optimize(), **kwargs)
@@ -337,7 +343,7 @@ class Array(DaskMethodsMixin):
 
     @property
     def name(self):
-        return self.expr.name
+        return self._name
 
     def __len__(self):
         return self.expr.__len__()
@@ -859,13 +865,15 @@ class Array(DaskMethodsMixin):
         """
         return squeeze(self, axis=axis)
 
-    def reshape(self, *shape, merge_chunks=True, limit=None):
+    def reshape(self, *shape, merge_chunks=True, limit=None, order=None):
         """Reshape the array to a new shape.
 
         Refer to :func:`dask.array.reshape` for full documentation.
         """
         if len(shape) == 1 and isinstance(shape[0], (tuple, list)):
             shape = shape[0]
+        if order not in (None, "C"):
+            raise NotImplementedError("dask_array.reshape only supports C-order reshaping")
         return reshape(self, shape, merge_chunks=merge_chunks, limit=limit)
 
     def flatten(self):

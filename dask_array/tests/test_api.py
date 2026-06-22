@@ -19,6 +19,7 @@ def test_top_level_compatibility_exports():
     assert callable(da.compute)
     assert callable(da.optimize)
     assert callable(da.register_chunk_type)
+    assert callable(da.sliding_window_view)
     assert callable(da.to_hdf5)
     assert callable(da.from_tiledb)
     assert callable(da.to_tiledb)
@@ -31,6 +32,16 @@ def test_top_level_optimize_collection():
 
     assert isinstance(result, da.Array)
     np.testing.assert_array_equal(result.compute(), np.arange(6) + 1)
+
+
+def test_top_level_sliding_window_view():
+    x = np.arange(6)
+
+    result = da.sliding_window_view(da.from_array(x, chunks=3), 3)
+
+    assert result.shape == (4, 3)
+    assert result.chunks == ((3, 1), (3,))
+    np.testing.assert_array_equal(result.compute(), np.lib.stride_tricks.sliding_window_view(x, 3))
 
 
 def test_random_star_exports_legacy_wrappers():

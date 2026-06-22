@@ -5,7 +5,6 @@ import math
 import re
 import warnings
 from functools import cached_property, reduce
-from itertools import product
 from operator import mul
 
 import numpy as np
@@ -55,6 +54,12 @@ def _clean_header(header):
     """Clean up any remaining verbose patterns in the header string."""
     # Replace "<function foo at 0x...>" or "<X object at 0x...>" with "..."
     return _OBJECT_AT_PATTERN.sub("...", header)
+
+
+def _convert_dask_keys(keys):
+    if isinstance(keys, list):
+        return List(*(_convert_dask_keys(key) for key in keys))
+    return TaskRef(keys)
 
 
 class ArrayExpr(SingletonExpr):
@@ -111,6 +116,19 @@ class ArrayExpr(SingletonExpr):
             self.deterministic_token,
             cache,
         )
+
+    def __dask_graph__(self):
+        from dask._expr import Expr
+
+        return Expr.__dask_graph__(self.optimize())
+
+    def _layer(self):
+        from dask._expr import Expr
+
+        expr = self.optimize()
+        if expr is self:
+            raise NotImplementedError(f"{type(self).__name__} must implement _layer or lower before materialization")
+        return Expr.__dask_graph__(expr)
 
     def _operands_for_repr(self):
         return []
@@ -433,54 +451,6 @@ def unify_chunks_expr(*args, warn=True):
     return chunkss, arrays, changed
 
 
-# Import Stack, Concatenate, and ConcatenateFinalize from their modules
-from dask_array._concatenate import ConcatenateFinalize
-
-
-def _copy_array(x):
-    """Copy an array to prevent mutation of graph-stored data."""
-    try:
-        return x.copy()  # numpy, sparse, scipy.sparse
-    except AttributeError:
-        return x  # Not an Array API object
-
-
-class CopyArray(ArrayExpr):
-    """Copy an array to prevent mutation of the underlying data.
-
-    When a single-chunk array is computed, the result might be a reference
-    to data stored in the task graph. This expression ensures a copy is
-    made so modifications don't affect the graph.
-    """
-
-    _parameters = ["array"]
-
-    @functools.cached_property
-    def _name(self):
-        return f"copy-{self.deterministic_token}"
-
-    @functools.cached_property
-    def _meta(self):
-        return self.array._meta
-
-    @functools.cached_property
-    def chunks(self):
-        return self.array.chunks
-
-    @property
-    def dtype(self):
-        return self.array.dtype
-
-    def _layer(self):
-        # Generate copy tasks for each block
-        dsk = {}
-        for block_id in product(*[range(len(c)) for c in self.array.chunks]):
-            key = (self._name,) + block_id
-            input_key = (self.array._name,) + block_id
-            dsk[key] = Task(key, _copy_array, TaskRef(input_key))
-        return dsk
-
-
 class FinalizeComputeArray(FinalizeCompute, ArrayExpr):
     _parameters = ["arr"]
 
@@ -489,23 +459,22 @@ class FinalizeComputeArray(FinalizeCompute, ArrayExpr):
         # Each dimension has a single chunk with the full size
         return tuple((s,) for s in self.arr.shape)
 
-    def _simplify_down(self):
-        if all(n == 1 for n in self.arr.numblocks):
-            # Single-chunk array: wrap with CopyArray to prevent mutation
-            # of graph-stored data from affecting subsequent computes
-            return CopyArray(self.arr)
-        else:
-            # For arrays with unknown chunk sizes, use ConcatenateFinalize
-            # instead of rechunking (which requires known shapes)
-            if any(np.isnan(s) for s in self.arr.shape):
-                return ConcatenateFinalize(self.arr)
-            from dask_array._rechunk import Rechunk
+    def __dask_keys__(self):
+        return [self._name]
 
-            return Rechunk(
-                self.arr,
-                tuple(-1 for _ in range(self.arr.ndim)),
-                method="tasks",
+    def _layer(self):
+        from dask_array._core_utils import finalize
+
+        return {
+            self._name: Task(
+                self._name,
+                finalize,
+                _convert_dask_keys(self.arr.__dask_keys__()),
             )
+        }
+
+    def _simplify_down(self):
+        return None
 
 
 class ChunksOverride(ArrayExpr):

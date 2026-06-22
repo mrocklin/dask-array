@@ -5,6 +5,9 @@ from itertools import product
 
 import numpy as np
 
+from dask.base import tokenize
+from dask.utils import SerializableLock
+
 from dask_array.io._base import IO
 from dask_array._core_utils import (
     getter,
@@ -14,7 +17,6 @@ from dask_array._core_utils import (
     slices_from_chunks,
 )
 from dask_array._utils import meta_from_array
-from dask.utils import SerializableLock
 
 
 class FromArray(IO):
@@ -28,6 +30,7 @@ class FromArray(IO):
         "asarray",
         "fancy",
         "_name_override",
+        "_name_is_exact",
         "_region",  # Slice region for pushdown (tuple of slices or None)
     ]
     _defaults = {
@@ -39,6 +42,7 @@ class FromArray(IO):
         "fancy": True,
         "lock": False,
         "_name_override": None,
+        "_name_is_exact": False,
         "_region": None,
     }
     # FromArray reads static data, so rechunk can be pushed in safely
@@ -48,8 +52,9 @@ class FromArray(IO):
 
     @functools.cached_property
     def _name(self):
-        # _name_override is a prefix, deterministic token is always appended
         prefix = self.operand("_name_override") or "fromarray"
+        if self.operand("_name_is_exact"):
+            return prefix
         return f"{prefix}-{self.deterministic_token}"
 
     @functools.cached_property
@@ -169,6 +174,9 @@ class FromArray(IO):
         else:
             lock_token = lock
 
+        if self.operand("_name_is_exact"):
+            return (type(self), self.operand("_name_override"))
+
         operands = [lock_token if p == "lock" else self.operand(p) for p in self._parameters]
         return _tokenize_deterministic(type(self), *operands)
 
@@ -177,8 +185,26 @@ class FromArray(IO):
         from dask_array.slicing import SliceSlicesIntegers
 
         if isinstance(parent, SliceSlicesIntegers):
+            if not parent.allow_getitem_optimization:
+                return None
             return self._accept_slice(parent)
         return None
+
+    def _accept_rechunk(self, chunks):
+        name = f"{self._name}-rechunk-{tokenize(self.chunks, chunks)}"
+        return FromArray(
+            self.array,
+            chunks,
+            lock=self.operand("lock"),
+            getitem=self.operand("getitem"),
+            inline_array=self.inline_array,
+            meta=self.operand("meta"),
+            asarray=self.operand("asarray"),
+            fancy=self.operand("fancy"),
+            _name_override=name,
+            _name_is_exact=True,
+            _region=self.operand("_region"),
+        )
 
     def _accept_slice(self, slice_expr):
         """Accept a slice by setting region (deferred slice).
@@ -214,8 +240,6 @@ class FromArray(IO):
 
         # Check if any integers are present - they need special handling
         has_integers = any(isinstance(idx, Integral) for idx in full_index)
-
-        # Convert integers to 1-element slices for region calculation
         region_index = tuple(slice(idx, idx + 1) if isinstance(idx, Integral) else idx for idx in full_index)
 
         # Compute new region by combining with existing region
@@ -234,6 +258,8 @@ class FromArray(IO):
             for dim_chunks, slc, dim_size in zip(old_chunks, region_index, self._effective_shape)
         )
 
+        name = f"{self._name}-getitem-{tokenize(old_region, region_index, new_region)}"
+
         # Create new FromArray with region (deferred slice)
         new_io = FromArray(
             source,  # Keep original source, don't slice
@@ -244,14 +270,19 @@ class FromArray(IO):
             meta=self.operand("meta"),
             asarray=self.operand("asarray"),
             fancy=self.operand("fancy"),
-            _name_override=self.operand("_name_override"),
+            _name_override=name,
+            _name_is_exact=True,
             _region=new_region,
         )
 
-        # If integers were present, apply them to extract elements
         if has_integers:
-            # Build index with 0s for integer dims (they're now size-1)
             extract_index = tuple(0 if isinstance(idx, Integral) else slice(None) for idx in full_index)
-            return SliceSlicesIntegers(new_io, extract_index, False)
+            extract_token = "-".join(f"i{idx}" if isinstance(idx, Integral) else "s" for idx in extract_index)
+            return SliceSlicesIntegers(
+                new_io,
+                extract_index,
+                False,
+                _determ_token=f"{new_io._name}-extract-{extract_token}",
+            )
 
         return new_io

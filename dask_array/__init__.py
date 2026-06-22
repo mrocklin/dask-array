@@ -47,7 +47,7 @@ from dask_array._einsum import einsum
 from dask_array._gufunc import *
 from dask_array._histogram import histogram, histogram2d, histogramdd
 from dask_array._map_blocks import map_blocks
-from dask_array._overlap import map_overlap, overlap, trim_overlap
+from dask_array._overlap import map_overlap, overlap, sliding_window_view, trim_overlap
 from dask_array._routines import (
     aligned_coarsen_chunks,
     allclose,

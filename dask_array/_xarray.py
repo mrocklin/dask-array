@@ -43,6 +43,7 @@ class DaskArrayExprManager(ChunkManagerEntrypoint["Array"]):
 
     array_cls: type[Array]
     available: bool = True
+    vectorized_indexing_returns_numpy_order: bool = True
 
     def __init__(self) -> None:
         from dask_array._collection import Array
@@ -87,14 +88,6 @@ class DaskArrayExprManager(ChunkManagerEntrypoint["Array"]):
             kwargs["meta"] = np.ndarray
 
         return da.from_array(data, chunks, **kwargs)
-
-    def rechunk(
-        self,
-        data: Array,
-        chunks: Any,
-        **kwargs: Any,
-    ) -> Array:
-        return data.rechunk(chunks, **kwargs)
 
     def compute(
         self,
@@ -328,10 +321,12 @@ def _ensure_registered() -> None:
     we fix the race here by replacing the cached value after the fact.
     """
     try:
+        from dask_array._backends import register_collection_types
         from xarray.namedarray.parallelcompat import list_chunkmanagers
     except ImportError:
         return
 
+    register_collection_types()
     managers = list_chunkmanagers()
     if not isinstance(managers.get("dask"), DaskArrayExprManager):
         managers["dask"] = DaskArrayExprManager()

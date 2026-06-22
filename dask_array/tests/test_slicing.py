@@ -280,6 +280,14 @@ def test_empty_slice():
     assert_eq(y, np.ones((5, 5), dtype="i4")[:0])
 
 
+def test_slice_exact_name_from_array():
+    x = np.arange(10)
+    y = da.from_array(x, chunks=(10,), name="x")
+
+    assert_eq(y[:5], x[:5])
+    assert_eq(y[5:10], x[5:10])
+
+
 def test_multiple_list_slicing():
     x = np.random.default_rng().random((6, 7, 8))
     a = da.from_array(x, chunks=(3, 3, 3))

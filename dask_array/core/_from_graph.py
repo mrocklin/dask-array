@@ -31,7 +31,7 @@ def _dependency_keys_in_layer(layer, name):
     return keys
 
 
-def from_graph(layer, _meta, chunks, keys, name_prefix, dependencies=()):
+def from_graph(layer, _meta, chunks, keys, name_prefix, dependencies=(), rename=None):
     """Create a dask array from an existing task graph.
 
     This is primarily used internally for reconstructing arrays after
@@ -52,6 +52,9 @@ def from_graph(layer, _meta, chunks, keys, name_prefix, dependencies=()):
     dependencies : sequence, optional
         Dask-array collections or expressions that provide keys referenced by
         ``layer``.
+    rename : mapping, optional
+        Mapping from old layer names to new layer names, passed by Dask graph
+        manipulation when cloning collections.
 
     Returns
     -------
@@ -63,11 +66,7 @@ def from_graph(layer, _meta, chunks, keys, name_prefix, dependencies=()):
     layer_dict = None
     for dep in dependencies:
         expr = getattr(dep, "expr", dep)
-        lowered = (
-            expr.lower_completely()
-            if hasattr(expr, "lower_completely")
-            else expr
-        )
+        lowered = expr.lower_completely() if hasattr(expr, "lower_completely") else expr
         expr_dependencies.append(lowered)
         if getattr(lowered, "_name", None) == getattr(expr, "_name", None):
             continue
@@ -84,6 +83,16 @@ def from_graph(layer, _meta, chunks, keys, name_prefix, dependencies=()):
     if aliases:
         layer = layer_dict
         layer.update(aliases)
+
+    if rename is not None:
+        name_prefix = rename.get(
+            next(
+                (key[0] for key in keys if isinstance(key, tuple) and key[0] in rename),
+                name_prefix,
+            ),
+            rename.get(name_prefix, name_prefix),
+        )
+        keys = [(rename.get(key[0], key[0]), *key[1:]) if isinstance(key, tuple) else key for key in keys]
 
     return new_collection(
         FromGraph(

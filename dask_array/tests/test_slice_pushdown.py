@@ -136,8 +136,12 @@ def test_masked_array():
     arr = np.ma.array(np.arange(100).reshape(10, 10), mask=False)
     arr.mask[5, 5] = True
     x = da.from_array(arr, chunks=(3, 3))
+    expected = arr[4:7, 4:7].copy()
+
+    arr[5, 5] = 999
+    arr.mask[4, 4] = True
+
     result = x[4:7, 4:7].compute()
-    expected = arr[4:7, 4:7]
     assert_eq(result, expected)
     assert_eq(result.mask, expected.mask)
 

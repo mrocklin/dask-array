@@ -93,7 +93,9 @@ def meta_from_array(x, ndim=None, dtype=None):
     """
     # If using x._meta, x must be a Dask Array, some libraries (e.g. zarr)
     # implement a _meta attribute that are incompatible with Dask Array._meta
-    if hasattr(x, "_meta") and is_dask_collection(x) and is_arraylike(x):
+    if type(x).__module__.split(".")[0] == "dask_array" and hasattr(x, "_meta"):
+        x = x._meta
+    elif hasattr(x, "_meta") and is_dask_collection(x) and is_arraylike(x):
         x = x._meta
 
     if dtype is None and x is None:

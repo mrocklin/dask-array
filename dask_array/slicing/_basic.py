@@ -440,7 +440,7 @@ class SliceSlicesIntegers(Slice):
 
         # Check if the array implements _accept_slice (for operations like Elemwise,
         # Transpose, Blockwise, PartialReduce, ExpandDims that use the simplify_up pattern).
-        if hasattr(self.array, "_accept_slice"):
+        if self.allow_getitem_optimization and hasattr(self.array, "_accept_slice"):
             result = self.array._accept_slice(self)
             if result is not None:
                 return result

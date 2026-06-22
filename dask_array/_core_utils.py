@@ -1162,6 +1162,7 @@ def concatenate3(arrays):
 
 # Register numpy concatenate as default
 concatenate_lookup.register(np.ndarray, np.concatenate)
+concatenate_lookup.register(np.ma.MaskedArray, np.ma.concatenate)
 concatenate_lookup.register(object, np.concatenate)
 
 # Register numpy tensordot as default

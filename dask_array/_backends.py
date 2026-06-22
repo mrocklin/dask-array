@@ -20,6 +20,28 @@ except ImportError:
     scipy_installed = False
 
 
+_previous_collection_type_handlers = {}
+
+
+def _register_collection_type(type_, handler) -> None:
+    try:
+        current = get_collection_type.dispatch(type_)
+    except TypeError:
+        current = None
+    if current is not handler:
+        _previous_collection_type_handlers[type_] = current
+    get_collection_type.register(type_)(handler)
+
+
+def _fallback_collection(expr):
+    handler = _previous_collection_type_handlers.get(type(expr._meta))
+    if handler is None:
+        handler = _previous_collection_type_handlers.get(object)
+    if handler is None:
+        raise TypeError(f"Cannot create collection from {type(expr)}")
+    return handler(expr._meta)(expr)
+
+
 def create_array_collection(expr):
     """Create an Array collection from an expression."""
     from dask_array._collection import Array
@@ -28,38 +50,31 @@ def create_array_collection(expr):
     if isinstance(expr, ArrayExpr):
         return Array(expr)
 
-    # For non-ArrayExpr (e.g., from dask-dataframe), wrap in adapter
-    # This is a fallback - most cases should be ArrayExpr
-    raise TypeError(f"Expected ArrayExpr, got {type(expr)}")
+    return _fallback_collection(expr)
 
 
-@get_collection_type.register(np.ndarray)
 def get_collection_type_array(_):
     return create_array_collection
 
 
 if sparse_installed:
 
-    @get_collection_type.register(sparse.COO)
     def get_collection_type_sparse(_):
         return create_array_collection
 
 
 if scipy_installed:
 
-    @get_collection_type.register(sp.csr_matrix)
     def get_collection_type_scipy(_):
         return create_array_collection
 
 
 if scipy_installed and hasattr(sp, "sparray"):
 
-    @get_collection_type.register(sp.csr_array)
     def get_collection_type_scipy_array(_):
         return create_array_collection
 
 
-@get_collection_type.register(object)
 def get_collection_type_object(_):
     return create_scalar_collection
 
@@ -72,5 +87,18 @@ def create_scalar_collection(expr):
 
         return Array(expr)
 
-    # For other expressions, try to return something sensible
-    raise TypeError(f"Cannot create collection from {type(expr)}")
+    return _fallback_collection(expr)
+
+
+def register_collection_types() -> None:
+    _register_collection_type(np.ndarray, get_collection_type_array)
+    if sparse_installed:
+        _register_collection_type(sparse.COO, get_collection_type_sparse)
+    if scipy_installed:
+        _register_collection_type(sp.csr_matrix, get_collection_type_scipy)
+    if scipy_installed and hasattr(sp, "sparray"):
+        _register_collection_type(sp.csr_array, get_collection_type_scipy_array)
+    _register_collection_type(object, get_collection_type_object)
+
+
+register_collection_types()

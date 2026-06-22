@@ -23,7 +23,7 @@ from dask_array._utils import meta_from_array
 from dask.blockwise import blockwise as core_blockwise
 from dask.delayed import unpack_collections
 from dask.layers import ArrayBlockwiseDep
-from dask.tokenize import _tokenize_deterministic
+from dask.tokenize import TokenizationError, _tokenize_deterministic
 from dask.utils import SerializableLock, cached_property, funcname
 
 
@@ -223,13 +223,26 @@ class Blockwise(ArrayExpr):
 
     def __dask_tokenize__(self):
         if not self._determ_token:
+
+            def token_or_identity(value):
+                try:
+                    return _tokenize_deterministic(value)
+                except TokenizationError:
+                    return (type(value), id(value))
+
             # Handle non-serializable locks in kwargs by using their id()
             kwargs_token = {}
             for k, v in self.kwargs.items():
                 if k == "lock" and v and not isinstance(v, (bool, SerializableLock)):
                     kwargs_token[k] = ("lock-id", id(v))
                 else:
-                    kwargs_token[k] = v
+                    kwargs_token[k] = token_or_identity(v)
+
+            args_token = []
+            for arg, ind in toolz.partition(2, self.args):
+                if ind is None:
+                    arg = token_or_identity(arg)
+                args_token.extend([arg, ind])
 
             self._determ_token = _tokenize_deterministic(
                 self.func,
@@ -239,7 +252,7 @@ class Blockwise(ArrayExpr):
                 self.new_axes,
                 self.align_arrays,
                 self.concatenate,
-                *self.args,
+                *args_token,
                 **kwargs_token,
             )
         return self._determ_token

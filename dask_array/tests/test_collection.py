@@ -5,8 +5,10 @@ import operator
 import numpy as np
 import pytest
 
+import dask
 import dask_array as da
 from dask import is_dask_collection
+from dask.core import flatten
 from dask_array._test_utils import assert_eq
 from dask_array._collection import Array
 from dask_array._rechunk import Rechunk
@@ -104,6 +106,67 @@ def test_from_array():
     assert d.chunks == ((5, 5), (5, 5))
 
 
+def test_from_array_name_is_exact():
+    x = np.arange(6)
+
+    d = da.from_array(x, chunks=3, name="custom-name")
+
+    assert d.name == "custom-name"
+    assert_eq(d, x)
+
+
+def test_delayed_can_unpack_compute_false_store():
+    x = np.arange(12).reshape(3, 4)
+    y = da.from_array(x, chunks=(2, 2))
+    target = np.empty_like(x)
+
+    writes = da.store(y, target, compute=False, return_stored=True)
+    result = dask.delayed(lambda value: value)([writes]).compute()
+
+    np.testing.assert_array_equal(target, x)
+    np.testing.assert_array_equal(result[0], x)
+
+
+def test_store_region_rechunked_exact_name_slice():
+    x = np.ones(30)
+    y = da.from_array(x, chunks=(10, 10, 10), name="x")[5:25].rechunk((10, 10))
+    target = np.zeros(30)
+
+    da.store(y, target, regions=(slice(5, 25),))
+
+    expected = np.zeros(30)
+    expected[5:25] = 1
+    np.testing.assert_array_equal(target, expected)
+
+
+@pytest.mark.parametrize(
+    "array",
+    [
+        da.from_array(np.arange(10), chunks=4).rechunk((10,)),
+        da.from_array(np.arange(4).reshape(2, 2), chunks=1).reshape(-1),
+    ],
+)
+def test_name_matches_dask_key_namespace_after_lowering(array):
+    keys = list(flatten(array.__dask_keys__()))
+
+    assert keys
+    assert all(key[0] == array.name for key in keys)
+
+
+def test_reshape_accepts_c_order_keyword():
+    x = da.from_array(np.arange(6), chunks=3)
+
+    assert_eq(x.reshape((2, 3), order="C"), np.arange(6).reshape((2, 3)))
+
+
+def test_rechunk_auto_object_dtype_raises():
+    data = np.array(["a", "bb", "ccc", "dddd"], dtype=object)
+    x = da.from_array(data, chunks=(2,))
+
+    with pytest.raises(NotImplementedError, match="object dtype"):
+        x.rechunk("auto")
+
+
 def test_from_graph_same_key_prefix_different_layers():
     from dask_array.core import from_graph
 
@@ -133,10 +196,7 @@ def test_from_graph_tracks_expression_dependencies():
 
     x = da.from_array(np.arange(6), chunks=(3,)).rechunk((2,))
     name = "plus-one"
-    layer = {
-        (name, i): Task((name, i), operator.add, TaskRef((x.name, i)), 1)
-        for i in range(len(x.chunks[0]))
-    }
+    layer = {(name, i): Task((name, i), operator.add, TaskRef((x.name, i)), 1) for i in range(len(x.chunks[0]))}
 
     y = from_graph(
         layer,
@@ -148,15 +208,28 @@ def test_from_graph_tracks_expression_dependencies():
     )
     optimized = da.Array(y[:4].expr.optimize(fuse=True))
     graph = optimized.__dask_graph__()
-    missing = [
-        dep
-        for deps in DependenciesMapping(graph).values()
-        for dep in deps
-        if dep not in graph
-    ]
+    missing = [dep for deps in DependenciesMapping(graph).values() for dep in deps if dep not in graph]
 
     assert not missing
     assert_eq(optimized, np.arange(4) + 1)
+
+
+def test_from_graph_accepts_rename_keyword():
+    from dask_array.core import from_graph
+
+    x = from_graph(
+        {("x", 0): np.array([1])},
+        np.empty((0,), dtype=int),
+        ((1,),),
+        [("x", 0)],
+        "x",
+    )
+
+    rebuild, args = x.__dask_postpersist__()
+    renamed = rebuild(x.__dask_graph__(), *args, rename={x.name: "renamed"})
+
+    assert renamed.name.startswith("renamed-")
+    assert_eq(renamed, np.array([1]))
 
 
 @pytest.mark.xfail(reason="Requires dask core to recognize 'dask_array' module in is_dask_collection")
@@ -235,6 +308,15 @@ def test_rechunk_optimize():
     # Double rechunk should simplify to single rechunk
     assert c.expr.optimize()._name == d.expr.optimize()._name
     assert_eq(c, a)
+
+
+def test_dask_optimize_rechunk():
+    x = da.from_array(np.arange(12), chunks=3).rechunk((4,))
+
+    (optimized,) = dask.optimize(x)
+
+    assert_eq(optimized, np.arange(12))
+    assert optimized.chunks == ((4, 4, 4),)
 
 
 def test_slicing_optimize_identity():
@@ -464,11 +546,11 @@ def test_rechunk_pushdown_to_io():
     b = da.from_array(a, chunks=(4, 4))
 
     result = b.rechunk((5, 2)).expr.optimize()
-    expected = da.from_array(a, chunks=((5, 5), (2, 2, 2, 2, 2))).expr
 
-    # Both should be FromArray with matching structure
+    # Rechunk is pushed into FromArray with the requested chunks.
     assert type(result) is FromArray
-    assert result._name == expected._name
+    assert result.chunks == ((5, 5), (2, 2, 2, 2, 2))
+    assert_eq(da.Array(result), a)
 
 
 def test_rechunk_chain_optimize():
@@ -479,11 +561,11 @@ def test_rechunk_chain_optimize():
     b = da.from_array(a, chunks=(4, 4))
 
     result = b.rechunk((2, 5)).rechunk((5, 2)).expr.optimize()
-    expected = da.from_array(a, chunks=((5, 5), (2, 2, 2, 2, 2))).expr
 
-    # Both rechunks eliminated, just FromArray
+    # Both rechunks eliminated, just FromArray with the final chunks.
     assert type(result) is FromArray
-    assert result._name == expected._name
+    assert result.chunks == ((5, 5), (2, 2, 2, 2, 2))
+    assert_eq(da.Array(result), a)
 
 
 def test_rechunk_transpose_pushdown_to_io():
@@ -495,12 +577,12 @@ def test_rechunk_transpose_pushdown_to_io():
     b = da.from_array(a, chunks=(4, 4))
 
     result = b.T.rechunk((5, 2)).expr.optimize()
-    # Rechunk pushed through transpose: input rechunked to (2, 5) then transposed
-    expected = da.from_array(a, chunks=((2, 2, 2, 2, 2), (5, 5))).T.expr
 
     assert type(result) is Transpose
     assert type(result.array) is FromArray
-    assert result._name == expected._name
+    assert result.array.chunks == ((2, 2, 2, 2, 2), (5, 5))
+    assert result.chunks == ((5, 5), (2, 2, 2, 2, 2))
+    assert_eq(da.Array(result), a.T)
 
 
 def test_rechunk_elemwise_pushdown_to_io():
