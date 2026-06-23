@@ -372,61 +372,63 @@ def _graph_size_threshold(old_chunks, new_chunks, threshold):
     return threshold * (_number_of_blocks(old_chunks) + _number_of_blocks(new_chunks))
 
 
-# Target for how many old blocks a single new block should depend on.  The
-# block-size planner bounds chunk *size*; this applies pressure on *fan-in* so we
-# don't build hub nodes with thousands of dependencies, which overwhelm the
-# scheduler.
-_default_fanin_limit = 100
+# Target for the number of dependencies (fan-in) and dependents (fan-out) of any
+# one block.  The block-size planner bounds chunk *size*; this applies pressure on
+# *degree* so we don't build hub nodes with thousands of edges, which overwhelm
+# the scheduler.
+_default_degree_limit = 100
 
 
-def _max_fanin(old_chunks, new_chunks):
-    """Upper bound on the number of old blocks feeding any single new block.
+def _max_overlap(from_chunks, to_chunks):
+    """Most ``from_chunks`` blocks overlapping any single ``to_chunks`` block.
 
-    Fan-in is the product over axes of the most old chunks that overlap one new
-    chunk, so we take the per-axis maximum and multiply.
+    A new block's fan-in is the product over axes of this per-axis maximum;
+    swapping the arguments gives an old block's fan-out.
     """
-    per_axis = (max(len(ins) for ins in axis) for axis in old_to_new(old_chunks, new_chunks))
+    per_axis = (max(len(ins) for ins in axis) for axis in old_to_new(from_chunks, to_chunks))
     return reduce(mul, per_axis, 1)
 
 
-def _bound_fanin(old_chunks, new_chunks, fanin_limit):
-    """Subdivide one rechunk step to keep per-block fan-in near *fanin_limit*.
+def _bound_degree(old_chunks, new_chunks, degree_limit):
+    """Subdivide one rechunk step to keep both per-block fan-in and fan-out near
+    *degree_limit*.
 
     Returns a list of chunkings ending in *new_chunks*.  When the step already
     stays under the limit it is returned unchanged.  Otherwise it is replaced by a
-    geometric sequence of coarser steps: each merging axis has its block count
-    interpolated between old and new, while splitting axes (which contribute ~1 to
-    fan-in) jump straight to the target.  Interpolating only toward finer blocks
-    keeps every intermediate no larger than ``new_chunks``, so the block-size
-    bound from planning is preserved.
+    geometric sequence of intermediate chunkings: every axis whose block count
+    changes has that count interpolated between old and new.  Merging axes shed
+    their inputs gradually (bounding fan-in) and splitting axes spread their
+    outputs gradually (bounding fan-out); because one axis coarsens as another
+    refines, block size stays near the endpoints and the planner's size budget is
+    preserved.
 
-    This is pressure, not a hard cap.  Fan-in from merges is bounded tightly, but
-    fan-in arising purely from many simultaneously boundary-misaligned axes (at
-    most ~2**ndim) cannot be reduced by adding steps, so it may slightly exceed
-    the limit in that rare case.
+    This is pressure, not a hard cap.  Degree from genuine merges and splits is
+    bounded tightly, but degree arising purely from many simultaneously
+    boundary-misaligned axes (at most ~2**ndim) cannot be reduced by adding steps,
+    so it may slightly exceed the limit in that rare case.
     """
-    fanin_limit = max(2, fanin_limit)  # below 2 nothing can merge (and log(1) == 0)
-    fanin = _max_fanin(old_chunks, new_chunks)
-    if fanin <= fanin_limit:
+    degree_limit = max(2, degree_limit)  # below 2 nothing can merge (and log(1) == 0)
+    degree = max(_max_overlap(old_chunks, new_chunks), _max_overlap(new_chunks, old_chunks))
+    if degree <= degree_limit:
         return [new_chunks]
 
-    nsteps = math.ceil(math.log(fanin) / math.log(fanin_limit))
+    nsteps = math.ceil(math.log(degree) / math.log(degree_limit))
     steps = []
     prev = old_chunks
     for t in range(1, nsteps):
         intermediate = []
         for oc, nc in zip(old_chunks, new_chunks):
             no, nn = len(oc), len(nc)
-            if no <= nn:
-                # equal or splitting axis: ~1 fan-in, so go straight to target
-                intermediate.append(nc)
-            else:
-                # merging axis: interpolate block count geometrically
-                count = round(no * (nn / no) ** (t / nsteps))
-                count = min(max(count, nn), no)
-                intermediate.append(merge_to_number(oc, count))
+            if no == nn:
+                intermediate.append(nc)  # unchanged axis
+                continue
+            # interpolate the block count geometrically between old and new
+            count = round(no * (nn / no) ** (t / nsteps))
+            count = min(max(count, min(no, nn)), max(no, nn))
+            # coarsen the finer endpoint so the intermediate aligns with it
+            intermediate.append(merge_to_number(oc if no > nn else nc, count))
         intermediate = tuple(intermediate)
-        if intermediate != prev:  # drop steps that make no progress (e.g. all axes split)
+        if intermediate != prev:  # drop steps that make no progress
             steps.append(intermediate)
             prev = intermediate
     if not steps or steps[-1] != new_chunks:
@@ -453,7 +455,7 @@ def plan_rechunk(old_chunks, new_chunks, itemsize, threshold=None, block_size_li
     block_size_limit = block_size_limit or config.get("array.chunk-size")
     if isinstance(block_size_limit, str):
         block_size_limit = parse_bytes(block_size_limit)
-    fanin_limit = config.get("array.rechunk.fanin-limit", _default_fanin_limit)
+    degree_limit = config.get("array.rechunk.degree-limit", _default_degree_limit)
 
     has_nans = (any(math.isnan(y) for y in x) for x in old_chunks)
 
@@ -498,14 +500,15 @@ def plan_rechunk(old_chunks, new_chunks, itemsize, threshold=None, block_size_li
 
         steps = steps + [new_chunks]
 
-    # Separate pass: bound per-node fan-in.  The logic above caps each chunk's
-    # *size* but not how many inputs a merge node depends on, so a thin-to-fat
-    # rechunk can build hub nodes with thousands of dependencies.  Subdivide any
-    # step that would exceed the limit into a deeper, scheduler-friendly tree.
+    # Separate pass: bound per-node degree.  The logic above caps each chunk's
+    # *size* but not how many inputs a merge node depends on (fan-in) nor how many
+    # outputs a block feeds (fan-out), so a thin-to-fat rechunk can build hub nodes
+    # with thousands of edges.  Subdivide any step that would exceed the limit into
+    # a deeper, scheduler-friendly tree.
     limited = []
     prev = old_chunks
     for step in steps:
-        limited.extend(_bound_fanin(prev, step, fanin_limit))
+        limited.extend(_bound_degree(prev, step, degree_limit))
         prev = step
     return limited
 
