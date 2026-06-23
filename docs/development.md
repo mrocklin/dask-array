@@ -109,6 +109,5 @@ release a new version.
 
 - **Windows** wheels are not built; Windows users fall back to the pure-Python
   wheel. Add a `*-pc-windows-msvc` target to the `build-native` matrix to ship them.
-- **Coiled package-sync** does not match abi3 wheels (see `scripts/build-wheels.sh`),
-  so it won't pick these up — that dev flow stays on the private index. Untracked
-  today; track `build-wheels.sh` if it becomes part of a pipeline.
+- **Coiled package-sync** does not yet match abi3 wheels, so it won't pick these
+  up — that dev flow stays on the private index until it gets its own pipeline.

@@ -14,6 +14,8 @@ from dask_array._core_utils import apply_infer_dtype, normalize_chunks
 from dask_array._utils import meta_from_array
 from dask.core import flatten
 
+__all__ = ["apply_gufunc", "as_gufunc", "gufunc"]
+
 # Modified version of `numpy.lib.function_base._parse_gufunc_signature`
 # Modifications:
 #   - Allow for zero input arguments

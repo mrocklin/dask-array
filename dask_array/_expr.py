@@ -169,8 +169,8 @@ class ArrayExpr(SingletonExpr):
         """Return rich table representation if available, else simple repr."""
         try:
             return repr(self._table())
-        except (ImportError, NotImplementedError, Exception):
-            return str(self)
+        except (ImportError, NotImplementedError):
+            return "\n".join(self._tree_repr_lines())
 
     def pprint(self):
         """Pretty print the expression tree using rich table if available."""

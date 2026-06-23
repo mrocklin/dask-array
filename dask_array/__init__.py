@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-import dask
-import numpy as np
+from importlib.metadata import PackageNotFoundError as _PackageNotFoundError
+from importlib.metadata import version as _dist_version
+
+import dask as _dask
+import numpy as _np
 
 # Rechunk's threshold trades data copies for tasks: a higher value means fewer
 # intermediate copies and more tasks. Frisky makes tasks cheap, so we raise the
@@ -9,9 +12,9 @@ import numpy as np
 # 15-35%). update_defaults respects an explicit user setting (but a
 # dask.config.refresh() would revert it to 4). The separate p2p-vs-tasks choice
 # stays at 4 (see _choose_rechunk_method).
-dask.config.update_defaults({"array": {"rechunk": {"threshold": 32}}})
+_dask.config.update_defaults({"array": {"rechunk": {"threshold": 32}}})
 
-import dask_array._backends
+from dask_array import _backends as _backends
 from dask_array import _chunk as chunk
 from dask_array._core_utils import PerformanceWarning
 from dask.base import compute
@@ -191,6 +194,11 @@ from dask_array._expr_flow import expr_flow
 from dask_array._visualize import expr_table
 from dask_array import xarray
 
+try:
+    __version__ = _dist_version("dask-array")
+except _PackageNotFoundError:
+    __version__ = "0.0.0+unknown"
+
 
 def optimize(dsk, keys=None, **kwargs):
     """Optimize a dask-array collection.
@@ -207,25 +215,25 @@ def optimize(dsk, keys=None, **kwargs):
 
 
 newaxis = None
-nan = np.nan
-inf = np.inf
-e = np.e
-pi = np.pi
-euler_gamma = np.euler_gamma
+nan = _np.nan
+inf = _np.inf
+e = _np.e
+pi = _np.pi
+euler_gamma = _np.euler_gamma
 
-bool = np.bool
-int8 = np.int8
-int16 = np.int16
-int32 = np.int32
-int64 = np.int64
-uint8 = np.uint8
-uint16 = np.uint16
-uint32 = np.uint32
-uint64 = np.uint64
-float32 = np.float32
-float64 = np.float64
-complex64 = np.complex64
-complex128 = np.complex128
+bool = _np.bool
+int8 = _np.int8
+int16 = _np.int16
+int32 = _np.int32
+int64 = _np.int64
+uint8 = _np.uint8
+uint16 = _np.uint16
+uint32 = _np.uint32
+uint64 = _np.uint64
+float32 = _np.float32
+float64 = _np.float64
+complex64 = _np.complex64
+complex128 = _np.complex128
 
 # Ensure our xarray ChunkManager replaces the built-in DaskManager
 # regardless of entry point enumeration order. See _xarray.py for details.

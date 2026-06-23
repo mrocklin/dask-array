@@ -91,6 +91,7 @@ impl FromArrayGetterLayer {
     /// `dims`: per dimension `(chunk_sizes, region_offset)`. `extra_args`:
     /// `Some((asarray, lock))` for the 5-arg getter call, else `None`.
     #[new]
+    #[pyo3(signature = (name, array, getitem, dims, inline_array, extra_args=None))]
     fn new(
         name: String,
         array: PyObject,

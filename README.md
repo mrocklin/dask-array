@@ -27,8 +27,7 @@ import dask_array as da
 x = da.ones((1000, 1000), chunks=(100, 100))
 
 y = x + x.T
-z = y.rechunk((1000, 10))
-result = z[:100, :100]
+result = y[:100, :100]
 ```
 
 But when you go to compute, your calculation gets rewritten to be more
@@ -37,28 +36,25 @@ underlying array.
 
 ```python
 >>> result.pprint()
-Operation               Shape    Bytes   Chunks
-  Getitem            (100, 100)   78 kiB   100×10
-  └ Rechunk        (1000, 1000)  7.6 MiB  1000×10
-    └ Add          (1000, 1000)  7.6 MiB  100×100
-      ├ Ones       (1000, 1000)  7.6 MiB  100×100
-      └ Transpose  (1000, 1000)  7.6 MiB  100×100
-        └ Ones     (1000, 1000)  7.6 MiB  100×100
+Operation             Shape    Bytes   Chunks
+  Getitem          (100, 100)   78 kiB  100×100
+  └ Add          (1000, 1000)  7.6 MiB  100×100
+    ├ Ones       (1000, 1000)  7.6 MiB  100×100
+    └ Transpose  (1000, 1000)  7.6 MiB  100×100
+      └ Ones     (1000, 1000)  7.6 MiB  100×100
 ```
 
-This calculation created 7 MiB of data, then did work, then rechunked, then
-sliced.  It would have been more efficient to create smaller arrays, and chunk
-them immediately in the desired form.
+This calculation starts from a large array expression, then takes a small
+slice. It is more efficient to push that slice into the expression before
+building the task graph.
 
 The `optimize` function rewrites things automatically.
 
 ```python
 >>> result.optimize().pprint()
-Operation         Shape   Bytes  Chunks
-Add          (100, 100)  78 kiB  100×10
-├ Ones       (100, 100)  78 kiB  100×10
-└ Transpose  (100, 100)  78 kiB  100×10
-  └ Ones     (100, 100)  78 kiB  10×100
+Operation            Shape   Bytes   Chunks
+  FusedBlockwise  (100, 100)  78 kiB  100×100
+  └ Ones          (100, 100)  78 kiB  100×100
 ```
 
 You don't need to call `optimize` though.  Dask `compute`/`persist` machinery
@@ -69,13 +65,21 @@ will do this for you.  You just need to change your import.
 import dask_array as da
 ```
 
+## Native Frisky acceleration
+
+The normal Dask scheduler path is pure Python and works without a Rust
+toolchain. On platforms with a native wheel, `dask-array` also includes a Rust
+accelerator that Frisky can use to submit compact task records instead of
+materializing large Python task graphs. This is automatic when computing with a
+Frisky scheduler; otherwise computations stay on the standard Dask path.
+
 ## Xarray
 
 Dask-array can replace the default dask.array by registering itself as an
 Xarray chunk manager.
 
 ```python
-from dask_array.xarray import regstier
+from dask_array.xarray import register
 register()
 ```
 
