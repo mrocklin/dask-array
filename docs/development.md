@@ -31,11 +31,19 @@ the source tree with maturin:
 MATURIN_IMPORT_HOOK_ENABLED=0 maturin develop --release
 ```
 
-This drops `dask_array/_rust.*.so` next to the package; an editable install then
-picks it up. Re-run it after changing anything under `crates/dask-array-python/`,
-and bump `PROTOCOL_REVISION` (kept in sync between `dask_array/_frisky/base.py`
-and the Rust `lib.rs`) when the record surface changes. See AGENTS.md →
-"Frisky task-graph support" for the architecture.
+On PowerShell:
+
+```powershell
+$env:MATURIN_IMPORT_HOOK_ENABLED = "0"
+maturin develop --release
+```
+
+This drops the platform-native `dask_array/_rust.*` extension next to the
+package; an editable install then picks it up. Re-run it after changing anything
+under `crates/dask-array-python/`, and bump `PROTOCOL_REVISION` (kept in sync
+between `dask_array/_frisky/base.py` and the Rust `lib.rs`) when the record
+surface changes. See AGENTS.md → "Frisky task-graph support" for the
+architecture.
 
 ## Testing
 
@@ -69,13 +77,15 @@ The project publishes to PyPI as `dask-array`. The release workflow
 
 - a pure-Python **sdist** + **`py3-none-any` wheel** (hatchling/hatch-vcs), and
 - native **abi3 wheels** (maturin) for **linux x86_64/aarch64** and
-  **macOS arm64** — one wheel per platform covers Python ≥ 3.10.
+  **macOS arm64** and **Windows x86_64** — one wheel per platform covers
+  Python ≥ 3.10.
 
-It smoke-tests the Linux x86_64 native wheel (which must ship `_rust`) and the
-sdist (which must stay pure-Python), then publishes everything via PyPI Trusted
-Publishing. `pip install dask-array` then resolves the native wheel where the
-platform matches, the `py3-none-any` wheel elsewhere, and the sdist
-(pure-Python, no Rust toolchain) as a last resort.
+It smoke-tests the Linux x86_64 native wheel across supported Python versions,
+the Windows x86_64 native wheel on Python 3.12, and the sdist (which must stay
+pure-Python), then publishes everything via PyPI Trusted Publishing.
+`pip install dask-array` then resolves the native wheel where the platform
+matches, the `py3-none-any` wheel elsewhere, and the sdist (pure-Python, no Rust
+toolchain) as a last resort.
 
 The version comes from the git tag (hatch-vcs); the native-wheel job stamps the
 same tag version into `pyproject.toml` before building (maturin doesn't read
@@ -95,7 +105,7 @@ no version string to edit by hand.
 3. **Build-only trial.** From the Actions tab, run the *Publish to PyPI* workflow
    manually (`workflow_dispatch`). It builds the full wheel matrix and runs the
    smoke tests **without publishing** (publish is gated on a tag push). Confirm
-   all three native build jobs, the pure-Python build job, and the smoke-test
+   all four native build jobs, the pure-Python build job, and the smoke-test
    jobs are green before tagging.
 4. Tag and push to publish:
 
@@ -109,7 +119,7 @@ release a new version.
 
 ### Not yet covered
 
-- **Windows** wheels are not built; Windows users fall back to the pure-Python
-  wheel. Add a `*-pc-windows-msvc` target to the `build-native` matrix to ship them.
+- **Windows ARM64** wheels are not built; those users fall back to the pure-Python
+  wheel.
 - **Coiled package-sync** does not yet match abi3 wheels, so it won't pick these
   up — that dev flow stays on the private index until it gets its own pipeline.

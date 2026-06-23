@@ -75,10 +75,14 @@ jobs:
           - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { os: ubuntu-latest, target: aarch64-unknown-linux-gnu }
           - { os: macos-14, target: aarch64-apple-darwin }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc }
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
       # maturin reads the version from [project] version (static) and otherwise
       # falls back to the Cargo crate version — it does NOT understand hatch-vcs.
       # On a release tag, stamp the tag version so the native wheels match the
@@ -86,22 +90,24 @@ jobs:
       # version dynamic (maturin uses the Cargo version) since we don't publish.
       - name: Stamp release version
         if: github.ref_type == 'tag'
+        shell: python
         run: |
-          python3 - "$GITHUB_REF_NAME" <<'PY'
-          import re, sys, pathlib
-          version = sys.argv[1]
+          import os
+          import pathlib
+          import re
+
+          version = os.environ["GITHUB_REF_NAME"]
           p = pathlib.Path("pyproject.toml")
           text, n = re.subn(r'^dynamic = \["version"\]\s*$', f'version = "{version}"', p.read_text(), count=1, flags=re.M)
           if n != 1:
               raise SystemExit('could not find `dynamic = ["version"]` to stamp')
           p.write_text(text)
           print(f"stamped version = {version}")
-          PY
       - uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
           # abi3 (Cargo: abi3-py310) → one wheel per platform covers Python >= 3.10.
-          # manylinux is consulted only for linux targets; ignored on macOS.
+          # manylinux is consulted only for linux targets; ignored on non-Linux targets.
           args: --release --out dist
           manylinux: auto
       - uses: actions/upload-artifact@v7
@@ -157,9 +163,36 @@ jobs:
           print("pure-Python sdist OK")
           PY
 
+  smoke-test-windows-native:
+    name: Smoke-test Windows native wheel
+    needs: build-native
+    runs-on: windows-latest
+    steps:
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v8.2.0
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: dist-native-x86_64-pc-windows-msvc
+          path: dist
+          merge-multiple: true
+      - run: uv venv --python 3.12 .venv
+      - name: Install Windows wheel
+        run: |
+          $wheel = Get-ChildItem dist\dask_array-*-win_amd64.whl | Select-Object -First 1
+          if (-not $wheel) {
+            throw "could not find Windows wheel"
+          }
+          Write-Host "installing $($wheel.FullName)"
+          uv pip install --python .venv\Scripts\python.exe $wheel.FullName
+      - name: Check Windows native wheel
+        run: |
+          .venv\Scripts\python.exe -c "import dask_array as da, dask_array._rust; x = da.ones((4, 4), chunks=(2, 2)); assert x.sum().compute() == 16; print('Windows native wheel OK')"
+
   publish:
     name: Publish distributions
-    needs: smoke-test
+    needs: [smoke-test, smoke-test-windows-native]
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     environment:

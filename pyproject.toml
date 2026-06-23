@@ -57,10 +57,10 @@ source = "vcs"
 
 [tool.hatch.build.targets.wheel]
 packages = ["dask_array"]
-# A locally-built _rust.*.so is a maturin artifact; keep hatchling wheels/sdists
-# pure-Python so `uv build` is deterministic regardless of dev state.
+# A locally-built _rust extension is a maturin artifact; keep hatchling
+# wheels/sdists pure-Python so `uv build` is deterministic regardless of dev state.
 exclude = [
-    "dask_array/_rust*.so",
+    "dask_array/_rust*",
     "/dask_array/_test_utils.py",
     "/dask_array/tests",
     "/dask_array/tests/**",
@@ -68,7 +68,7 @@ exclude = [
 
 [tool.hatch.build.targets.sdist]
 exclude = [
-    "dask_array/_rust*.so",
+    "dask_array/_rust*",
     "/.ai-docs",
     "/.claude",
     "/AGENTS.md",
