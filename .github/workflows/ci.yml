@@ -23,3 +23,44 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - uses: astral-sh/setup-uv@v8.2.0
       - run: uv run --extra test --extra complete --extra sparse pytest dask_array/tests/ -q
+
+  test-frisky-rust:
+    name: Test Frisky Rust path
+    runs-on: ubuntu-latest
+    env:
+      FRISKY_VERSION: "0.1.1"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: astral-sh/setup-uv@v8.2.0
+      - name: Install test environment
+        run: uv sync --extra test --extra complete --extra sparse --group dev
+      - name: Install Frisky
+        # Frisky 0.1.1's full dask-array gate is validated against this Dask-era stack.
+        run: uv pip install "frisky==$FRISKY_VERSION" "dask==2026.3.0" "numpy==2.4.6" "xarray==2026.4.0"
+      - name: Build dask-array Rust extension
+        run: MATURIN_IMPORT_HOOK_ENABLED=0 .venv/bin/python -m maturin develop --release
+      - name: Check native Frisky layer
+        run: |
+          .venv/bin/python - <<'PY'
+          import dask_array as da
+          import dask_array._rust
+          from dask_array._frisky.base import _PROTOCOL_REVISION
+          import frisky
+
+          assert dask_array._rust.PROTOCOL_REVISION == _PROTOCOL_REVISION
+          x = da.arange(12, chunks=4) + 1
+          layer = x.expr.simplify().lower_completely()._frisky_layer()
+          assert type(layer).__name__ == "BlockwiseLayer"
+          assert type(layer._rust).__module__ == "builtins"
+          assert layer.to_task_records()
+          print("frisky", getattr(frisky, "__version__", "unknown"))
+          print("protocol", _PROTOCOL_REVISION)
+          PY
+      - name: Test with Frisky scheduler
+        run: .venv/bin/python -m pytest dask_array/tests/ --scheduler=frisky -q
