@@ -9,6 +9,8 @@ source (which takes the getter layer, not the ndarray eager-slice layer): plain,
 
 from __future__ import annotations
 
+import importlib.util
+
 import numpy as np
 import pytest
 
@@ -96,8 +98,11 @@ def _assert_records_match(arr, expected):
 def test_records_from_arraylike_basic():
     base = np.arange(120.0).reshape(8, 15)
     arr = da.from_array(_ArrayLike(base), chunks=(3, 5))
-    # sanity: this really took the native getter layer, not a fallback
-    arr.expr.simplify().lower_completely()._frisky_layer()
+    # With the optional Rust extension present, sanity-check that this takes the
+    # native getter layer rather than the generic graph adapter. Pure-Python CI
+    # still exercises the records behavior below through the adapter fallback.
+    if importlib.util.find_spec("dask_array._rust") is not None:
+        arr.expr.simplify().lower_completely()._frisky_layer()
     _assert_records_match(arr, base)
 
 
