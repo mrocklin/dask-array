@@ -47,7 +47,15 @@ impl StackLayer {
         axis: usize,
         indexer: PyObject,
     ) -> Self {
-        Self { name, func, kwargs, dep_names, out_numblocks, axis, indexer }
+        Self {
+            name,
+            func,
+            kwargs,
+            dep_names,
+            out_numblocks,
+            axis,
+            indexer,
+        }
     }
 
     fn to_dask_graph<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
@@ -68,7 +76,11 @@ impl StackLayer {
     /// - Slots: `[Dep{name_idx: c[axis], coord: source_coord}, Literal(0)]`.
     fn expand(&self) -> Expanded<'_> {
         let out_ndim = self.out_numblocks.len();
-        let total: usize = if out_ndim == 0 { 1 } else { self.out_numblocks.iter().product() };
+        let total: usize = if out_ndim == 0 {
+            1
+        } else {
+            self.out_numblocks.iter().product()
+        };
         let mut tasks = Vec::with_capacity(total);
         let mut out_coord = vec![0u32; out_ndim];
 
@@ -90,7 +102,10 @@ impl StackLayer {
                 compute: Compute::Call { func_idx: 0 },
                 slots: vec![
                     // dep_names[name_idx] is the input array for this block.
-                    ArgSlot::Dep { name_idx, coord: src_coord },
+                    ArgSlot::Dep {
+                        name_idx,
+                        coord: src_coord,
+                    },
                     // literals[0] is the shared indexer (same for every block).
                     ArgSlot::Literal(0),
                 ],

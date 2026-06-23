@@ -100,7 +100,11 @@ impl ArgChunkLayer {
     /// `p`-th block.
     fn expand(&self) -> Expanded<'_> {
         let ndim = self.numblocks.len();
-        let total: usize = if ndim == 0 { 1 } else { self.numblocks.iter().product() };
+        let total: usize = if ndim == 0 {
+            1
+        } else {
+            self.numblocks.iter().product()
+        };
         let mut tasks = Vec::with_capacity(total);
         let mut coord = vec![0u32; ndim];
 
@@ -122,7 +126,10 @@ impl ArgChunkLayer {
                 compute: Compute::Call { func_idx: 0 },
                 // chunk_func(x_block, axis, off)
                 slots: vec![
-                    ArgSlot::Dep { name_idx: 0, coord: coord.clone() },
+                    ArgSlot::Dep {
+                        name_idx: 0,
+                        coord: coord.clone(),
+                    },
                     ArgSlot::Literal(0), // axis
                     off_slot,
                 ],

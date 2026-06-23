@@ -60,7 +60,11 @@ pub enum Num {
 /// One element of a getitem index tuple.
 pub enum IndexElem {
     /// `slice(start, stop, step)`; a `None` maps to Python `None`.
-    Slice { start: Option<i64>, stop: Option<i64>, step: Option<i64> },
+    Slice {
+        start: Option<i64>,
+        stop: Option<i64>,
+        step: Option<i64>,
+    },
     /// An integer index (drops the dimension).
     Int(i64),
 }
@@ -74,7 +78,10 @@ pub enum Compute {
     /// value is an [`ArgSlot`], so a kwarg can be a literal, scalar, int-tuple,
     /// nested list or dependency. Used where blocks differ by a keyword — e.g.
     /// `diag`'s off-diagonal `np.zeros_like(meta, shape=(m, n))`.
-    CallKw { func_idx: usize, kwargs: Vec<(String, ArgSlot)> },
+    CallKw {
+        func_idx: usize,
+        kwargs: Vec<(String, ArgSlot)>,
+    },
     /// An alias: the key resolves directly to its single dependency (`slots[0]`,
     /// a [`ArgSlot::Dep`]). The dask path emits a `dask._task_spec.Alias`; the
     /// records path emits a `toolz.identity` task (Frisky has no alias node).
@@ -158,9 +165,11 @@ fn index_tuple<'py>(
     let mut out: Vec<Bound<'py, PyAny>> = Vec::with_capacity(elems.len());
     for e in elems {
         let item = match e {
-            IndexElem::Slice { start, stop, step } => {
-                slice_cls.call1((opt_obj(py, *start)?, opt_obj(py, *stop)?, opt_obj(py, *step)?))?
-            }
+            IndexElem::Slice { start, stop, step } => slice_cls.call1((
+                opt_obj(py, *start)?,
+                opt_obj(py, *stop)?,
+                opt_obj(py, *step)?,
+            ))?,
             IndexElem::Int(i) => i.into_pyobject(py)?.into_any(),
         };
         out.push(item);
@@ -191,7 +200,14 @@ fn build_arg_dask<'py>(
         ArgSlot::List(items) => {
             let mut elems: Vec<Bound<'py, PyAny>> = Vec::with_capacity(items.len());
             for it in items {
-                elems.push(build_arg_dask(py, exp, it, taskref_cls, list_cls, slice_cls)?);
+                elems.push(build_arg_dask(
+                    py,
+                    exp,
+                    it,
+                    taskref_cls,
+                    list_cls,
+                    slice_cls,
+                )?);
             }
             // dask._task_spec.List(*elems)
             Ok(list_cls.call1(PyTuple::new(py, elems)?)?)
@@ -219,7 +235,9 @@ pub fn to_dask_graph<'py>(py: Python<'py>, exp: &Expanded) -> PyResult<Bound<'py
         match &task.compute {
             Compute::Alias => {
                 let src = match &task.slots[0] {
-                    ArgSlot::Dep { name_idx, coord } => key_tuple(py, &exp.dep_names[*name_idx], coord)?,
+                    ArgSlot::Dep { name_idx, coord } => {
+                        key_tuple(py, &exp.dep_names[*name_idx], coord)?
+                    }
                     _ => return Err(PyValueError::new_err("alias source must be a Dep")),
                 };
                 let alias = alias_cls.call1((key.clone(), src))?;
@@ -231,14 +249,24 @@ pub fn to_dask_graph<'py>(py: Python<'py>, exp: &Expanded) -> PyResult<Bound<'py
                 call.push(key.clone().into_any());
                 call.push(func.clone());
                 for slot in &task.slots {
-                    call.push(build_arg_dask(py, exp, slot, &taskref_cls, &list_cls, &slice_cls)?);
+                    call.push(build_arg_dask(
+                        py,
+                        exp,
+                        slot,
+                        &taskref_cls,
+                        &list_cls,
+                        &slice_cls,
+                    )?);
                 }
                 // Per-task kwargs (CallKw) merge over the shared dict; plain
                 // Call uses the shared dict directly.
                 let kw = if let Compute::CallKw { kwargs: per, .. } = &task.compute {
                     let d = kwargs.copy()?;
                     for (name, slot) in per {
-                        d.set_item(name, build_arg_dask(py, exp, slot, &taskref_cls, &list_cls, &slice_cls)?)?;
+                        d.set_item(
+                            name,
+                            build_arg_dask(py, exp, slot, &taskref_cls, &list_cls, &slice_cls)?,
+                        )?;
                     }
                     d
                 } else {
@@ -331,7 +359,14 @@ pub fn to_task_records<'py>(py: Python<'py>, exp: &Expanded) -> PyResult<Bound<'
                 let func = exp.funcs[*func_idx].bind(py);
                 let mut args: Vec<Bound<'py, PyAny>> = Vec::with_capacity(task.slots.len());
                 for slot in &task.slots {
-                    args.push(build_arg_rec(py, exp, slot, &taskref_cls, &slice_cls, &mut deps)?);
+                    args.push(build_arg_rec(
+                        py,
+                        exp,
+                        slot,
+                        &taskref_cls,
+                        &slice_cls,
+                        &mut deps,
+                    )?);
                 }
                 let args_tuple = PyTuple::new(py, args)?;
                 // Per-task kwargs (CallKw) merge over the shared dict — a kwarg
@@ -339,7 +374,10 @@ pub fn to_task_records<'py>(py: Python<'py>, exp: &Expanded) -> PyResult<Bound<'
                 let kw = if let Compute::CallKw { kwargs: per, .. } = &task.compute {
                     let d = kwargs.downcast::<PyDict>()?.copy()?;
                     for (name, slot) in per {
-                        d.set_item(name, build_arg_rec(py, exp, slot, &taskref_cls, &slice_cls, &mut deps)?)?;
+                        d.set_item(
+                            name,
+                            build_arg_rec(py, exp, slot, &taskref_cls, &slice_cls, &mut deps)?,
+                        )?;
                     }
                     d.into_any()
                 } else {

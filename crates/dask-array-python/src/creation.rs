@@ -23,7 +23,12 @@ pub struct CreationLayer {
 impl CreationLayer {
     #[new]
     fn new(name: String, func: PyObject, kwargs: PyObject, chunks: Vec<Vec<i64>>) -> Self {
-        Self { name, func, kwargs, chunks }
+        Self {
+            name,
+            func,
+            kwargs,
+            chunks,
+        }
     }
 
     fn to_dask_graph<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
@@ -39,12 +44,18 @@ impl CreationLayer {
     fn expand(&self) -> Expanded<'_> {
         let ndim = self.chunks.len();
         let numblocks: Vec<usize> = self.chunks.iter().map(|c| c.len()).collect();
-        let total: usize = if ndim == 0 { 1 } else { numblocks.iter().product() };
+        let total: usize = if ndim == 0 {
+            1
+        } else {
+            numblocks.iter().product()
+        };
         let mut tasks = Vec::with_capacity(total);
         let mut coord = vec![0u32; ndim];
 
         for _ in 0..total {
-            let shape: Vec<i64> = (0..ndim).map(|d| self.chunks[d][coord[d] as usize]).collect();
+            let shape: Vec<i64> = (0..ndim)
+                .map(|d| self.chunks[d][coord[d] as usize])
+                .collect();
             tasks.push(NeutralTask {
                 name_idx: 0,
                 coord: coord.clone(),

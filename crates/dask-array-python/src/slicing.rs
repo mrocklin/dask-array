@@ -11,7 +11,9 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use crate::common::{to_dask_graph, to_task_records, ArgSlot, Compute, Expanded, IndexElem, NeutralTask};
+use crate::common::{
+    to_dask_graph, to_task_records, ArgSlot, Compute, Expanded, IndexElem, NeutralTask,
+};
 
 /// One sliced dimension, as resolved by Python's `_slice_1d`.
 struct Dim {
@@ -47,13 +49,30 @@ impl SliceLayer {
         kwargs: PyObject,
         dep_name: String,
         allow_opt: bool,
-        dims: Vec<(bool, bool, Vec<u32>, Vec<(Option<i64>, Option<i64>, Option<i64>)>)>,
+        dims: Vec<(
+            bool,
+            bool,
+            Vec<u32>,
+            Vec<(Option<i64>, Option<i64>, Option<i64>)>,
+        )>,
     ) -> Self {
         let dims = dims
             .into_iter()
-            .map(|(is_integer, reverse, blocks, elems)| Dim { is_integer, reverse, blocks, elems })
+            .map(|(is_integer, reverse, blocks, elems)| Dim {
+                is_integer,
+                reverse,
+                blocks,
+                elems,
+            })
             .collect();
-        Self { name, getitem, kwargs, dep_name, allow_opt, dims }
+        Self {
+            name,
+            getitem,
+            kwargs,
+            dep_name,
+            allow_opt,
+            dims,
+        }
     }
 
     fn to_dask_graph<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
@@ -87,7 +106,11 @@ impl SliceLayer {
                     elems.push(IndexElem::Int(start.expect("integer index")));
                     all_full = false;
                 } else {
-                    out_coord.push(if dim.reverse { (npos[d] - 1 - p) as u32 } else { p as u32 });
+                    out_coord.push(if dim.reverse {
+                        (npos[d] - 1 - p) as u32
+                    } else {
+                        p as u32
+                    });
                     if start.is_some() || stop.is_some() || step.is_some() {
                         all_full = false;
                     }
@@ -100,7 +123,10 @@ impl SliceLayer {
                     name_idx: 0,
                     coord: out_coord,
                     compute: Compute::Alias,
-                    slots: vec![ArgSlot::Dep { name_idx: 0, coord: in_coord }],
+                    slots: vec![ArgSlot::Dep {
+                        name_idx: 0,
+                        coord: in_coord,
+                    }],
                 });
             } else {
                 tasks.push(NeutralTask {
@@ -108,7 +134,10 @@ impl SliceLayer {
                     coord: out_coord,
                     compute: Compute::Call { func_idx: 0 },
                     slots: vec![
-                        ArgSlot::Dep { name_idx: 0, coord: in_coord },
+                        ArgSlot::Dep {
+                            name_idx: 0,
+                            coord: in_coord,
+                        },
                         ArgSlot::Index(elems),
                     ],
                 });

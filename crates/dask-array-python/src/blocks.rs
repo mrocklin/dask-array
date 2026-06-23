@@ -43,14 +43,14 @@ impl BlocksLayer {
     /// (already remapped through `np.arange(numblocks)[idx]` in Python). The
     /// output numblocks along each dimension is the length of its remap list.
     #[new]
-    fn new(
-        py: Python<'_>,
-        out_name: String,
-        dep_name: String,
-        index_maps: Vec<Vec<u32>>,
-    ) -> Self {
+    fn new(py: Python<'_>, out_name: String, dep_name: String, index_maps: Vec<Vec<u32>>) -> Self {
         let empty_kwargs = PyDict::new(py).unbind().into_any();
-        Self { out_name, dep_names: vec![dep_name], index_maps, empty_kwargs }
+        Self {
+            out_name,
+            dep_names: vec![dep_name],
+            index_maps,
+            empty_kwargs,
+        }
     }
 
     fn to_dask_graph<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
@@ -70,8 +70,11 @@ impl BlocksLayer {
         let ndim = self.index_maps.len();
         // Output numblocks per dimension is the length of each remap list.
         let out_numblocks: Vec<usize> = self.index_maps.iter().map(|m| m.len()).collect();
-        let total: usize =
-            if ndim == 0 { 1 } else { out_numblocks.iter().product() };
+        let total: usize = if ndim == 0 {
+            1
+        } else {
+            out_numblocks.iter().product()
+        };
         let mut tasks = Vec::with_capacity(total);
         let mut coord = vec![0u32; ndim];
 
@@ -88,7 +91,10 @@ impl BlocksLayer {
                 name_idx: 0,
                 coord: coord.clone(),
                 compute: Compute::Alias,
-                slots: vec![ArgSlot::Dep { name_idx: 0, coord: src_coord }],
+                slots: vec![ArgSlot::Dep {
+                    name_idx: 0,
+                    coord: src_coord,
+                }],
             });
 
             // Advance coord in C order (last axis fastest).

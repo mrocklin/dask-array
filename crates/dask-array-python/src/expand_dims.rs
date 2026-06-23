@@ -39,7 +39,15 @@ impl ExpandDimsLayer {
         input_numblocks: Vec<usize>,
         axes: Vec<usize>,
     ) -> Self {
-        Self { name, input_name, func, kwargs, indexer, input_numblocks, axes }
+        Self {
+            name,
+            input_name,
+            func,
+            kwargs,
+            indexer,
+            input_numblocks,
+            axes,
+        }
     }
 
     fn to_dask_graph<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
@@ -59,7 +67,11 @@ impl ExpandDimsLayer {
     /// - slots = [Dep{input, input_coord}, Literal(0) (the indexer)]
     fn expand(&self) -> Expanded<'_> {
         let in_ndim = self.input_numblocks.len();
-        let total: usize = if in_ndim == 0 { 1 } else { self.input_numblocks.iter().product() };
+        let total: usize = if in_ndim == 0 {
+            1
+        } else {
+            self.input_numblocks.iter().product()
+        };
         let out_ndim = in_ndim + self.axes.len();
         let mut tasks = Vec::with_capacity(total);
         let mut in_coord = vec![0u32; in_ndim];
@@ -87,7 +99,10 @@ impl ExpandDimsLayer {
                 compute: Compute::Call { func_idx: 0 },
                 slots: vec![
                     // dep_names[0] is the input array name
-                    ArgSlot::Dep { name_idx: 0, coord: in_coord.clone() },
+                    ArgSlot::Dep {
+                        name_idx: 0,
+                        coord: in_coord.clone(),
+                    },
                     // literals[0] is the shared indexer tuple
                     ArgSlot::Literal(0),
                 ],

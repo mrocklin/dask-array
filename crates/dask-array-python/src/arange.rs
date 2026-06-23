@@ -43,7 +43,15 @@ impl ArangeLayer {
         blockstops: Vec<Num>,
         sizes: Vec<i64>,
     ) -> Self {
-        Self { name, func, kwargs, literals: vec![step, dtype], blockstarts, blockstops, sizes }
+        Self {
+            name,
+            func,
+            kwargs,
+            literals: vec![step, dtype],
+            blockstarts,
+            blockstops,
+            sizes,
+        }
     }
 
     fn to_dask_graph<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {

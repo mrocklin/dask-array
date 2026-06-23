@@ -23,7 +23,9 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use crate::common::{to_dask_graph, to_task_records, ArgSlot, Compute, Expanded, IndexElem, NeutralTask};
+use crate::common::{
+    to_dask_graph, to_task_records, ArgSlot, Compute, Expanded, IndexElem, NeutralTask,
+};
 
 // Name indices into the interned `names` list (also used as `Dep` name_idx).
 const N_OUT: usize = 0;
@@ -107,9 +109,17 @@ impl CumReductionLayer {
         (0..self.numblocks.len())
             .map(|d| {
                 if d == self.axis {
-                    IndexElem::Slice { start: Some(-1), stop: None, step: None }
+                    IndexElem::Slice {
+                        start: Some(-1),
+                        stop: None,
+                        step: None,
+                    }
                 } else {
-                    IndexElem::Slice { start: None, stop: None, step: None }
+                    IndexElem::Slice {
+                        start: None,
+                        stop: None,
+                        step: None,
+                    }
                 }
             })
             .collect()
@@ -128,7 +138,10 @@ impl CumReductionLayer {
                 name_idx: N_CHUNK,
                 coord: coord.clone(),
                 compute: Compute::Call { func_idx: F_CHUNK },
-                slots: vec![ArgSlot::Dep { name_idx: N_X, coord: coord.clone() }],
+                slots: vec![ArgSlot::Dep {
+                    name_idx: N_X,
+                    coord: coord.clone(),
+                }],
             });
             for d in (0..ndim).rev() {
                 coord[d] += 1;
@@ -158,7 +171,13 @@ impl CumReductionLayer {
 
             // extra[pos, 0] = full_like(meta, ident, dtype, shape=<1 along axis>)
             let shape: Vec<i64> = (0..ndim)
-                .map(|d| if d == self.axis { 1 } else { self.chunks[d][c0[d] as usize] })
+                .map(|d| {
+                    if d == self.axis {
+                        1
+                    } else {
+                        self.chunks[d][c0[d] as usize]
+                    }
+                })
                 .collect();
             tasks.push(NeutralTask {
                 name_idx: N_EXTRA,
@@ -167,14 +186,21 @@ impl CumReductionLayer {
                     func_idx: F_FULL_LIKE,
                     kwargs: vec![("shape".to_string(), ArgSlot::IntTuple(shape))],
                 },
-                slots: vec![ArgSlot::Literal(0), ArgSlot::Literal(1), ArgSlot::Literal(2)],
+                slots: vec![
+                    ArgSlot::Literal(0),
+                    ArgSlot::Literal(1),
+                    ArgSlot::Literal(2),
+                ],
             });
             // output[pos, 0] = chunk[pos, 0]  (alias)
             tasks.push(NeutralTask {
                 name_idx: N_OUT,
                 coord: c0.clone(),
                 compute: Compute::Alias,
-                slots: vec![ArgSlot::Dep { name_idx: N_CHUNK, coord: c0.clone() }],
+                slots: vec![ArgSlot::Dep {
+                    name_idx: N_CHUNK,
+                    coord: c0.clone(),
+                }],
             });
 
             for i in 1..n as u32 {
@@ -185,9 +211,14 @@ impl CumReductionLayer {
                 tasks.push(NeutralTask {
                     name_idx: N_TAIL,
                     coord: old.clone(),
-                    compute: Compute::Call { func_idx: F_GETITEM },
+                    compute: Compute::Call {
+                        func_idx: F_GETITEM,
+                    },
                     slots: vec![
-                        ArgSlot::Dep { name_idx: N_CHUNK, coord: old.clone() },
+                        ArgSlot::Dep {
+                            name_idx: N_CHUNK,
+                            coord: old.clone(),
+                        },
                         ArgSlot::Index(self.tail_index()),
                     ],
                 });
@@ -197,8 +228,14 @@ impl CumReductionLayer {
                     coord: cur.clone(),
                     compute: Compute::Call { func_idx: F_BINOP },
                     slots: vec![
-                        ArgSlot::Dep { name_idx: N_EXTRA, coord: old.clone() },
-                        ArgSlot::Dep { name_idx: N_TAIL, coord: old },
+                        ArgSlot::Dep {
+                            name_idx: N_EXTRA,
+                            coord: old.clone(),
+                        },
+                        ArgSlot::Dep {
+                            name_idx: N_TAIL,
+                            coord: old,
+                        },
                     ],
                 });
                 // output[cur] = binop(extra[cur], chunk[cur])
@@ -207,8 +244,14 @@ impl CumReductionLayer {
                     coord: cur.clone(),
                     compute: Compute::Call { func_idx: F_BINOP },
                     slots: vec![
-                        ArgSlot::Dep { name_idx: N_EXTRA, coord: cur.clone() },
-                        ArgSlot::Dep { name_idx: N_CHUNK, coord: cur },
+                        ArgSlot::Dep {
+                            name_idx: N_EXTRA,
+                            coord: cur.clone(),
+                        },
+                        ArgSlot::Dep {
+                            name_idx: N_CHUNK,
+                            coord: cur,
+                        },
                     ],
                 });
             }

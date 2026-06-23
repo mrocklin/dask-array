@@ -20,7 +20,9 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use crate::common::{to_dask_graph, to_task_records, ArgSlot, Compute, Expanded, IndexElem, NeutralTask};
+use crate::common::{
+    to_dask_graph, to_task_records, ArgSlot, Compute, Expanded, IndexElem, NeutralTask,
+};
 
 struct Step {
     old_idx: usize,
@@ -71,16 +73,33 @@ impl RechunkLayer {
             // dimension must have at least one block on both sides, so the
             // intersection and old-chunk indexing below can't go out of bounds.
             if old_chunks.len() != new_chunks.len()
-                || old_chunks.iter().chain(new_chunks.iter()).any(|c| c.is_empty())
+                || old_chunks
+                    .iter()
+                    .chain(new_chunks.iter())
+                    .any(|c| c.is_empty())
             {
-                return Err(PyValueError::new_err("rechunk step has empty or mismatched chunk dims"));
+                return Err(PyValueError::new_err(
+                    "rechunk step has empty or mismatched chunk dims",
+                ));
             }
             let old_idx = intern(old_name, &mut names, &mut index);
             let merge_idx = intern(merge_name, &mut names, &mut index);
             let split_idx = intern(split_name, &mut names, &mut index);
-            step_structs.push(Step { old_idx, merge_idx, split_idx, old_chunks, new_chunks });
+            step_structs.push(Step {
+                old_idx,
+                merge_idx,
+                split_idx,
+                old_chunks,
+                new_chunks,
+            });
         }
-        Ok(Self { getitem, concatenate3, kwargs, names, steps: step_structs })
+        Ok(Self {
+            getitem,
+            concatenate3,
+            kwargs,
+            names,
+            steps: step_structs,
+        })
     }
 
     fn to_dask_graph<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
@@ -189,10 +208,19 @@ impl RechunkLayer {
             let ndim = step.old_chunks.len();
             // 1-D old->new intersection per dimension.
             let o2n: Vec<Vec<Vec<(u32, i64, i64)>>> = (0..ndim)
-                .map(|d| intersect_1d(&breakpoints(&cum(&step.old_chunks[d]), &cum(&step.new_chunks[d]))))
+                .map(|d| {
+                    intersect_1d(&breakpoints(
+                        &cum(&step.old_chunks[d]),
+                        &cum(&step.new_chunks[d]),
+                    ))
+                })
                 .collect();
             let new_nb: Vec<usize> = step.new_chunks.iter().map(|c| c.len()).collect();
-            let total_new: usize = if ndim == 0 { 1 } else { new_nb.iter().product() };
+            let total_new: usize = if ndim == 0 {
+                1
+            } else {
+                new_nb.iter().product()
+            };
 
             let mut new_idx = vec![0u32; ndim];
             let mut suffix: u32 = 0; // split-key counter, reset per step (dask matches)
@@ -213,7 +241,11 @@ impl RechunkLayer {
                     for d in 0..ndim {
                         let (oi, lo, hi) = entries[d][sel[d]];
                         old_coord[d] = oi;
-                        slices.push(IndexElem::Slice { start: Some(lo), stop: Some(hi), step: Some(1) });
+                        slices.push(IndexElem::Slice {
+                            start: Some(lo),
+                            stop: Some(hi),
+                            step: Some(1),
+                        });
                         if !(lo == 0 && hi == step.old_chunks[d][oi as usize]) {
                             full = false;
                         }
@@ -222,18 +254,27 @@ impl RechunkLayer {
                     suffix += 1;
                     let r = if full {
                         // Whole old block — reference it directly (no split task).
-                        ArgSlot::Dep { name_idx: step.old_idx, coord: old_coord }
+                        ArgSlot::Dep {
+                            name_idx: step.old_idx,
+                            coord: old_coord,
+                        }
                     } else {
                         tasks.push(NeutralTask {
                             name_idx: step.split_idx,
                             coord: vec![cur],
                             compute: Compute::Call { func_idx: 0 }, // getitem
                             slots: vec![
-                                ArgSlot::Dep { name_idx: step.old_idx, coord: old_coord },
+                                ArgSlot::Dep {
+                                    name_idx: step.old_idx,
+                                    coord: old_coord,
+                                },
                                 ArgSlot::Index(slices),
                             ],
                         });
-                        ArgSlot::Dep { name_idx: step.split_idx, coord: vec![cur] }
+                        ArgSlot::Dep {
+                            name_idx: step.split_idx,
+                            coord: vec![cur],
+                        }
                     };
                     refs.push(r);
 

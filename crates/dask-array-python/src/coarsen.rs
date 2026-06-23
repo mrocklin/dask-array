@@ -45,7 +45,13 @@ impl CoarsenLayer {
         dep_name: String,
         numblocks: Vec<usize>,
     ) -> Self {
-        Self { name, func, kwargs, dep_name, numblocks }
+        Self {
+            name,
+            func,
+            kwargs,
+            dep_name,
+            numblocks,
+        }
     }
 
     fn to_dask_graph<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
@@ -63,7 +69,11 @@ impl CoarsenLayer {
     /// `itertools.product`.
     fn expand(&self) -> Expanded<'_> {
         let ndim = self.numblocks.len();
-        let total: usize = if ndim == 0 { 1 } else { self.numblocks.iter().product() };
+        let total: usize = if ndim == 0 {
+            1
+        } else {
+            self.numblocks.iter().product()
+        };
         let mut tasks = Vec::with_capacity(total);
         let mut coord = vec![0u32; ndim];
 
@@ -72,7 +82,10 @@ impl CoarsenLayer {
                 name_idx: 0,
                 coord: coord.clone(),
                 compute: Compute::Call { func_idx: 0 },
-                slots: vec![ArgSlot::Dep { name_idx: 0, coord: coord.clone() }],
+                slots: vec![ArgSlot::Dep {
+                    name_idx: 0,
+                    coord: coord.clone(),
+                }],
             });
 
             for d in (0..ndim).rev() {

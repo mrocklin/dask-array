@@ -43,7 +43,15 @@ impl SqueezeLayer {
         input_ndim: usize,
         axis_set: Vec<usize>,
     ) -> Self {
-        Self { name, func, kwargs, dep_name, numblocks, input_ndim, axis_set }
+        Self {
+            name,
+            func,
+            kwargs,
+            dep_name,
+            numblocks,
+            input_ndim,
+            axis_set,
+        }
     }
 
     fn to_dask_graph<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
@@ -60,7 +68,11 @@ impl SqueezeLayer {
     /// reconstruct the input coord by inserting `0` at each squeezed axis.
     fn expand(&self) -> Expanded<'_> {
         let out_ndim = self.numblocks.len();
-        let total: usize = if out_ndim == 0 { 1 } else { self.numblocks.iter().product() };
+        let total: usize = if out_ndim == 0 {
+            1
+        } else {
+            self.numblocks.iter().product()
+        };
         let mut tasks = Vec::with_capacity(total);
         let mut out_coord = vec![0u32; out_ndim];
 
@@ -84,7 +96,10 @@ impl SqueezeLayer {
                 name_idx: 0,
                 coord: out_coord.clone(),
                 compute: Compute::Call { func_idx: 0 },
-                slots: vec![ArgSlot::Dep { name_idx: 0, coord: in_coord }],
+                slots: vec![ArgSlot::Dep {
+                    name_idx: 0,
+                    coord: in_coord,
+                }],
             });
 
             // Advance out_coord in C order.

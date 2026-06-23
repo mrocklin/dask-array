@@ -76,7 +76,10 @@ impl Diag1DLayer {
                         name_idx: 0,
                         coord,
                         compute: Compute::Call { func_idx: 0 },
-                        slots: vec![ArgSlot::Dep { name_idx: 0, coord: vec![i as u32] }],
+                        slots: vec![ArgSlot::Dep {
+                            name_idx: 0,
+                            coord: vec![i as u32],
+                        }],
                     });
                 } else {
                     // np.zeros_like(meta, shape=(chunks_1d[i], chunks_1d[j]))
@@ -120,8 +123,20 @@ pub struct Diag2DSimpleLayer {
 #[pymethods]
 impl Diag2DSimpleLayer {
     #[new]
-    fn new(name: String, diag_fn: PyObject, kwargs: PyObject, dep_name: String, nblocks: usize) -> Self {
-        Self { name, func: diag_fn, kwargs, dep_names: vec![dep_name], nblocks }
+    fn new(
+        name: String,
+        diag_fn: PyObject,
+        kwargs: PyObject,
+        dep_name: String,
+        nblocks: usize,
+    ) -> Self {
+        Self {
+            name,
+            func: diag_fn,
+            kwargs,
+            dep_names: vec![dep_name],
+            nblocks,
+        }
     }
 
     fn to_dask_graph<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
@@ -141,7 +156,10 @@ impl Diag2DSimpleLayer {
                 coord: vec![i as u32],
                 compute: Compute::Call { func_idx: 0 },
                 // np.diag(x[(i, i)])
-                slots: vec![ArgSlot::Dep { name_idx: 0, coord: vec![i as u32, i as u32] }],
+                slots: vec![ArgSlot::Dep {
+                    name_idx: 0,
+                    coord: vec![i as u32, i as u32],
+                }],
             })
             .collect();
 

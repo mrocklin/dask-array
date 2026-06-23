@@ -54,7 +54,10 @@ impl FromArrayGetterLayer {
 
     /// Build the per-dimension `slice(start, stop)` objects (region offset
     /// applied), as Python objects, once — block slices index into these.
-    fn dim_slices<'py>(&self, slice_cls: &Bound<'py, PyAny>) -> PyResult<Vec<Vec<Bound<'py, PyAny>>>> {
+    fn dim_slices<'py>(
+        &self,
+        slice_cls: &Bound<'py, PyAny>,
+    ) -> PyResult<Vec<Vec<Bound<'py, PyAny>>>> {
         let mut out = Vec::with_capacity(self.dims.len());
         for dim in &self.dims {
             let mut start = dim.offset;
@@ -100,7 +103,10 @@ impl FromArrayGetterLayer {
         inline_array: bool,
         extra_args: Option<(bool, bool)>,
     ) -> Self {
-        let dims = dims.into_iter().map(|(sizes, offset)| Dim { sizes, offset }).collect();
+        let dims = dims
+            .into_iter()
+            .map(|(sizes, offset)| Dim { sizes, offset })
+            .collect();
         Self {
             name,
             array,
@@ -139,8 +145,12 @@ impl FromArrayGetterLayer {
         for coord in Self::each_block(&numblocks) {
             let key = key_tuple(py, &self.name, &coord)?;
             let idx = index_tuple(py, &dim_slices, &coord)?;
-            let mut call: Vec<Bound<'py, PyAny>> =
-                vec![key.clone().into_any(), getter.clone(), arr_arg.clone(), idx.into_any()];
+            let mut call: Vec<Bound<'py, PyAny>> = vec![
+                key.clone().into_any(),
+                getter.clone(),
+                arr_arg.clone(),
+                idx.into_any(),
+            ];
             if let Some((asarray, lock)) = self.extra_args {
                 call.push(asarray.into_pyobject(py)?.to_owned().into_any());
                 call.push(lock.into_pyobject(py)?.to_owned().into_any());

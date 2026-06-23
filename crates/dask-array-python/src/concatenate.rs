@@ -62,7 +62,14 @@ impl ConcatenateLayer {
             cum_dims.push(acc);
         }
         let empty_kwargs = PyDict::new(py).unbind().into_any();
-        Self { out_name, dep_names, axis, cum_dims, out_numblocks, empty_kwargs }
+        Self {
+            out_name,
+            dep_names,
+            axis,
+            cum_dims,
+            out_numblocks,
+            empty_kwargs,
+        }
     }
 
     fn to_dask_graph<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
@@ -80,8 +87,11 @@ impl ConcatenateLayer {
     /// `Alias` task. No funcs or kwargs are needed.
     fn expand(&self) -> Expanded<'_> {
         let ndim = self.out_numblocks.len();
-        let total: usize =
-            if ndim == 0 { 1 } else { self.out_numblocks.iter().product() };
+        let total: usize = if ndim == 0 {
+            1
+        } else {
+            self.out_numblocks.iter().product()
+        };
         let mut tasks = Vec::with_capacity(total);
         let mut coord = vec![0u32; ndim];
 
@@ -92,10 +102,7 @@ impl ConcatenateLayer {
             // bisect_right(cum_dims, ci) - 1: find the source array.
             // Find the first position where cum_dims[pos] > ci, then subtract 1.
             // This mirrors Python's `bisect(cum_dims, key[axis+1]) - 1`.
-            let a = self
-                .cum_dims
-                .partition_point(|&c| c <= ci)
-                - 1;
+            let a = self.cum_dims.partition_point(|&c| c <= ci) - 1;
 
             // Source coord: same as output coord everywhere except `axis`,
             // where we subtract the cumulative offset of source array `a`.
@@ -115,7 +122,10 @@ impl ConcatenateLayer {
                 name_idx: 0,
                 coord: coord.clone(),
                 compute: Compute::Alias,
-                slots: vec![ArgSlot::Dep { name_idx: a, coord: src_coord }],
+                slots: vec![ArgSlot::Dep {
+                    name_idx: a,
+                    coord: src_coord,
+                }],
             });
 
             // Advance coord in C order (last axis fastest).

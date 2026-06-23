@@ -50,7 +50,15 @@ impl BroadcastLayer {
         ndim_new: usize,
         broadcast_dim: Vec<bool>,
     ) -> Self {
-        Self { name, func, kwargs, dep_name, out_chunks, ndim_new, broadcast_dim }
+        Self {
+            name,
+            func,
+            kwargs,
+            dep_name,
+            out_chunks,
+            ndim_new,
+            broadcast_dim,
+        }
     }
 
     fn to_dask_graph<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
@@ -68,7 +76,11 @@ impl BroadcastLayer {
         let in_ndim = self.broadcast_dim.len();
         // number of blocks per output dimension
         let numblocks: Vec<usize> = self.out_chunks.iter().map(|c| c.len()).collect();
-        let total: usize = if out_ndim == 0 { 1 } else { numblocks.iter().product() };
+        let total: usize = if out_ndim == 0 {
+            1
+        } else {
+            numblocks.iter().product()
+        };
 
         let mut tasks = Vec::with_capacity(total);
         let mut coord = vec![0u32; out_ndim];
@@ -88,15 +100,19 @@ impl BroadcastLayer {
                 .collect();
 
             // Chunk shape for this output block.
-            let chunk_shape: Vec<i64> =
-                (0..out_ndim).map(|d| self.out_chunks[d][coord[d] as usize]).collect();
+            let chunk_shape: Vec<i64> = (0..out_ndim)
+                .map(|d| self.out_chunks[d][coord[d] as usize])
+                .collect();
 
             tasks.push(NeutralTask {
                 name_idx: 0,
                 coord: coord.clone(),
                 compute: Compute::Call { func_idx: 0 },
                 slots: vec![
-                    ArgSlot::Dep { name_idx: 0, coord: in_coord },
+                    ArgSlot::Dep {
+                        name_idx: 0,
+                        coord: in_coord,
+                    },
                     ArgSlot::IntTuple(chunk_shape),
                 ],
             });

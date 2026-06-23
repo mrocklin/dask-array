@@ -94,7 +94,10 @@ impl ReshapeLayer {
                 coord: out_coord.clone(),
                 compute: Compute::Call { func_idx: 0 },
                 slots: vec![
-                    ArgSlot::Dep { name_idx: 0, coord: in_coord.clone() },
+                    ArgSlot::Dep {
+                        name_idx: 0,
+                        coord: in_coord.clone(),
+                    },
                     ArgSlot::IntTuple(self.out_shapes[p].clone()),
                 ],
             });

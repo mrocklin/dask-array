@@ -99,7 +99,15 @@ impl BlockwiseLayer {
             }
         }
 
-        Ok(Self { name, func, kwargs, literals, dep_names, numblocks, template })
+        Ok(Self {
+            name,
+            func,
+            kwargs,
+            literals,
+            dep_names,
+            numblocks,
+            template,
+        })
     }
 
     fn to_dask_graph<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
@@ -116,7 +124,11 @@ impl BlockwiseLayer {
     /// order (matching `itertools.product`) and resolves each arg template.
     fn expand(&self) -> Expanded<'_> {
         let ndim = self.numblocks.len();
-        let total: usize = if ndim == 0 { 1 } else { self.numblocks.iter().product() };
+        let total: usize = if ndim == 0 {
+            1
+        } else {
+            self.numblocks.iter().product()
+        };
         let mut tasks = Vec::with_capacity(total);
         let mut coord = vec![0u32; ndim];
 
@@ -134,7 +146,10 @@ impl BlockwiseLayer {
                                 Axis::FromOut(p) => coord[*p],
                             })
                             .collect();
-                        ArgSlot::Dep { name_idx: *dep_idx, coord: dep_coord }
+                        ArgSlot::Dep {
+                            name_idx: *dep_idx,
+                            coord: dep_coord,
+                        }
                     }
                 })
                 .collect();

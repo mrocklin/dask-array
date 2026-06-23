@@ -37,7 +37,15 @@ impl PartialReduceLayer {
         steps: Vec<usize>,
         keepdims: bool,
     ) -> Self {
-        Self { name, func, kwargs, dep_name, numblocks, steps, keepdims }
+        Self {
+            name,
+            func,
+            kwargs,
+            dep_name,
+            numblocks,
+            steps,
+            keepdims,
+        }
     }
 
     fn to_dask_graph<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
@@ -117,10 +125,19 @@ impl PartialReduceLayer {
 
     /// Recursively build the lol_tuples nested argument: reduced dims expand into
     /// a list over their selected partition, kept dims fix a coordinate.
-    fn build_lol(&self, dim: usize, parts: &[Vec<Vec<u32>>], oi: &[usize], leaf: &mut Vec<u32>) -> ArgSlot {
+    fn build_lol(
+        &self,
+        dim: usize,
+        parts: &[Vec<Vec<u32>>],
+        oi: &[usize],
+        leaf: &mut Vec<u32>,
+    ) -> ArgSlot {
         let ndim = self.numblocks.len();
         if dim == ndim {
-            return ArgSlot::Dep { name_idx: 0, coord: leaf.clone() };
+            return ArgSlot::Dep {
+                name_idx: 0,
+                coord: leaf.clone(),
+            };
         }
         let selected = &parts[dim][oi[dim]];
         if self.steps[dim] != 0 {

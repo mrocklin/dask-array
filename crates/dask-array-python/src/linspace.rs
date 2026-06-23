@@ -41,7 +41,14 @@ impl LinspaceLayer {
         blockstops: Vec<Num>,
         sizes: Vec<i64>,
     ) -> Self {
-        Self { name, func, kwargs, blockstarts, blockstops, sizes }
+        Self {
+            name,
+            func,
+            kwargs,
+            blockstarts,
+            blockstops,
+            sizes,
+        }
     }
 
     fn to_dask_graph<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
