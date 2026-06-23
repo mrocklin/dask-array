@@ -1,6 +1,6 @@
 [build-system]
-requires = ["maturin>=1.8,<2"]
-build-backend = "maturin"
+requires = ["hatchling>=1.18", "hatch-vcs"]
+build-backend = "hatchling.build"
 
 [project]
 name = "dask-array"
@@ -46,11 +46,27 @@ test = [
 [project.entry-points."xarray.chunkmanagers"]
 dask = "dask_array._xarray:DaskArrayExprManager"
 
-# Mixed Python/Rust build. The large Python package lives at the repo root
-# (python-source = "."); the native accelerator is a small cdylib built into
-# dask_array/_rust. Version is supplied from the Cargo package version
-# (dynamic = ["version"] above), replacing the previous hatch-vcs scheme; wiring
-# git-tag versioning back up is a release-time concern, not needed on this branch.
+# Pure-Python by default: `pip install -e .` (hatchling) needs no Rust toolchain
+# and installs the package alone. The Python/dask path is fully functional without
+# the native extension, and the Frisky path falls back to a pure-Python records
+# layer when `dask_array._rust` is absent.
+
+# Version is derived from git tags (see docs/development.md → cutting a release).
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.targets.wheel]
+packages = ["dask_array"]
+# A locally-built _rust.*.so is a maturin artifact; keep hatchling wheels/sdists
+# pure-Python so `uv build` is deterministic regardless of dev state.
+exclude = ["dask_array/_rust*.so"]
+
+[tool.hatch.build.targets.sdist]
+exclude = ["dask_array/_rust*.so", "/target"]
+
+# Native accelerator (opt-in). Build it into the source tree with
+# `maturin develop --release`; maturin reads this config (ignored by hatchling).
+# The cdylib lands at dask_array/_rust and the editable install picks it up.
 [tool.maturin]
 manifest-path = "crates/dask-array-python/Cargo.toml"
 module-name = "dask_array._rust"

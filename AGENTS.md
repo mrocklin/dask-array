@@ -40,6 +40,12 @@ DataFrames.
 | ...  | ... | various other ArrayExpr subclasses |
 
 
+## Building and releasing
+
+See [docs/development.md](docs/development.md) for building (pure-Python by
+default; the Rust accelerator is opt-in via `maturin develop`), running the test
+suites (dask and Frisky), and cutting a release.
+
 ## Testing
 
 Run tests with:
@@ -115,6 +121,7 @@ legacy `_layer()` — faithful by construction.
 - Falling back is always correct (legacy/adapter), just not the native fast path.
 - The pytest suite covers only the `_layer`/`to_dask_graph` path; the records path
   is validated by `bench/diff_records.py` (vs `scheduler="synchronous"`).
-- Build with `maturin develop` (`--release` for perf) and
-  `MATURIN_IMPORT_HOOK_ENABLED=0`; bump `PROTOCOL_REVISION` on both sides when the
-  record surface changes.
+- The build is pure-Python by default; the native accelerator is opt-in via
+  `maturin develop` (the records path falls back to the pure-Python
+  `GraphRecordsLayer` when `_rust` is absent). Bump `PROTOCOL_REVISION` on both
+  sides when the record surface changes. See [docs/development.md](docs/development.md).
