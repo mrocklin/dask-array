@@ -65,66 +65,50 @@ skip automatically on the frisky variant.
 ## Cutting a release
 
 The project publishes to PyPI as `dask-array`. The release workflow
-(`.github/workflows/publish.yml`) triggers on an `x.y.z` tag push: it builds a
-**universal pure-Python wheel** plus an sdist, smoke-tests both on every supported
-Python version, and publishes via PyPI Trusted Publishing.
+(`.github/workflows/publish.yml`) triggers on an `x.y.z` tag push and builds:
 
-The version is derived from the git tag (hatch-vcs) — there is no version string
-to edit by hand.
+- a pure-Python **sdist** + **`py3-none-any` wheel** (hatchling/hatch-vcs), and
+- native **abi3 wheels** (maturin) for **linux x86_64/aarch64** and
+  **macOS arm64/x86_64** — one wheel per platform covers Python ≥ 3.10.
 
-> **Today the PyPI wheel is pure Python** (`py3-none-any`) — the native
-> accelerator is not yet shipped, so install-from-PyPI users get the pure-Python
-> path (Frisky falls back to `GraphRecordsLayer`). To use the native layers,
-> build from source with maturin (see above). Shipping native wheels is planned —
-> see [Future work](#future-work-ship-native-wheels) below.
+It smoke-tests them (native wheel must ship `_rust`; sdist must stay pure-Python),
+then publishes everything via PyPI Trusted Publishing. `pip install dask-array`
+then resolves the native wheel where the platform matches, the `py3-none-any`
+wheel elsewhere, and the sdist (pure-Python, no Rust toolchain) as a last resort.
+
+The version comes from the git tag (hatch-vcs); the native-wheel job stamps the
+same tag version into `pyproject.toml` before building (maturin doesn't read
+hatch-vcs), and the publish job re-checks every artifact against the tag. There is
+no version string to edit by hand.
 
 ### Steps
 
-1. Run the test suite:
+1. Run the test suite (and, if touching the native path, the Frisky suite — see
+   Testing above):
 
    ```bash
    uv run --extra test --extra complete --extra sparse pytest dask_array/tests/ -q
    ```
 
 2. Push the release commit to `main`.
-3. Create the version tag and check the artifacts locally:
+3. **Build-only trial.** From the Actions tab, run the *Publish to PyPI* workflow
+   manually (`workflow_dispatch`). It builds the full wheel matrix and smoke-tests
+   it **without publishing** (publish is gated on a tag push). Confirm all four
+   native jobs + the pure-Python job are green before tagging.
+4. Tag and push to publish:
 
    ```bash
    git tag 0.1.1
-   uv build --sdist --wheel
-   uvx twine check dist/*
-   ```
-
-4. Push the tag to trigger the publish workflow:
-
-   ```bash
    git push mrocklin 0.1.1
    ```
 
 PyPI files are immutable. If an upload succeeds with bad artifacts or metadata,
 release a new version.
 
-### Future work: ship native wheels
+### Not yet covered
 
-Goal: PyPI users get the Rust accelerator without a Rust toolchain, while source
-installs on unsupported platforms still work (pip falls back to the pure-Python
-sdist).
-
-Sketch:
-
-- Add a per-platform build matrix to `publish.yml` that builds **abi3** wheels
-  with maturin (one wheel per OS/arch covers Python ≥ 3.10) for the targets we
-  support — Linux x86_64/aarch64, macOS arm64/x86_64, Windows x86_64 — alongside
-  the existing pure-Python sdist. `scripts/build-wheels.sh` already drives
-  per-platform maturin builds via Docker and is the natural seed (it is currently
-  untracked; track it if it becomes part of the pipeline).
-- Reconcile the version. The pure-Python wheel/sdist take their version from git
-  tags (hatch-vcs); maturin reads it from `crates/dask-array-python/Cargo.toml`.
-  The native-wheel build must stamp the Cargo version to match the tag so all
-  artifacts agree (`build-wheels.sh` already does this kind of stamping).
-- Keep the sdist pure-Python-buildable (it is) so a toolchain-less
-  `pip install` from source still succeeds — that is the universal fallback when
-  no matching native wheel exists.
-
-Result: `pip install dask-array` gets the native fast path on common platforms and
-the pure-Python path everywhere else, with no behavior change — only performance.
+- **Windows** wheels are not built; Windows users fall back to the pure-Python
+  wheel. Add a `*-pc-windows-msvc` target to the `build-native` matrix to ship them.
+- **Coiled package-sync** does not match abi3 wheels (see `scripts/build-wheels.sh`),
+  so it won't pick these up — that dev flow stays on the private index. Untracked
+  today; track `build-wheels.sh` if it becomes part of a pipeline.
