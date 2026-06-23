@@ -75,7 +75,6 @@ jobs:
           - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { os: ubuntu-latest, target: aarch64-unknown-linux-gnu }
           - { os: macos-14, target: aarch64-apple-darwin }
-          - { os: macos-13, target: x86_64-apple-darwin }
     steps:
       - uses: actions/checkout@v6
         with:
@@ -131,7 +130,7 @@ jobs:
           merge-multiple: true
       # Install the native linux x86_64 wheel by path (deps resolve from PyPI),
       # so the native extension must be present. The glob matches manylinux
-      # (*linux*x86_64*) but not the macOS x86_64 wheel (macosx_*_x86_64).
+      # (*linux*x86_64*).
       - run: uv venv --python ${{ matrix.python-version }} .venv
       - run: |
           wheel=$(ls dist/dask_array-*-*linux*x86_64*.whl)
