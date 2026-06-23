@@ -1,16 +1,21 @@
 name: Publish to PyPI
 
+# Tag push (x.y.z) → build everything, smoke-test, publish to PyPI.
+# Manual run (workflow_dispatch) → build everything + smoke-test, but DO NOT
+# publish. Use it as a build-only trial to confirm the native-wheel matrix is
+# green before cutting a real release tag.
 on:
   push:
     tags:
       - "*.*.*"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  build:
-    name: Build distributions
+  build-pure:
+    name: Build pure-Python sdist + wheel
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -28,32 +33,26 @@ jobs:
               echo "::error::Release tags must use x.x.x form, got $tag_version"
               exit 1
           fi
+      # hatch-vcs derives the version from the git tag; the universal py3-none-any
+      # wheel + sdist are the pure-Python fallback for platforms without a native
+      # wheel (and the sdist builds with no Rust toolchain).
       - run: uv build --sdist --wheel
-      - name: Check built versions
+      - name: Check pure version matches tag
+        if: github.ref_type == 'tag'
         run: |
           python - <<'PY'
-          import email
-          import glob
-          import os
-          import tarfile
-          import zipfile
+          import email, glob, os, tarfile, zipfile
 
           tag_version = os.environ["GITHUB_REF_NAME"]
-          wheel_paths = glob.glob("dist/*.whl")
-          sdist_paths = glob.glob("dist/*.tar.gz")
-          if len(wheel_paths) != 1 or len(sdist_paths) != 1:
-              raise SystemExit("Expected exactly one wheel and one sdist")
+          (wheel_path,) = glob.glob("dist/*.whl")
+          (sdist_path,) = glob.glob("dist/*.tar.gz")
 
-          with zipfile.ZipFile(wheel_paths[0]) as wheel:
-              metadata_path = next(name for name in wheel.namelist() if name.endswith(".dist-info/METADATA"))
-              wheel_version = email.message_from_bytes(wheel.read(metadata_path))["Version"]
-
-          with tarfile.open(sdist_paths[0], "r:gz") as sdist:
-              pkg_info_path = next(name for name in sdist.getnames() if name.endswith("/PKG-INFO"))
-              pkg_info = sdist.extractfile(pkg_info_path)
-              if pkg_info is None:
-                  raise SystemExit("Could not read sdist PKG-INFO")
-              sdist_version = email.message_from_binary_file(pkg_info)["Version"]
+          with zipfile.ZipFile(wheel_path) as wheel:
+              meta = next(n for n in wheel.namelist() if n.endswith(".dist-info/METADATA"))
+              wheel_version = email.message_from_bytes(wheel.read(meta))["Version"]
+          with tarfile.open(sdist_path, "r:gz") as sdist:
+              pkg_info = next(n for n in sdist.getnames() if n.endswith("/PKG-INFO"))
+              sdist_version = email.message_from_binary_file(sdist.extractfile(pkg_info))["Version"]
 
           for artifact, version in {"wheel": wheel_version, "sdist": sdist_version}.items():
               if version != tag_version:
@@ -62,13 +61,59 @@ jobs:
       - run: uvx twine check dist/*
       - uses: actions/upload-artifact@v7
         with:
-          name: dist
+          name: dist-pure
           path: dist/*
+          if-no-files-found: error
+
+  build-native:
+    name: Build native wheel (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-latest, target: aarch64-unknown-linux-gnu }
+          - { os: macos-14, target: aarch64-apple-darwin }
+          - { os: macos-13, target: x86_64-apple-darwin }
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      # maturin reads the version from [project] version (static) and otherwise
+      # falls back to the Cargo crate version — it does NOT understand hatch-vcs.
+      # On a release tag, stamp the tag version so the native wheels match the
+      # pure-Python wheel/sdist. On a manual trial run there is no tag; leave the
+      # version dynamic (maturin uses the Cargo version) since we don't publish.
+      - name: Stamp release version
+        if: github.ref_type == 'tag'
+        run: |
+          python3 - "$GITHUB_REF_NAME" <<'PY'
+          import re, sys, pathlib
+          version = sys.argv[1]
+          p = pathlib.Path("pyproject.toml")
+          text, n = re.subn(r'^dynamic = \["version"\]\s*$', f'version = "{version}"', p.read_text(), count=1, flags=re.M)
+          if n != 1:
+              raise SystemExit('could not find `dynamic = ["version"]` to stamp')
+          p.write_text(text)
+          print(f"stamped version = {version}")
+          PY
+      - uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          # abi3 (Cargo: abi3-py310) → one wheel per platform covers Python >= 3.10.
+          # manylinux is consulted only for linux targets; ignored on macOS.
+          args: --release --out dist
+          manylinux: auto
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-native-${{ matrix.target }}
+          path: dist/*.whl
           if-no-files-found: error
 
   smoke-test:
     name: Smoke-test distributions on Python ${{ matrix.python-version }}
-    needs: build
+    needs: [build-pure, build-native]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -81,30 +126,42 @@ jobs:
       - uses: astral-sh/setup-uv@v8.2.0
       - uses: actions/download-artifact@v7
         with:
-          name: dist
+          pattern: dist-*
           path: dist
+          merge-multiple: true
+      # Install the native linux x86_64 wheel by path (deps resolve from PyPI),
+      # so the native extension must be present. The glob matches manylinux
+      # (*linux*x86_64*) but not the macOS x86_64 wheel (macosx_*_x86_64).
       - run: uv venv --python ${{ matrix.python-version }} .venv
-      - run: uv pip install --python .venv/bin/python dist/*.whl
+      - run: |
+          wheel=$(ls dist/dask_array-*-*linux*x86_64*.whl)
+          echo "installing $wheel"
+          uv pip install --python .venv/bin/python "$wheel"
       - run: |
           .venv/bin/python - <<'PY'
-          import dask_array as da
-
+          import dask_array as da, dask_array._rust  # native wheel must ship _rust
           x = da.ones((4, 4), chunks=(2, 2))
           assert x.sum().compute() == 16
+          print("native wheel OK")
           PY
+      # The sdist builds pure-Python (no Rust toolchain); _rust must be absent and
+      # the dask path must still work.
       - run: uv venv --python ${{ matrix.python-version }} .venv-sdist
       - run: uv pip install --python .venv-sdist/bin/python dist/*.tar.gz
       - run: |
           .venv-sdist/bin/python - <<'PY'
+          import importlib.util
           import dask_array as da
-
+          assert importlib.util.find_spec("dask_array._rust") is None, "sdist must be pure-Python"
           x = da.ones((4, 4), chunks=(2, 2))
           assert x.sum().compute() == 16
+          print("pure-Python sdist OK")
           PY
 
   publish:
     name: Publish distributions
     needs: smoke-test
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -115,6 +172,28 @@ jobs:
     steps:
       - uses: actions/download-artifact@v7
         with:
-          name: dist
+          pattern: dist-*
           path: dist
+          merge-multiple: true
+      - name: Check all artifact versions match tag
+        run: |
+          python3 - "$GITHUB_REF_NAME" <<'PY'
+          import os, sys, pathlib
+          tag = sys.argv[1]
+          bad = []
+          for f in sorted(pathlib.Path("dist").iterdir()):
+              name = f.name
+              if name.endswith(".whl"):
+                  version = name.split("-")[1]
+              elif name.endswith(".tar.gz"):
+                  version = name[: -len(".tar.gz")].split("-", 1)[1]
+              else:
+                  continue
+              if version != tag:
+                  bad.append(f"{name}: {version}")
+          if bad:
+              raise SystemExit("artifacts do not match tag %s:\n  %s" % (tag, "\n  ".join(bad)))
+          print("all artifacts match", tag)
+          PY
+      - run: pipx run twine check dist/*
       - uses: pypa/gh-action-pypi-publish@release/v1
