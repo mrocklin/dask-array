@@ -61,12 +61,19 @@ def from_graph(layer, _meta, chunks, keys, name_prefix, dependencies=(), rename=
     Array
         A new dask Array wrapping the provided graph
     """
+    # Lower dependencies the same way the Array collection names them
+    # (``Array._name`` derives from ``_lower``). A caller builds ``layer`` with
+    # the collection's keys, so a dependency we splice in must produce those
+    # same keys — lowering only (without the gated simplify) would name it
+    # differently and dangle the layer's references.
+    from dask_array._collection import _lower
+
     expr_dependencies = []
     aliases = {}
     layer_dict = None
     for dep in dependencies:
         expr = getattr(dep, "expr", dep)
-        lowered = expr.lower_completely() if hasattr(expr, "lower_completely") else expr
+        lowered = _lower(expr) if hasattr(expr, "lower_completely") else expr
         expr_dependencies.append(lowered)
         if getattr(lowered, "_name", None) == getattr(expr, "_name", None):
             continue

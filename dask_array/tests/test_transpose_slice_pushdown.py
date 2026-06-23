@@ -98,31 +98,21 @@ def test_transpose_custom_axes_integer_slice():
 
 
 def test_transpose_slice_task_count():
-    """Verify task count reduction when slice pushes through transpose."""
+    """Slice pushed through a transpose leaves no transpose layer in the graph."""
     from dask_array._collection import Array
 
     x = da.ones((4, 6), chunks=2)
-
-    # Without optimization: slice(transpose(ones)) has transpose layer.
-    # __dask_graph__ now simplifies by default (array.optimize-graph), so read
-    # the raw un-simplified graph directly off the lowered expr.
     result = x.T[0]
-    unopt_graph = dict(result.expr.lower_completely().__dask_graph__())
 
-    # With optimization: transpose is eliminated, becomes slice(ones)
-    optimized = result.expr.optimize()
-    opt_result = Array(optimized)
-    opt_graph = dict(opt_result.__dask_graph__())
+    opt_graph = dict(Array(result.expr.optimize()).__dask_graph__())
 
-    # Optimized should have fewer tasks (no transpose layer)
-    assert len(opt_graph) < len(unopt_graph), (
-        f"Optimized graph should be smaller: {len(opt_graph)} vs {len(unopt_graph)}"
-    )
-
-    # Specifically: unoptimized has ones(6) + transpose(6) + getitem(2) = 14
-    # Optimized has ones(6) + getitem(2) = 8 (transpose eliminated)
+    # The transpose is eliminated: only ones(6) + getitem(2) remain. Lowering now
+    # folds Transpose(ones) straight into ones, so the transpose never reaches the
+    # materialized graph and there is no larger un-optimized graph to compare to.
+    assert not any("transpose" in key[0] for key in opt_graph)
     assert len(opt_graph) == 8, f"Expected 8 tasks (6 ones + 2 getitem), got {len(opt_graph)}"
-    assert len(unopt_graph) == 14, f"Expected 14 unoptimized tasks, got {len(unopt_graph)}"
+
+    assert_eq(result, da.ones((4, 6)).T[0])
 
 
 # --- Transpose through Elemwise Tests ---

@@ -22,6 +22,11 @@ def pytest_addoption(parser):
 
 
 def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "requires_local_scheduler: behavior needs a local (in-process, by-reference) "
+        "scheduler; skipped under Frisky, which serializes task data.",
+    )
     scheduler = config.getoption("--scheduler")
     if scheduler in ("frisky", "both") and importlib.util.find_spec("frisky") is None:
         raise pytest.UsageError(
@@ -54,10 +59,19 @@ def array_scheduler(request):
 
 
 def pytest_collection_modifyitems(config, items):
-    if config.getoption("--runslow"):
-        return
+    if not config.getoption("--runslow"):
+        skip_slow = pytest.mark.skip(reason="need --runslow option to run")
+        for item in items:
+            if "slow" in item.keywords:
+                item.add_marker(skip_slow)
 
-    skip_slow = pytest.mark.skip(reason="need --runslow option to run")
+    # Tests that need a local scheduler (e.g. da.store mutating a client-side
+    # target in place) can't be observed under Frisky, which serializes task
+    # data. Skip them only on the frisky variant.
+    skip_frisky = pytest.mark.skip(reason="requires a local scheduler; Frisky serializes task data")
     for item in items:
-        if "slow" in item.keywords:
-            item.add_marker(skip_slow)
+        if "requires_local_scheduler" not in item.keywords:
+            continue
+        callspec = getattr(item, "callspec", None)
+        if callspec and callspec.params.get("array_scheduler") == "frisky":
+            item.add_marker(skip_frisky)

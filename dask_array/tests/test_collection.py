@@ -115,6 +115,11 @@ def test_from_array_name_is_exact():
     assert_eq(d, x)
 
 
+# compute=False hands the store back lazily, so the caller's later .compute()
+# decides the scheduler. Under Frisky that serializes the target and writes to a
+# copy, so the in-place mutation can't be observed (the compute=True path forces a
+# local scheduler in da.store; this one can't). Local schedulers only.
+@pytest.mark.requires_local_scheduler
 def test_delayed_can_unpack_compute_false_store():
     x = np.arange(12).reshape(3, 4)
     y = da.from_array(x, chunks=(2, 2))
@@ -137,6 +142,30 @@ def test_store_region_rechunked_exact_name_slice():
     expected = np.zeros(30)
     expected[5:25] = 1
     np.testing.assert_array_equal(target, expected)
+
+
+def test_store_forces_local_scheduler_only_for_inmemory_targets():
+    # store() forces a local scheduler only when an in-memory numpy target would
+    # otherwise be mutated on a copy by a serializing scheduler. File-backed
+    # targets (zarr/h5py) must keep the ambient scheduler so remote workers can
+    # write them in parallel (xarray.to_zarr relies on this).
+    from dask_array.io._store import _force_local_store_scheduler
+
+    inmem = np.zeros(3)
+
+    class FileBacked:  # not an ndarray; stands in for zarr/h5py
+        def __setitem__(self, key, value):
+            pass
+
+    file_backed = FileBacked()
+    client = object()  # non-string, non-local scheduler (Frisky/distributed-like)
+
+    with dask.config.set({"scheduler": "threads"}):  # local: never force
+        assert not _force_local_store_scheduler([inmem], None)
+    with dask.config.set({"scheduler": client}):
+        assert _force_local_store_scheduler([inmem], None)  # in-memory: force
+        assert not _force_local_store_scheduler([file_backed], None)  # file-backed: don't
+        assert not _force_local_store_scheduler([inmem], "sync")  # explicit: respect it
 
 
 @pytest.mark.parametrize(

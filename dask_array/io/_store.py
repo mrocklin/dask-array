@@ -18,6 +18,52 @@ from dask_array._utils import is_arraylike
 from dask_array.slicing._utils import fuse_slice
 
 
+_LOCAL_SCHEDULERS = frozenset({"sync", "synchronous", "single-threaded", "threads", "threading"})
+
+
+def _nonlocal_scheduler_active():
+    """True if the ambient scheduler can't preserve in-place writes to client memory.
+
+    A local scheduler (sync/threads) runs tasks in this process against the real
+    objects, so ``out[index] = x`` mutates the caller's target. A client object
+    (Frisky/distributed) or a process pool serializes the target and writes to a
+    copy. ``None`` means dask falls back to the collection's ``__dask_scheduler__``
+    (threads for arrays), which is local.
+    """
+    import dask
+
+    active = dask.config.get("scheduler", None)
+    if active is None:
+        return False
+    if isinstance(active, str):
+        return active not in _LOCAL_SCHEDULERS
+    return True  # a client object (Frisky/distributed) or other callable
+
+
+def _force_local_store_scheduler(targets, scheduler):
+    """Whether ``store`` should run its writes on a local scheduler.
+
+    ``load_store_chunk`` mutates each target in place (``out[index] = x``). For an
+    *in-memory* target (a numpy array) that side effect is only visible when the
+    task runs in this process against the real object — a serializing scheduler
+    (Frisky/distributed, or a process pool) writes to a copy and silently drops
+    the store. So force a local scheduler, but only when:
+
+    - the caller did not pick a scheduler explicitly,
+    - a serializing scheduler is active, and
+    - some target is an in-memory numpy array.
+
+    File-backed targets (zarr/h5py) are written correctly by remote workers, so
+    they keep the ambient scheduler — that's what ``xarray.to_zarr`` relies on for
+    distributed writes.
+    """
+    if scheduler is not None:
+        return False
+    if not _nonlocal_scheduler_active():
+        return False
+    return any(isinstance(t, np.ndarray) for t in targets)
+
+
 def get_scheduler_lock(collection, scheduler):
     """Get an appropriate lock for the given collection and scheduler."""
     if scheduler is None:
@@ -226,6 +272,13 @@ def store(
 
     if load_stored is None:
         load_stored = return_stored and not compute
+
+    # In-memory targets are mutated in place by ``load_store_chunk``; a serializing
+    # scheduler (Frisky/distributed) would write to a copy and silently drop the
+    # store, so run those writes locally. File-backed targets are left on the
+    # ambient scheduler so remote workers can write them (see helper).
+    if _force_local_store_scheduler(targets, kwargs.get("scheduler")):
+        kwargs = {**kwargs, "scheduler": "threads"}
 
     if lock is True:
         lock = get_scheduler_lock(Array, kwargs.get("scheduler"))
