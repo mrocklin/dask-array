@@ -2,13 +2,76 @@
 
 from __future__ import annotations
 
+from collections import Counter
+
 import numpy as np
 import pytest
 
 import dask
 import dask_array as da
+from dask_array._core_utils import normalize_chunks
 from dask_array.io import FromArray
 from dask_array._test_utils import assert_eq
+
+
+class _RecordingChunkedStore:
+    def __init__(self, shape, chunks, shards=None):
+        self.data = np.arange(np.prod(shape)).reshape(shape)
+        self.shape = self.data.shape
+        self.dtype = self.data.dtype
+        self.ndim = self.data.ndim
+        self.chunks = chunks
+        self.shards = shards
+        self.calls = []
+
+    def __getitem__(self, index):
+        self.calls.append(index)
+        return self.data[index]
+
+    def __dask_tokenize__(self):
+        return ("_RecordingChunkedStore", self.shape, self.dtype.str, self.chunks, self.shards)
+
+
+def _from_array_exprs(expr):
+    seen = set()
+    found = []
+
+    def walk(node):
+        if not hasattr(node, "operands") or id(node) in seen:
+            return
+        seen.add(id(node))
+        if isinstance(node, FromArray):
+            found.append(node)
+        for operand in node.operands:
+            walk(operand)
+
+    walk(expr)
+    return found
+
+
+def _assert_from_array_reads_respect_storage_chunks(expr):
+    for from_array in _from_array_exprs(expr):
+        storage_chunks = getattr(from_array.array, "shards", None) or getattr(from_array.array, "chunks", None)
+        if storage_chunks is None:
+            continue
+        for chunks, storage in zip(from_array.chunks, storage_chunks):
+            boundary = 0
+            for chunk in chunks[:-1]:
+                boundary += chunk
+                assert boundary % storage == 0
+
+
+def _with_chunks(array, chunks):
+    chunks = normalize_chunks(chunks, array.shape, dtype=array.dtype)
+    return da.Array(array.expr._with_chunks(chunks))
+
+
+def _slice_key(index):
+    return tuple((s.start, s.stop, s.step) for s in index)
+
+
+def _assert_slice_calls_match(actual, expected):
+    assert Counter(map(_slice_key, actual)) == Counter(map(_slice_key, expected))
 
 
 def test_rechunk_dict_simplifies_through_from_array():
@@ -73,6 +136,128 @@ def test_rechunk_dict_through_elemwise_correctness():
     expected = np_x + np_y
     assert_eq(result_tuple, expected)
     assert_eq(result_dict, expected)
+
+
+def test_rechunk_pushdown_does_not_split_storage_chunks():
+    store = _RecordingChunkedStore(shape=(10, 10), chunks=(10, 10))
+    x = da.from_array(store, chunks=store.chunks)
+
+    y = x.rechunk((2, 2))
+    simplified = y.expr.simplify()
+
+    assert y.chunks == ((2, 2, 2, 2, 2), (2, 2, 2, 2, 2))
+    _assert_from_array_reads_respect_storage_chunks(simplified)
+
+    store.calls.clear()
+    np.testing.assert_array_equal(y.compute(scheduler="synchronous"), store.data)
+    assert store.calls == [(slice(0, 10, None), slice(0, 10, None))]
+
+
+def test_rechunk_pushdown_refines_coarse_source_chunks_to_storage_chunks():
+    store = _RecordingChunkedStore(shape=(20, 30), chunks=(10, 10))
+    x = da.from_array(store, chunks=(20, 30))
+
+    y = x.rechunk((2, 2))
+    expected = _with_chunks(x, store.chunks).rechunk((2, 2))
+    simplified = y.expr.simplify()
+
+    assert simplified._name == expected.expr.simplify()._name
+    assert y.chunks == ((2,) * 10, (2,) * 15)
+    _assert_from_array_reads_respect_storage_chunks(simplified)
+
+    store.calls.clear()
+    np.testing.assert_array_equal(y.compute(scheduler="synchronous"), store.data)
+    _assert_slice_calls_match(
+        store.calls,
+        [
+            (slice(0, 10, None), slice(0, 10, None)),
+            (slice(0, 10, None), slice(10, 20, None)),
+            (slice(0, 10, None), slice(20, 30, None)),
+            (slice(10, 20, None), slice(0, 10, None)),
+            (slice(10, 20, None), slice(10, 20, None)),
+            (slice(10, 20, None), slice(20, 30, None)),
+        ],
+    )
+
+
+def test_rechunk_pushdown_respects_storage_shards_over_chunks():
+    store = _RecordingChunkedStore(shape=(20, 20), chunks=(2, 2), shards=(10, 10))
+    x = da.from_array(store, chunks=(20, 20))
+
+    y = x.rechunk((2, 2))
+    expected = _with_chunks(x, store.shards).rechunk((2, 2))
+    simplified = y.expr.simplify()
+
+    assert simplified._name == expected.expr.simplify()._name
+    assert y.chunks == ((2,) * 10, (2,) * 10)
+    _assert_from_array_reads_respect_storage_chunks(simplified)
+
+    store.calls.clear()
+    np.testing.assert_array_equal(y.compute(scheduler="synchronous"), store.data)
+    _assert_slice_calls_match(
+        store.calls,
+        [
+            (slice(0, 10, None), slice(0, 10, None)),
+            (slice(0, 10, None), slice(10, 20, None)),
+            (slice(10, 20, None), slice(0, 10, None)),
+            (slice(10, 20, None), slice(10, 20, None)),
+        ],
+    )
+
+
+def test_rechunk_pushdown_respects_zarr_storage_chunks():
+    zarr = pytest.importorskip("zarr")
+
+    z = zarr.array(np.arange(20 * 30).reshape(20, 30), chunks=(10, 10))
+    x = da.from_zarr(z, chunks=(20, 30))
+
+    y = x.rechunk((2, 2))
+    expected = _with_chunks(x, z.chunks).rechunk((2, 2))
+    simplified = y.expr.simplify()
+
+    assert simplified._name == expected.expr.simplify()._name
+    assert y.chunks == ((2,) * 10, (2,) * 15)
+    _assert_from_array_reads_respect_storage_chunks(simplified)
+    np.testing.assert_array_equal(y.compute(scheduler="synchronous"), z[:])
+
+
+def test_rechunk_pushdown_respects_icechunk_storage_chunks():
+    icechunk = pytest.importorskip("icechunk")
+    zarr = pytest.importorskip("zarr")
+
+    data = np.arange(20 * 30).reshape(20, 30)
+    repo = icechunk.Repository.create(icechunk.in_memory_storage())
+    session = repo.writable_session("main")
+    root = zarr.group(store=session.store)
+    z = root.create_array("x", shape=data.shape, chunks=(10, 10), dtype=data.dtype)
+    z[:] = data
+    session.commit("init")
+
+    z = zarr.open_array(store=repo.readonly_session("main").store, path="x", mode="r")
+    x = da.from_zarr(z, chunks=(20, 30))
+
+    y = x.rechunk((2, 2))
+    expected = _with_chunks(x, z.chunks).rechunk((2, 2))
+    simplified = y.expr.simplify()
+
+    assert simplified._name == expected.expr.simplify()._name
+    assert y.chunks == ((2,) * 10, (2,) * 15)
+    _assert_from_array_reads_respect_storage_chunks(simplified)
+    np.testing.assert_array_equal(y.compute(scheduler="synchronous"), data)
+
+
+def test_rechunk_pushdown_eliminates_storage_aligned_rechunk():
+    store = _RecordingChunkedStore(shape=(20, 30), chunks=(10, 10))
+    x = da.from_array(store, chunks=(20, 30))
+
+    y = x.rechunk((10, 10))
+    expected = _with_chunks(x, store.chunks)
+    simplified = y.expr.simplify()
+
+    assert simplified._name == expected.expr.simplify()._name
+    assert y.chunks == ((10, 10), (10, 10, 10))
+    _assert_from_array_reads_respect_storage_chunks(simplified)
+    np.testing.assert_array_equal(y.compute(scheduler="synchronous"), store.data)
 
 
 def test_rechunk_pushdown_broadcast_elemwise():

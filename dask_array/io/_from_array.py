@@ -252,7 +252,64 @@ class FromArray(IO):
             return self._accept_slice(parent)
         return None
 
-    def _accept_rechunk(self, chunks):
+    def _accept_rechunk(self, chunks, threshold=None, block_size_limit=None, method=None):
+        # For chunked stores, only push reads to chunk grids that do not split
+        # native storage chunks. Smaller output chunks stay as a Rechunk above
+        # the storage-aligned FromArray.
+        raw_storage_chunks = getattr(self.array, "shards", None) or getattr(self.array, "chunks", None)
+        storage_chunks = None
+        if raw_storage_chunks is not None:
+            try:
+                storage_chunks = tuple(int(c) for c in raw_storage_chunks)
+            except (TypeError, ValueError):
+                storage_chunks = None
+            else:
+                if len(storage_chunks) != len(self._effective_shape) or any(c <= 0 for c in storage_chunks):
+                    storage_chunks = None
+
+        if storage_chunks is not None and self.operand("_region") is not None:
+            return None
+
+        if storage_chunks is not None:
+            if any(np.isnan(c) for dim in chunks for c in dim):
+                return None
+
+            respects_storage = True
+            for dim_chunks, storage in zip(chunks, storage_chunks):
+                boundary = 0
+                for chunk in dim_chunks[:-1]:
+                    boundary += chunk
+                    if boundary % storage:
+                        respects_storage = False
+                        break
+                if not respects_storage:
+                    break
+
+            if not respects_storage:
+                read_chunk_sizes = []
+                for dim_chunks, storage in zip(chunks, storage_chunks):
+                    target = max(dim_chunks)
+                    chunk_size = max(target, storage)
+                    read_chunk_sizes.append(((chunk_size + storage - 1) // storage) * storage)
+
+                read_chunks = normalize_chunks(tuple(read_chunk_sizes), self._effective_shape, dtype=self.array.dtype)
+                if read_chunks == self.chunks:
+                    return None
+
+                from dask_array._rechunk import Rechunk
+
+                return Rechunk(
+                    self._with_chunks(read_chunks),
+                    chunks,
+                    threshold,
+                    block_size_limit,
+                    False,
+                    method,
+                )
+
+        return self._with_chunks(chunks)
+
+    def _with_chunks(self, chunks):
         name = f"{self._name}-rechunk-{tokenize(self.chunks, chunks)}"
         return FromArray(
             self.array,

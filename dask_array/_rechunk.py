@@ -680,7 +680,12 @@ class Rechunk(ArrayExpr):
         # Skip if method='p2p' is explicitly requested - user wants distributed shuffle
         if getattr(self.array, "_can_rechunk_pushdown", False) and self.method != "p2p":
             if hasattr(self.array, "_accept_rechunk"):
-                return self.array._accept_rechunk(self.chunks)
+                return self.array._accept_rechunk(
+                    self.chunks,
+                    threshold=self.threshold,
+                    block_size_limit=self.block_size_limit,
+                    method=self.method,
+                )
             # Keep the same name prefix - the token will change with the new chunks
             return self.array.substitute_parameters({"_chunks": self.chunks})
 

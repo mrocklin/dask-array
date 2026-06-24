@@ -28,6 +28,7 @@ complete = [
     "zarr>=2.0",
     "scipy",
     "h5py",
+    "icechunk; python_version >= '3.12'",
     "tiledb",
 ]
 sparse = [
