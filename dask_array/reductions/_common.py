@@ -245,6 +245,12 @@ def mean_chunk(x, sum=chunk.sum, numel=numel, dtype="f8", computing_meta=False, 
     if computing_meta:
         return x
     n = numel(x, dtype=dtype, **kwargs)
+    # See moment_chunk: collapse a uniform (zero-stride broadcast) count to a
+    # minimal (1,)*ndim array so we neither materialize nor ship a full
+    # output-sized buffer of a constant. NaN/masked counts vary per element and
+    # so are not broadcast views; those stay at full size.
+    if 0 in n.strides:
+        n = np.full((1,) * x.ndim, n.flat[0] if n.size else 0, dtype=n.dtype)
     total = sum(x, dtype=dtype, **kwargs)
     return {"n": n, "total": total}
 
@@ -345,7 +351,16 @@ def moment_chunk(
         return A
     n = numel(A, **kwargs)
 
-    n = n.astype(np.int64)
+    # `numel` returns a zero-stride broadcast view when the per-element count is
+    # uniform (the common dense case). Collapse it to a minimal (1,)*ndim array so
+    # we neither materialize nor ship a full output-sized buffer of a constant -
+    # combine/agg broadcast it back up. NaN/masked counts vary per element and so
+    # are not broadcast views; those stay at full size. (n.size is 0 only when a
+    # non-reduced axis is empty, where the count value is irrelevant.)
+    if 0 in n.strides:
+        n = np.full((1,) * A.ndim, n.flat[0] if n.size else 0, dtype=np.int64)
+    else:
+        n = n.astype(np.int64)
     if implicit_complex_dtype:
         total = sum(A, **kwargs)
     else:
