@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from dask_array.reductions._reduction import (
+    _tree_reduce,
+    reduction,
+)
 from dask_array.reductions._arg_reduction import arg_reduction
 from dask_array.reductions._common import (
     all,
@@ -36,10 +40,6 @@ from dask_array.reductions._cumulative import (
     cumsum,
     nancumprod,
     nancumsum,
-)
-from dask_array.reductions._reduction import (
-    _tree_reduce,
-    reduction,
 )
 from dask_array.reductions._trace import trace
 from dask_array.reductions._percentile import nanpercentile, percentile

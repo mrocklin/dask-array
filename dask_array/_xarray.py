@@ -123,7 +123,7 @@ class DaskArrayExprManager(ChunkManagerEntrypoint["Array"]):
         dtype: np.dtype[Any] | None = None,
         keepdims: bool = False,
     ) -> Array:
-        from dask_array import reduction
+        from dask_array.reductions._reduction import reduction
 
         return reduction(
             arr,
@@ -145,7 +145,7 @@ class DaskArrayExprManager(ChunkManagerEntrypoint["Array"]):
         dtype: np.dtype[Any] | None = None,
         **kwargs: Any,
     ) -> Array:
-        from dask_array import cumreduction
+        from dask_array.reductions._cumulative import cumreduction
 
         return cumreduction(
             func,

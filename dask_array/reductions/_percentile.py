@@ -165,7 +165,7 @@ def percentile(a, q, method="linear", internal_method="default", **kwargs):
         algorithm (``'dask'``).
     """
     from dask_array._utils import array_safe, meta_from_array
-    from dask_array.reductions import quantile
+    from dask_array.reductions._common import quantile
 
     if a.ndim == 1:
         allowed_internal_methods = {"default", "dask", "tdigest"}
@@ -254,7 +254,7 @@ def percentile(a, q, method="linear", internal_method="default", **kwargs):
 
 @derived_from(np)
 def nanpercentile(a, q, **kwargs):
-    from dask_array.reductions import nanquantile
+    from dask_array.reductions._common import nanquantile
 
     q = np.true_divide(q, a.dtype.type(100) if a.dtype.kind == "f" else 100)
 

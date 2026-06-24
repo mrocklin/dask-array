@@ -1235,7 +1235,7 @@ class Array(DaskMethodsMixin):
         --------
         dask.array.sum : equivalent function
         """
-        from dask_array.reductions import sum
+        from dask_array.reductions._common import sum
 
         return sum(
             self,
@@ -1255,7 +1255,7 @@ class Array(DaskMethodsMixin):
         --------
         dask.array.mean : equivalent function
         """
-        from dask_array.reductions import mean
+        from dask_array.reductions._common import mean
 
         return mean(
             self,
@@ -1275,7 +1275,7 @@ class Array(DaskMethodsMixin):
         --------
         dask.array.std : equivalent function
         """
-        from dask_array.reductions import std
+        from dask_array.reductions._common import std
 
         return std(
             self,
@@ -1296,7 +1296,7 @@ class Array(DaskMethodsMixin):
         --------
         dask.array.var : equivalent function
         """
-        from dask_array.reductions import var
+        from dask_array.reductions._common import var
 
         return var(
             self,
@@ -1326,7 +1326,7 @@ class Array(DaskMethodsMixin):
         --------
         dask.array.moment : equivalent function
         """
-        from dask_array.reductions import moment
+        from dask_array.reductions._common import moment
 
         return moment(
             self,
@@ -1348,7 +1348,7 @@ class Array(DaskMethodsMixin):
         --------
         dask.array.prod : equivalent function
         """
-        from dask_array.reductions import prod
+        from dask_array.reductions._common import prod
 
         return prod(
             self,
@@ -1368,7 +1368,7 @@ class Array(DaskMethodsMixin):
         --------
         dask.array.any : equivalent function
         """
-        from dask_array.reductions import any
+        from dask_array.reductions._common import any
 
         return any(self, axis=axis, keepdims=keepdims, split_every=split_every, out=out)
 
@@ -1381,7 +1381,7 @@ class Array(DaskMethodsMixin):
         --------
         dask.array.all : equivalent function
         """
-        from dask_array.reductions import all
+        from dask_array.reductions._common import all
 
         return all(self, axis=axis, keepdims=keepdims, split_every=split_every, out=out)
 
@@ -1394,7 +1394,7 @@ class Array(DaskMethodsMixin):
         --------
         dask.array.min : equivalent function
         """
-        from dask_array.reductions import min
+        from dask_array.reductions._common import min
 
         return min(self, axis=axis, keepdims=keepdims, split_every=split_every, out=out)
 
@@ -1407,7 +1407,7 @@ class Array(DaskMethodsMixin):
         --------
         dask.array.max : equivalent function
         """
-        from dask_array.reductions import max
+        from dask_array.reductions._common import max
 
         return max(self, axis=axis, keepdims=keepdims, split_every=split_every, out=out)
 
@@ -1420,7 +1420,7 @@ class Array(DaskMethodsMixin):
         --------
         dask.array.argmin : equivalent function
         """
-        from dask_array.reductions import argmin
+        from dask_array.reductions._common import argmin
 
         return argmin(self, axis=axis, keepdims=keepdims, split_every=split_every, out=out)
 
@@ -1433,7 +1433,7 @@ class Array(DaskMethodsMixin):
         --------
         dask.array.argmax : equivalent function
         """
-        from dask_array.reductions import argmax
+        from dask_array.reductions._common import argmax
 
         return argmax(self, axis=axis, keepdims=keepdims, split_every=split_every, out=out)
 
@@ -1472,7 +1472,7 @@ class Array(DaskMethodsMixin):
         --------
         dask.array.cumsum : equivalent function
         """
-        from dask_array.reductions import cumsum
+        from dask_array.reductions._cumulative import cumsum
 
         return cumsum(self, axis=axis, dtype=dtype, out=out, method=method)
 
@@ -1485,7 +1485,7 @@ class Array(DaskMethodsMixin):
         --------
         dask.array.cumprod : equivalent function
         """
-        from dask_array.reductions import cumprod
+        from dask_array.reductions._cumulative import cumprod
 
         return cumprod(self, axis=axis, dtype=dtype, out=out, method=method)
 
@@ -1498,7 +1498,7 @@ class Array(DaskMethodsMixin):
         --------
         dask.array.trace : equivalent function
         """
-        from dask_array.reductions import trace
+        from dask_array.reductions._trace import trace
 
         return trace(self, offset=offset, axis1=axis1, axis2=axis2, dtype=dtype)
 

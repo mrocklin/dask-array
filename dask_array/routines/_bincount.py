@@ -76,7 +76,7 @@ class BincountChunked(ArrayExpr):
 @derived_from(np)
 def bincount(x, weights=None, minlength=0, split_every=None):
     """Count number of occurrences of each value in array of non-negative ints."""
-    from dask_array.reductions import _tree_reduce
+    from dask_array.reductions._reduction import _tree_reduce
 
     x = asarray(x)
     if x.ndim != 1:

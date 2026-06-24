@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import ast
 import os
+import subprocess
+import sys
+import textwrap
 import warnings
 from contextlib import nullcontext as does_not_warn
 from itertools import permutations, zip_longest
+from pathlib import Path
 
 import pytest
 
@@ -16,6 +21,110 @@ from dask import config
 from dask_array._numpy_compat import ComplexWarning
 from dask_array._test_utils import assert_eq, same_keys
 from dask.core import get_deps
+
+
+def test_tree_reduce_export_available_during_common_reduction_import():
+    script = textwrap.dedent(
+        r"""
+        import importlib.abc
+        import importlib.machinery
+        import sys
+        import threading
+
+        started = threading.Event()
+        release = threading.Event()
+        errors = []
+
+        class Loader(importlib.abc.Loader):
+            def __init__(self, wrapped):
+                self.wrapped = wrapped
+
+            def create_module(self, spec):
+                create_module = getattr(self.wrapped, "create_module", None)
+                if create_module is None:
+                    return None
+                return create_module(spec)
+
+            def exec_module(self, module):
+                if module.__name__ == "dask_array.reductions._common":
+                    started.set()
+                    release.wait(5)
+                return self.wrapped.exec_module(module)
+
+        class Finder(importlib.abc.MetaPathFinder):
+            def find_spec(self, fullname, path=None, target=None):
+                if fullname != "dask_array.reductions._common":
+                    return None
+                spec = importlib.machinery.PathFinder.find_spec(fullname, path)
+                spec.loader = Loader(spec.loader)
+                return spec
+
+        sys.meta_path.insert(0, Finder())
+
+        def import_reductions():
+            try:
+                import dask_array.reductions  # noqa: F401
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        thread = threading.Thread(target=import_reductions)
+        thread.start()
+        try:
+            if not started.wait(5):
+                raise AssertionError("did not pause dask_array.reductions._common import")
+
+            reductions = sys.modules["dask_array.reductions"]
+            if not hasattr(reductions, "_tree_reduce"):
+                raise AssertionError(
+                    "dask_array.reductions did not export _tree_reduce while "
+                    "dask_array.reductions._common was importing"
+                )
+        finally:
+            release.set()
+            thread.join(5)
+
+        if thread.is_alive():
+            raise AssertionError("dask_array.reductions import did not finish")
+        if errors:
+            raise errors[0]
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_implementation_modules_import_reduction_definitions_directly():
+    root = Path(__file__).resolve().parents[1]
+    offenders = []
+    top_level_reduction_exports = {
+        "_tree_reduce",
+        "cumreduction",
+        "reduction",
+        "reductions",
+    }
+
+    for path in root.rglob("*.py"):
+        if path.name == "__init__.py" or "tests" in path.parts:
+            continue
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                if node.module == "dask_array.reductions":
+                    offenders.append(f"{path.relative_to(root)}:{node.lineno}")
+                elif node.module == "dask_array" and any(
+                    alias.name in top_level_reduction_exports for alias in node.names
+                ):
+                    offenders.append(f"{path.relative_to(root)}:{node.lineno}")
+            elif isinstance(node, ast.Import):
+                if any(alias.name == "dask_array.reductions" for alias in node.names):
+                    offenders.append(f"{path.relative_to(root)}:{node.lineno}")
+
+    assert offenders == []
 
 
 @pytest.mark.parametrize("dtype", ["f4", "i4"])

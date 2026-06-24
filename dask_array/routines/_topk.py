@@ -19,7 +19,7 @@ def topk(a, k, axis=-1, split_every=None):
     from smallest to largest.
     """
     from dask_array import _chunk as chunk
-    from dask_array.reductions import reduction
+    from dask_array.reductions._reduction import reduction
 
     a = asarray(a)
     axis = validate_axis(axis, a.ndim)
@@ -48,7 +48,7 @@ def argtopk(a, k, axis=-1, split_every=None):
     """
     from dask_array import _chunk as chunk
     from dask_array.creation import arange
-    from dask_array.reductions import reduction
+    from dask_array.reductions._reduction import reduction
 
     a = asarray(a)
     axis = validate_axis(axis, a.ndim)
