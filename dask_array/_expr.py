@@ -94,6 +94,7 @@ class ArrayExpr(SingletonExpr):
 
     # Pre-computed set of cached_property names for efficient serialization
     _cached_property_names: frozenset[str] = frozenset()
+    _pickle_excluded_cached_properties: frozenset[str] = frozenset({"_cached_keys"})
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
@@ -108,7 +109,7 @@ class ArrayExpr(SingletonExpr):
         cache = {}
         if type(self)._pickle_functools_cache:
             for k in type(self)._cached_property_names:
-                if k in self.__dict__:
+                if k in self.__dict__ and k not in type(self)._pickle_excluded_cached_properties:
                     cache[k] = self.__dict__[k]
         return Expr._reconstruct, (
             type(self),

@@ -9,6 +9,7 @@ source (which takes the getter layer, not the ndarray eager-slice layer): plain,
 
 from __future__ import annotations
 
+import cloudpickle
 import importlib.util
 
 import numpy as np
@@ -43,6 +44,21 @@ class _ArrayLike:
 
     def __getitem__(self, idx):
         return np.asarray(self._base[idx])
+
+
+class _FineChunkedArrayLike:
+    """Small-to-serialize source with many output chunks."""
+
+    shape = (195, 389)
+    dtype = np.dtype("float64")
+    ndim = 2
+
+    def __dask_tokenize__(self):
+        return ("_FineChunkedArrayLike", self.shape, self.dtype.str)
+
+    def __getitem__(self, idx):
+        shape = tuple(s.stop - s.start for s in idx)
+        return np.zeros(shape, dtype=self.dtype)
 
 
 def _run_records(records):
@@ -93,6 +109,33 @@ def _assert_records_match(arr, expected):
     # every advertised output key is actually produced by the records
     assert set(arr.__frisky_output_keys__()) <= set(by_key)
     np.testing.assert_array_equal(_reassemble(arr, by_key), expected)
+
+
+def _frisky_output_keys(arr):
+    return arr.__frisky_output_keys__()
+
+
+def _dask_keys(arr):
+    return arr.__dask_keys__()
+
+
+@pytest.mark.parametrize(
+    "enumerate_keys",
+    [_frisky_output_keys, _dask_keys],
+    ids=["frisky-output-keys", "dask-keys"],
+)
+def test_from_array_key_cache_is_not_pickled_after_key_enumeration(enumerate_keys):
+    arr = da.from_array(_FineChunkedArrayLike(), chunks=(1, 1)).optimize()
+    clean_size = len(cloudpickle.dumps(arr))
+
+    keys = enumerate_keys(arr)
+    assert len(list(flatten(keys))) == 195 * 389
+    assert "_cached_keys" in arr.expr.__dict__
+
+    blob = cloudpickle.dumps(arr)
+    assert len(blob) < 50_000
+    assert len(blob) < clean_size + 25_000
+    assert enumerate_keys(cloudpickle.loads(blob)) == keys
 
 
 def test_records_from_arraylike_basic():
