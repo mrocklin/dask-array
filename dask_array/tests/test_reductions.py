@@ -23,17 +23,12 @@ from dask_array._test_utils import assert_eq, same_keys
 from dask.core import get_deps
 
 
-def test_tree_reduce_export_available_during_common_reduction_import():
+def test_common_reductions_import_after_reductions_package_initialized():
     script = textwrap.dedent(
         r"""
         import importlib.abc
         import importlib.machinery
         import sys
-        import threading
-
-        started = threading.Event()
-        release = threading.Event()
-        errors = []
 
         class Loader(importlib.abc.Loader):
             def __init__(self, wrapped):
@@ -47,8 +42,12 @@ def test_tree_reduce_export_available_during_common_reduction_import():
 
             def exec_module(self, module):
                 if module.__name__ == "dask_array.reductions._common":
-                    started.set()
-                    release.wait(5)
+                    reductions = sys.modules["dask_array.reductions"]
+                    if getattr(reductions.__spec__, "_initializing", False):
+                        raise AssertionError(
+                            "dask_array.reductions._common imported while "
+                            "dask_array.reductions was still initializing"
+                        )
                 return self.wrapped.exec_module(module)
 
         class Finder(importlib.abc.MetaPathFinder):
@@ -61,32 +60,14 @@ def test_tree_reduce_export_available_during_common_reduction_import():
 
         sys.meta_path.insert(0, Finder())
 
-        def import_reductions():
-            try:
-                import dask_array.reductions  # noqa: F401
-            except BaseException as exc:  # noqa: BLE001
-                errors.append(exc)
+        import dask_array  # noqa: F401
+        from dask_array.reductions import _tree_reduce, all, moment, std, var
 
-        thread = threading.Thread(target=import_reductions)
-        thread.start()
-        try:
-            if not started.wait(5):
-                raise AssertionError("did not pause dask_array.reductions._common import")
-
-            reductions = sys.modules["dask_array.reductions"]
-            if not hasattr(reductions, "_tree_reduce"):
-                raise AssertionError(
-                    "dask_array.reductions did not export _tree_reduce while "
-                    "dask_array.reductions._common was importing"
-                )
-        finally:
-            release.set()
-            thread.join(5)
-
-        if thread.is_alive():
-            raise AssertionError("dask_array.reductions import did not finish")
-        if errors:
-            raise errors[0]
+        assert _tree_reduce.__module__ == "dask_array.reductions._reduction"
+        assert all.__module__ == "dask_array.reductions._common"
+        assert moment.__module__ == "dask_array.reductions._common"
+        assert std.__module__ == "dask_array.reductions._common"
+        assert var.__module__ == "dask_array.reductions._common"
         """
     )
     result = subprocess.run(
