@@ -43,7 +43,6 @@ class TestDaskArrayExprManager:
         manager = DaskArrayExprManager()
         assert manager.array_cls is da.Array
         assert manager.available is True
-        assert manager.vectorized_indexing_returns_numpy_order is True
 
     def test_is_chunked_array(self):
         manager = DaskArrayExprManager()

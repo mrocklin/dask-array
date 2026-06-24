@@ -43,7 +43,6 @@ class DaskArrayExprManager(ChunkManagerEntrypoint["Array"]):
 
     array_cls: type[Array]
     available: bool = True
-    vectorized_indexing_returns_numpy_order: bool = True
 
     def __init__(self) -> None:
         from dask_array._collection import Array
