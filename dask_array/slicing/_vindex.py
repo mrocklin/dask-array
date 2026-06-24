@@ -122,10 +122,9 @@ def _vindex_array(x, dict_indexes):
         indexer = _compute_indexer(index, x.chunks[axis])
 
         result = new_collection(_shuffle(x.expr, indexer, axis, "vindex-"))
-        # Shuffle keeps axis in place; reshape for broadcast_shape along that axis
-        new_shape = list(result.shape)
-        new_shape[axis : axis + 1] = list(broadcast_shape)
-        return result.reshape(tuple(new_shape))
+        axes = (axis,) + tuple(i for i in range(result.ndim) if i != axis)
+        result = result.transpose(axes)
+        return result.reshape(broadcast_shape + result.shape[1:])
 
     if npoints > 0:
         result_1d = new_collection(VIndexArray(x.expr, dict_indexes, broadcast_shape, npoints))

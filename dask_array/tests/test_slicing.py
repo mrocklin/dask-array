@@ -792,6 +792,29 @@ def test_minimal_dtype_doesnt_overflow():
     assert_eq(dx[ib], x[ib])
 
 
+@pytest.mark.parametrize("indexer", [np.array([0, 2]), np.array([[0, 1], [2, 0]])])
+def test_vindex_single_indexed_axis_moves_vectorized_dimensions_to_front(indexer):
+    arr = np.arange(12).reshape(3, 4)
+    darr = da.from_array(arr, chunks=(2, 2))
+
+    expected = np.take(arr, indexer, axis=1)
+    expected = np.moveaxis(
+        expected,
+        tuple(range(1, 1 + indexer.ndim)),
+        tuple(range(indexer.ndim)),
+    )
+
+    assert_eq(darr.vindex[:, indexer], expected)
+
+
+def test_vindex_single_indexed_axis_zero_keeps_slices_last():
+    arr = np.arange(12).reshape(3, 4)
+    darr = da.from_array(arr, chunks=(2, 2))
+    indexer = np.array([0, 2])
+
+    assert_eq(darr.vindex[indexer, :], np.take(arr, indexer, axis=0))
+
+
 def test_vindex_with_dask_array():
     arr = np.array([0.2, 0.4, 0.6])
     darr = da.from_array(arr, chunks=-1)
