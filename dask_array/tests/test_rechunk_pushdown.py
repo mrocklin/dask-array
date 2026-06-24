@@ -10,7 +10,9 @@ import pytest
 import dask
 import dask_array as da
 from dask_array._core_utils import normalize_chunks
+from dask_array._rechunk import Rechunk
 from dask_array.io import FromArray
+from dask_array.io._from_array import _source_storage_chunks
 from dask_array._test_utils import assert_eq
 
 
@@ -32,6 +34,34 @@ class _RecordingChunkedStore:
         return ("_RecordingChunkedStore", self.shape, self.dtype.str, self.chunks, self.shards)
 
 
+class _LazyIndexingAdapter:
+    """Mimics xarray's ``ImplicitToExplicitIndexingAdapter``: wraps a chunked
+    store, exposes ``shape``/``dtype``/``ndim``/``__getitem__``, but hides the
+    store's ``.chunks``/``.shards`` behind the wrapper (reachable only through
+    ``.array``)."""
+
+    def __init__(self, array):
+        self.array = array
+
+    @property
+    def shape(self):
+        return self.array.shape
+
+    @property
+    def dtype(self):
+        return self.array.dtype
+
+    @property
+    def ndim(self):
+        return self.array.ndim
+
+    def __getitem__(self, index):
+        return self.array[index]
+
+    def __dask_tokenize__(self):
+        return ("_LazyIndexingAdapter", self.array.__dask_tokenize__())
+
+
 def _from_array_exprs(expr):
     seen = set()
     found = []
@@ -51,7 +81,7 @@ def _from_array_exprs(expr):
 
 def _assert_from_array_reads_respect_storage_chunks(expr):
     for from_array in _from_array_exprs(expr):
-        storage_chunks = getattr(from_array.array, "shards", None) or getattr(from_array.array, "chunks", None)
+        storage_chunks = _source_storage_chunks(from_array.array)
         if storage_chunks is None:
             continue
         for chunks, storage in zip(from_array.chunks, storage_chunks):
@@ -244,6 +274,71 @@ def test_rechunk_pushdown_respects_icechunk_storage_chunks():
     assert y.chunks == ((2,) * 10, (2,) * 15)
     _assert_from_array_reads_respect_storage_chunks(simplified)
     np.testing.assert_array_equal(y.compute(scheduler="synchronous"), data)
+
+
+def test_rechunk_pushdown_sees_storage_chunks_through_lazy_wrapper():
+    """Sub-native rechunk over a source whose ``.chunks`` is hidden behind an
+    xarray-style lazy-indexing adapter must keep a ``Rechunk`` over a FromArray
+    that reads at the *native* storage grid -- not collapse into one fine-grained
+    FromArray that re-fetches whole storage chunks per sub-chunk.
+
+    Regression for the Rechunk-fused-below-storage bug: the storage-aware
+    pushdown keyed only on ``getattr(source, "chunks")``, which lazy wrappers
+    (icechunk/zarr via xarray) do not re-expose, so it fused below native and
+    amplified reads (~16x on the motivating store).
+    """
+    store = _RecordingChunkedStore(shape=(20, 30), chunks=(10, 10))
+    wrapped = _LazyIndexingAdapter(store)
+    assert not hasattr(wrapped, "chunks")  # precondition: storage grid is hidden
+
+    x = da.from_array(wrapped, chunks=(10, 10), meta=np.ndarray)
+    y = x.rechunk((2, 2))
+    simplified = y.expr.simplify()
+
+    # Must stay a Rechunk above a storage-aligned FromArray, not a sub-native FromArray.
+    assert isinstance(simplified, Rechunk)
+    (from_array,) = _from_array_exprs(simplified)
+    assert from_array.chunks == ((10, 10), (10, 10, 10))  # native, not (2,) * ...
+    _assert_from_array_reads_respect_storage_chunks(simplified)
+
+    # IO confirmation: each native storage chunk is read exactly once (no amplification).
+    store.calls.clear()
+    np.testing.assert_array_equal(y.compute(scheduler="synchronous"), store.data)
+    _assert_slice_calls_match(
+        store.calls,
+        [
+            (slice(0, 10, None), slice(0, 10, None)),
+            (slice(0, 10, None), slice(10, 20, None)),
+            (slice(0, 10, None), slice(20, 30, None)),
+            (slice(10, 20, None), slice(0, 10, None)),
+            (slice(10, 20, None), slice(10, 20, None)),
+            (slice(10, 20, None), slice(20, 30, None)),
+        ],
+    )
+
+
+def test_rechunk_pushdown_respects_storage_chunks_through_xarray():
+    """End-to-end: an xarray dataset opened lazily from a chunked zarr store and
+    rechunked sub-native keeps a Rechunk over a FromArray that reads at native.
+
+    The FromArray source here is a real ``ImplicitToExplicitIndexingAdapter``
+    that hides the store's ``.chunks``."""
+    xr = pytest.importorskip("xarray")
+    pytest.importorskip("zarr")
+
+    data = np.arange(20 * 30, dtype="f4").reshape(20, 30)
+    store: dict = {}
+    xr.Dataset({"v": (("y", "x"), data)}).to_zarr(store, mode="w", encoding={"v": {"chunks": (10, 10)}})
+
+    ds = xr.open_dataset(store, engine="zarr", chunks={})
+    rechunked = ds["v"].chunk({"y": 2, "x": 2})
+    simplified = rechunked.data.expr.simplify()
+
+    assert isinstance(simplified, Rechunk)
+    (from_array,) = _from_array_exprs(simplified)
+    assert from_array.chunks == ((10, 10), (10, 10, 10))  # native storage grid
+    _assert_from_array_reads_respect_storage_chunks(simplified)
+    np.testing.assert_array_equal(rechunked.data.compute(scheduler="synchronous"), data)
 
 
 def test_rechunk_pushdown_eliminates_storage_aligned_rechunk():

@@ -22,6 +22,40 @@ from dask_array._utils import meta_from_array
 _NUMPY_SLICE_PUSHDOWN_NBYTES_LIMIT = 64 * 1024 * 1024
 
 
+def _source_storage_chunks(array):
+    """Native storage chunk grid backing ``array`` (the unit it reads at).
+
+    Returns the source's ``.shards`` or ``.chunks`` (zarr/h5py read one whole
+    chunk at a time), or ``None`` for unchunked sources such as plain ndarrays.
+
+    xarray opens backend arrays behind lazy-indexing adapters
+    (``ImplicitToExplicitIndexingAdapter`` -> ... -> ``ZarrArrayWrapper``) that
+    wrap the store but do not re-expose its ``.chunks``/``.shards``.  Walk the
+    wrapper chain (linked by ``.array``, innermost store held in ``._array``) so
+    the storage grid is still found and a sub-native rechunk is not fused below
+    it.
+
+    Returns chunk *sizes*, used as a read-tiling unit.  If a wrapper hides a
+    deferred slice (e.g. xarray's ``LazilyIndexedArray``) the FromArray's shape
+    is in that sliced frame, so reads align to multiples of the chunk size
+    rather than to absolute native boundaries -- still one coarse read per
+    target block (never worse than fusing below native), just not perfectly
+    storage-aligned.  Values are unaffected: the adapter's ``__getitem__``
+    applies the hidden transform.
+    """
+    for _ in range(16):  # bounded; xarray nests only a handful of adapters
+        raw = getattr(array, "shards", None) or getattr(array, "chunks", None)
+        if raw is not None:
+            return raw
+        nxt = getattr(array, "array", None)
+        if nxt is None:
+            nxt = getattr(array, "_array", None)
+        if nxt is None or nxt is array:
+            return None
+        array = nxt
+    return None
+
+
 class FromArray(IO):
     _parameters = [
         "array",
@@ -256,7 +290,7 @@ class FromArray(IO):
         # For chunked stores, only push reads to chunk grids that do not split
         # native storage chunks. Smaller output chunks stay as a Rechunk above
         # the storage-aligned FromArray.
-        raw_storage_chunks = getattr(self.array, "shards", None) or getattr(self.array, "chunks", None)
+        raw_storage_chunks = _source_storage_chunks(self.array)
         storage_chunks = None
         if raw_storage_chunks is not None:
             try:
