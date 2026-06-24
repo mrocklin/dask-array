@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import cloudpickle
 import operator
 
 import numpy as np
@@ -46,6 +47,47 @@ def test_rechunk(arr):
     result = arr.rechunk((7, 3))
     expected = arr.compute()
     assert_eq(result, expected)
+
+
+def test_array_pickle_drops_lowered_expr_cache():
+    x = da.from_array(np.arange(12).reshape(3, 4), chunks=(1, 2)) + 1
+
+    expected_keys = x.__dask_keys__()
+    assert "_lowered_expr" in vars(x)
+
+    y = cloudpickle.loads(cloudpickle.dumps(x))
+    assert "_lowered_expr" not in vars(y)
+    assert y.__dask_keys__() == expected_keys
+    assert "_lowered_expr" in vars(y)
+    assert_eq(y, np.arange(12).reshape(3, 4) + 1)
+
+
+def test_array_pickle_preserves_lowering_config_for_key_stability():
+    with dask.config.set({"array.optimize-graph": True}):
+        x = (da.from_array(np.arange(20), chunks=5) + 1)[:12]
+        expected_keys = x.__dask_keys__()
+        blob = cloudpickle.dumps(x)
+
+    with dask.config.set({"array.optimize-graph": False}):
+        y = cloudpickle.loads(blob)
+        assert "_lowered_expr" not in vars(y)
+        assert y.__dask_keys__() == expected_keys
+        assert_eq(y, np.arange(20)[:12] + 1)
+
+
+def test_array_pickle_preserves_lowering_config_for_frisky_records():
+    with dask.config.set({"array.optimize-graph": True}):
+        x = (da.from_array(np.arange(20), chunks=5) + 1)[:12]
+        output_keys = x.__frisky_output_keys__()
+        blob = cloudpickle.dumps(x)
+
+    with dask.config.set({"array.optimize-graph": False}):
+        y = cloudpickle.loads(blob)
+        records = y.__frisky_graph__()
+
+    produced = {key for key, _func, _args, _kwargs, _deps in records}
+    assert y.__frisky_output_keys__() == output_keys
+    assert set(output_keys) <= produced
 
 
 def test_blockwise():

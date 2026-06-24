@@ -107,7 +107,7 @@ __all__ = [
 ]
 
 
-def _lower(expr):
+def _lower(expr, optimize_graph=None):
     """Lower an expression to its task graph for ``__dask_graph__``/``__dask_keys__``
     and the Frisky records walk.
 
@@ -125,7 +125,9 @@ def _lower(expr):
     whether they simplified, or the client hangs waiting on keys the graph never
     produces.
     """
-    if config.get("array.optimize-graph", True):
+    if optimize_graph is None:
+        optimize_graph = config.get("array.optimize-graph", True)
+    if optimize_graph:
         expr = expr.simplify()
     return expr.lower_completely()
 
@@ -138,13 +140,25 @@ class Array(DaskMethodsMixin):
     def __init__(self, expr):
         self._expr = expr
 
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state.pop("_lowered_expr", None)
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+
     @property
     def expr(self) -> ArrayExpr:
         return self._expr
 
     @cached_property
+    def _lowered_expr_optimize_graph(self):
+        return config.get("array.optimize-graph", True)
+
+    @cached_property
     def _lowered_expr(self):
-        return _lower(self.expr)
+        return _lower(self.expr, optimize_graph=self._lowered_expr_optimize_graph)
 
     @property
     def _name(self):
