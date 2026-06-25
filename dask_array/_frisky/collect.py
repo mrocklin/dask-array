@@ -56,6 +56,62 @@ def _walk_records(roots, seen, records):
         stack.extend(e.dependencies())
 
 
+def _walk_record_chunks(roots, seen, chunks, records):
+    """Like ``_walk_records`` but each node contributes EITHER a binary records
+    LAYER chunk (``to_records_chunk``, the fast Rust-to-Rust path) appended to
+    ``chunks``, OR plain ``(key, func, args, kwargs, deps)`` records appended to
+    ``records`` (the from_array source, generic ``GraphRecordsLayer`` fallback, or
+    any layer whose Rust backend doesn't yet emit chunks). Frisky decodes both and
+    unions them under one ``dask.order`` pass, so a graph need not be all-or-nothing
+    to get the speedup on the layers that support it."""
+    stack = list(roots)
+    while stack:
+        e = stack.pop()
+        if e._name in seen:
+            continue
+        seen.add(e._name)
+
+        make_layer = getattr(e, "_frisky_layer", None)
+        layer = None
+        if make_layer is not None:
+            try:
+                layer = make_layer()
+            except (NotImplementedError, ImportError):
+                layer = None
+        if layer is None:
+            layer = GraphRecordsLayer(e)
+
+        chunk = None
+        to_chunk = getattr(layer, "to_records_chunk", None)
+        if to_chunk is not None:
+            try:
+                chunk = to_chunk()
+            except NotImplementedError:
+                chunk = None
+        if chunk is not None:
+            chunks.append(chunk)
+        else:
+            records.extend(layer.to_task_records())
+
+        stack.extend(e.dependencies())
+
+
+def collect_record_chunks(collection, seen=None):
+    """Hybrid binary/Python records for ``collection``: ``(chunks, records)``.
+
+    ``chunks`` is a list of binary records LAYER chunks (bytes); ``records`` is a
+    list of plain task records for the layers that didn't go binary. Same
+    ``seen`` semantics as :func:`collect_task_records` — pass a shared set across
+    a multi-collection submission so a shared subgraph is expanded once.
+    Completeness is checked by the caller over the combined union (Frisky)."""
+    if seen is None:
+        seen = set()
+    chunks = []
+    records = []
+    _walk_record_chunks([collection._lowered_expr], seen, chunks, records)
+    return chunks, records
+
+
 def _check_complete(records):
     """Every dependency must be produced by some record, else the translation
     wasn't faithful (e.g. a fused expr referencing fused-away keys) — raise so

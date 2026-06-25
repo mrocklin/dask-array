@@ -18,10 +18,11 @@ use std::collections::HashMap;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
+use pyo3::types::{PyBytes, PyDict, PyList};
 
 use crate::common::{
-    to_dask_graph, to_task_records, ArgSlot, Compute, Expanded, IndexElem, NeutralTask,
+    to_dask_graph, to_records_chunk, to_task_records, ArgSlot, Compute, Expanded, IndexElem,
+    NeutralTask,
 };
 
 struct Step {
@@ -108,6 +109,10 @@ impl RechunkLayer {
 
     fn to_task_records<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
         to_task_records(py, &self.expand())
+    }
+
+    fn to_records_chunk<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        to_records_chunk(py, &self.expand())
     }
 }
 

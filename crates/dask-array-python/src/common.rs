@@ -23,7 +23,7 @@
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyString, PyTuple};
+use pyo3::types::{PyBytes, PyDict, PyList, PyString, PyTuple};
 
 /// One positional argument of a task, resolved per output block.
 pub enum ArgSlot {
@@ -388,4 +388,195 @@ pub fn to_task_records<'py>(py: Python<'py>, exp: &Expanded) -> PyResult<Bound<'
         }
     }
     Ok(records)
+}
+
+// --- Binary records protocol (consumed by frisky `records_proto.rs`) ----------
+//
+// One layer's `Expanded` serialized to a compact byte chunk so Frisky can build
+// `TaskSpec`s in pure Rust, skipping the per-task Python object materialization
+// `to_task_records` does. The Frisky bundle frames a sequence of these chunks
+// with a framing version + layer count; this function emits exactly one LAYER.
+// Each LAYER also self-describes its grammar version (its leading byte) so a
+// grammar drift here that isn't matched in `records_proto.rs` is REJECTED (the
+// decoder falls back) rather than silently misparsed. Bump
+// `RECORDS_PROTOCOL_VERSION` here and the matching `CHUNK_GRAMMAR_VERSION` in
+// `records_proto.rs` together on any grammar change. Little-endian.
+//
+//   LAYER := u8 grammar_version, STRLIST names, STRLIST dep_names, BYTESLIST funcs,
+//            u32 n_tasks, TASK*
+//   TASK  := u32 name_idx, COORD, COMPUTE, u8 n_slots, SLOT*
+//   COORD := u8 n, u32*n        COMPUTE := u8 (0 Call{u32 idx} | 2 Alias)
+//   SLOT  := u8 tag (0 Dep{u32 name_idx, COORD} | 1 Index{u8 n, ELEM*}
+//                    | 2 IntTuple{u8 n, i64*} | 3 List{u32 n, SLOT*}
+//                    | 4 Scalar{NUM})
+//   ELEM  := u8 (0 Slice{OPTI64 start,stop,step} | 1 Int{i64})
+//   OPTI64:= u8 present, i64?   NUM := u8 (0 Int{i64} | 1 Float{f64})
+//   STR := u32 len, utf8        BYTES := u32 len, bytes
+//
+// `Literal` slots and `CallKw` compute aren't expressible (a literal is an
+// arbitrary Python object); this raises `NotImplementedError`, and the caller
+// falls back to `to_task_records` for that layer.
+
+/// Grammar version stamped at the head of every LAYER chunk; Frisky's decoder
+/// (`records_proto::CHUNK_GRAMMAR_VERSION`) rejects a mismatch and falls back.
+pub const RECORDS_PROTOCOL_VERSION: u8 = 1;
+
+/// A count that the grammar stores in one byte (coords, slots, index elems —
+/// all bounded by ndim / arg arity in practice). A layer that somehow exceeds
+/// 255 falls back to `to_task_records` rather than silently truncating.
+fn u8_count(n: usize, what: &str) -> PyResult<u8> {
+    u8::try_from(n).map_err(|_| {
+        pyo3::exceptions::PyNotImplementedError::new_err(format!(
+            "{what} count {n} exceeds binary-records u8 limit"
+        ))
+    })
+}
+
+fn w_u32(buf: &mut Vec<u8>, v: u32) {
+    buf.extend_from_slice(&v.to_le_bytes());
+}
+fn w_i64(buf: &mut Vec<u8>, v: i64) {
+    buf.extend_from_slice(&v.to_le_bytes());
+}
+fn w_str(buf: &mut Vec<u8>, s: &str) {
+    w_u32(buf, s.len() as u32);
+    buf.extend_from_slice(s.as_bytes());
+}
+fn w_bytes(buf: &mut Vec<u8>, b: &[u8]) {
+    w_u32(buf, b.len() as u32);
+    buf.extend_from_slice(b);
+}
+fn w_coord(buf: &mut Vec<u8>, coord: &[u32]) -> PyResult<()> {
+    buf.push(u8_count(coord.len(), "coord")?);
+    for c in coord {
+        w_u32(buf, *c);
+    }
+    Ok(())
+}
+fn w_opt_i64(buf: &mut Vec<u8>, v: Option<i64>) {
+    match v {
+        Some(x) => {
+            buf.push(1);
+            w_i64(buf, x);
+        }
+        None => buf.push(0),
+    }
+}
+
+fn w_slot(buf: &mut Vec<u8>, slot: &ArgSlot) -> PyResult<()> {
+    match slot {
+        ArgSlot::Dep { name_idx, coord } => {
+            buf.push(0);
+            w_u32(buf, *name_idx as u32);
+            w_coord(buf, coord)?;
+        }
+        ArgSlot::Index(elems) => {
+            buf.push(1);
+            buf.push(u8_count(elems.len(), "index elems")?);
+            for e in elems {
+                match e {
+                    IndexElem::Slice { start, stop, step } => {
+                        buf.push(0);
+                        w_opt_i64(buf, *start);
+                        w_opt_i64(buf, *stop);
+                        w_opt_i64(buf, *step);
+                    }
+                    IndexElem::Int(i) => {
+                        buf.push(1);
+                        w_i64(buf, *i);
+                    }
+                }
+            }
+        }
+        ArgSlot::IntTuple(v) => {
+            buf.push(2);
+            buf.push(u8_count(v.len(), "int tuple")?);
+            for x in v {
+                w_i64(buf, *x);
+            }
+        }
+        ArgSlot::List(items) => {
+            buf.push(3);
+            w_u32(buf, items.len() as u32);
+            for it in items {
+                w_slot(buf, it)?;
+            }
+        }
+        ArgSlot::Scalar(n) => {
+            buf.push(4);
+            match n {
+                Num::Int(i) => {
+                    buf.push(0);
+                    w_i64(buf, *i);
+                }
+                Num::Float(f) => {
+                    buf.push(1);
+                    buf.extend_from_slice(&f.to_le_bytes());
+                }
+            }
+        }
+        ArgSlot::Literal(_) => {
+            return Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                "literal arg not expressible in binary records",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Serialize one layer's `Expanded` to a binary records LAYER chunk. The shared
+/// functions are pickled once each (with the layer's shared kwargs bound via
+/// `functools.partial` when non-empty, matching `to_task_records`'s effective
+/// func); the per-task records are raw bytes.
+pub fn to_records_chunk<'py>(py: Python<'py>, exp: &Expanded) -> PyResult<Bound<'py, PyBytes>> {
+    let kwargs = exp.kwargs.bind(py).downcast::<PyDict>()?;
+    let kwargs_empty = kwargs.is_empty();
+    let cloudpickle_dumps = py.import("cloudpickle")?.getattr("dumps")?;
+    let partial = py.import("functools")?.getattr("partial")?;
+
+    let mut buf: Vec<u8> = Vec::new();
+    buf.push(RECORDS_PROTOCOL_VERSION);
+
+    w_u32(&mut buf, exp.names.len() as u32);
+    for n in &exp.names {
+        w_str(&mut buf, n);
+    }
+    w_u32(&mut buf, exp.dep_names.len() as u32);
+    for d in exp.dep_names {
+        w_str(&mut buf, d);
+    }
+    w_u32(&mut buf, exp.funcs.len() as u32);
+    for f in &exp.funcs {
+        let effective: Bound<'py, PyAny> = if kwargs_empty {
+            f.bind(py).clone()
+        } else {
+            partial.call((f.bind(py),), Some(kwargs))?
+        };
+        let bytes: Vec<u8> = cloudpickle_dumps.call1((effective,))?.extract()?;
+        w_bytes(&mut buf, &bytes);
+    }
+
+    w_u32(&mut buf, exp.tasks.len() as u32);
+    for task in &exp.tasks {
+        w_u32(&mut buf, task.name_idx as u32);
+        w_coord(&mut buf, &task.coord)?;
+        match &task.compute {
+            Compute::Call { func_idx } => {
+                buf.push(0);
+                w_u32(&mut buf, *func_idx as u32);
+            }
+            Compute::Alias => buf.push(2),
+            Compute::CallKw { .. } => {
+                return Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                    "per-task kwargs (CallKw) not expressible in binary records",
+                ));
+            }
+        }
+        buf.push(u8_count(task.slots.len(), "task slots")?);
+        for slot in &task.slots {
+            w_slot(&mut buf, slot)?;
+        }
+    }
+
+    Ok(PyBytes::new(py, &buf))
 }

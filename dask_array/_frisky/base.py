@@ -35,3 +35,15 @@ class Layer:
     def to_task_records(self):
         """Plain ``(key, func, args, kwargs, deps)`` records, one per task."""
         return self._rust.to_task_records()
+
+    def to_records_chunk(self):
+        """One binary records LAYER chunk (the protocol shared with Frisky's
+        ``records_proto``), letting Frisky build task specs without materializing
+        Python record tuples. Raises ``NotImplementedError`` when this layer's
+        Rust backend hasn't implemented it (the walk then uses
+        ``to_task_records``), or when the layer holds a construct the binary
+        grammar can't express (a literal arg, per-task kwargs)."""
+        fn = getattr(self._rust, "to_records_chunk", None)
+        if fn is None:
+            raise NotImplementedError
+        return fn()

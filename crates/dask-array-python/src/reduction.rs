@@ -55,6 +55,10 @@ impl PartialReduceLayer {
     fn to_task_records<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
         to_task_records(py, &self.expand())
     }
+
+    fn to_records_chunk<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyBytes>> {
+        crate::common::to_records_chunk(py, &self.expand())
+    }
 }
 
 /// Contiguous runs of length `size` over `0..n` (the last may be shorter),

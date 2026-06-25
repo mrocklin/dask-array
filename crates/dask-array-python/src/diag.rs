@@ -61,6 +61,10 @@ impl Diag1DLayer {
     fn to_task_records<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
         to_task_records(py, &self.expand())
     }
+
+    fn to_records_chunk<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyBytes>> {
+        crate::common::to_records_chunk(py, &self.expand())
+    }
 }
 
 impl Diag1DLayer {
@@ -145,6 +149,10 @@ impl Diag2DSimpleLayer {
 
     fn to_task_records<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
         to_task_records(py, &self.expand())
+    }
+
+    fn to_records_chunk<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyBytes>> {
+        crate::common::to_records_chunk(py, &self.expand())
     }
 }
 

@@ -218,6 +218,20 @@ class Array(DaskMethodsMixin):
         self._check_frisky_supported()
         return collect_task_records(self, seen=seen)
 
+    def __frisky_records_chunks__(self, seen=None):
+        """Frisky binary-records protocol (duck-typed). Returns
+        ``(chunks, records)``: a list of binary records LAYER chunks (bytes) for
+        the layers that support the fast Rust-to-Rust path, plus plain
+        ``(key, func, args, kwargs, deps)`` records for the layers that don't
+        (from_array source, generic fallback). Frisky decodes both and unions them
+        under one ``dask.order`` pass. Raises ``NotImplementedError`` if the graph
+        can't be represented at all (caller falls back to ``__frisky_graph__`` or
+        the materialized-graph path). ``seen`` threads like ``__frisky_graph__``."""
+        from dask_array._frisky.collect import collect_record_chunks
+
+        self._check_frisky_supported()
+        return collect_record_chunks(self, seen=seen)
+
     def __frisky_output_keys__(self):
         """Frisky expression-submission protocol (duck-typed). The flat,
         stringified output keys this collection wants results for. Both the
