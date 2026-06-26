@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import functools
 import math
 from functools import reduce
@@ -206,7 +205,11 @@ class Shuffle(ArrayExpr):
     def _new_chunks(self):
         current_chunk, new_chunks = [], []
         limit = self._chunk_size_limit
-        for idx in copy.deepcopy(self.indexer):
+        # No deepcopy needed: the loop only reads each ``idx`` (extend/copy/slice
+        # all produce independent data for ``new_chunks``), and the optimizer
+        # recomputes this per rewritten Shuffle instance, so deepcopying the whole
+        # (potentially large) indexer each time dominated graph-build time.
+        for idx in self.indexer:
             # Split oversized groups into limit-sized pieces
             if len(idx) > limit:
                 # Flush current chunk first
