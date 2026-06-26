@@ -17,7 +17,7 @@ from dask_array import _rust
 # Fail loudly if a stale native extension is imported (source changed but the
 # .so wasn't rebuilt) rather than silently producing wrong tasks. Bump this and
 # PROTOCOL_REVISION in crates/dask-array-python/src/lib.rs together.
-_PROTOCOL_REVISION = 21
+_PROTOCOL_REVISION = 22
 if _rust.protocol_revision() != _PROTOCOL_REVISION:
     raise ImportError(
         f"dask_array._rust is at protocol revision {_rust.protocol_revision()}, "

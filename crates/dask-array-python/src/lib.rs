@@ -34,6 +34,7 @@ mod expand_dims;
 mod eye;
 mod from_array;
 mod linspace;
+mod overlap;
 mod rechunk;
 mod reduction;
 mod reshape;
@@ -43,7 +44,7 @@ mod stack;
 
 /// Protocol revision for the native extension. Python checks this on import so
 /// a stale `.so` fails loudly instead of silently producing wrong tasks.
-const PROTOCOL_REVISION: usize = 21;
+const PROTOCOL_REVISION: usize = 22;
 
 #[pyfunction]
 fn protocol_revision() -> usize {
@@ -69,6 +70,7 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<eye::EyeLayer>()?;
     m.add_class::<from_array::FromArrayGetterLayer>()?;
     m.add_class::<linspace::LinspaceLayer>()?;
+    m.add_class::<overlap::OverlapLayer>()?;
     m.add_class::<reduction::PartialReduceLayer>()?;
     m.add_class::<rechunk::RechunkLayer>()?;
     m.add_class::<reshape::ReshapeLayer>()?;

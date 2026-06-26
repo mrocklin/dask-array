@@ -28,6 +28,7 @@ _EXPORTS = {
     "FromArrayLayer": ("dask_array._frisky.from_array", "FromArrayLayer"),
     "FusedBlockwiseLayer": ("dask_array._frisky.fused_blockwise", "FusedBlockwiseLayer"),
     "LinspaceLayer": ("dask_array._frisky.linspace", "LinspaceLayer"),
+    "OverlapLayer": ("dask_array._frisky.overlap", "OverlapLayer"),
     "PartialReduceLayer": ("dask_array._frisky.reduction", "PartialReduceLayer"),
     "RandomLayer": ("dask_array._frisky.random", "RandomLayer"),
     "RechunkLayer": ("dask_array._frisky.rechunk", "RechunkLayer"),

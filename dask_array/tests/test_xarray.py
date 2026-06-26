@@ -183,6 +183,30 @@ class TestXarrayIntegration:
         result = da_xr.sum().compute()
         assert result.values == 200.0
 
+    def test_dataarray_rolling_mean(self):
+        arr = da.from_array(np.arange(12.0), chunks=4)
+        da_xr = xr.DataArray(arr, dims=["time"])
+
+        result = da_xr.rolling(time=3, center=True).mean()
+
+        assert isinstance(result.data, da.Array)
+        expected = np.array([np.nan, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, np.nan])
+        np.testing.assert_allclose(result.compute().values, expected)
+
+    def test_dataarray_rolling_construct_multi_axis(self):
+        data = np.arange(4 * 6.0).reshape(4, 6)
+        da_xr = xr.DataArray(
+            da.from_array(data, chunks=(2, 3)),
+            dims=["time", "x"],
+        )
+        eager = xr.DataArray(data, dims=["time", "x"])
+
+        result = da_xr.rolling(time=3, x=2, center=True).construct(time="time_window", x="x_window")
+        expected = eager.rolling(time=3, x=2, center=True).construct(time="time_window", x="x_window")
+
+        assert isinstance(result.data, da.Array)
+        np.testing.assert_allclose(result.compute().values, expected.values)
+
     def test_dataarray_rechunk(self):
         """Test rechunking a DataArray."""
         arr = da.ones((10, 20), chunks=(5, 10))

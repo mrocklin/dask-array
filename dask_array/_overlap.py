@@ -96,6 +96,11 @@ class OverlapInternal(ArrayExpr):
         )
         return ensure_dict(graph)
 
+    def _frisky_layer(self):
+        from dask_array._frisky import OverlapLayer
+
+        return OverlapLayer(self._name, self.array._name, self.array.numblocks, self.axes)
+
 
 class MapOverlap(ArrayExpr):
     """Logical expression for the full map_overlap operation.
