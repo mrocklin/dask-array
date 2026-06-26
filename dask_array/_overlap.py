@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import weakref
 import warnings
 from functools import reduce
 from numbers import Integral, Number
@@ -12,13 +13,14 @@ from tlz.curried import map
 
 from dask_array._new_collection import new_collection
 from dask_array import _chunk as chunk
+from dask_array._blockwise import Blockwise
 from dask_array._collection import Array, concatenate
 from dask_array._expr import ArrayExpr, unify_chunks_expr
 from dask_array._map_blocks import map_blocks
 from dask_array.creation import empty_like, full_like, repeat
 from dask_array._shuffle import _calculate_new_chunksizes
 from dask_array._numpy_compat import normalize_axis_tuple
-from dask_array._utils import compute_meta, meta_from_array
+from dask_array._utils import compute_meta, meta_from_array, validate_axis
 from dask.layers import ArrayOverlapLayer
 from dask.utils import derived_from, ensure_dict
 
@@ -305,6 +307,94 @@ class MapOverlap(ArrayExpr):
             result = trim_internal(result, trim_depth, trim_boundary)
 
         return result.expr
+
+
+class SlidingWindowView(Blockwise):
+    """Blockwise sliding-window view with parent-reduction simplifications."""
+
+    _instances = weakref.WeakValueDictionary()
+
+    def _simplify_up(self, parent, dependents):
+        from dask_array.reductions._reduction import Reduction
+        from dask_array.reductions._common import chunk_max, mean_agg, mean_chunk, mean_combine
+
+        if not isinstance(parent, Reduction):
+            return super()._simplify_up(parent, dependents)
+        if parent.array._name != self._name:
+            return None
+        if parent.weights is not None or parent.output_size != 1:
+            return None
+
+        reducer = None
+        if parent.chunk is chunk.sum and parent.aggregate is chunk.sum and parent.combine is None:
+            reducer = "sum"
+        elif parent.chunk is chunk_max and parent.aggregate is chunk.max and parent.combine is chunk_max:
+            reducer = "max"
+        elif (
+            parent.chunk is mean_chunk
+            and parent.aggregate is mean_agg
+            and parent.combine is mean_combine
+            and not parent.concatenate
+        ):
+            reducer = "mean"
+        if reducer is None:
+            return None
+
+        if len(self.args) != 2:
+            return None
+        input_expr, input_ind = self.args
+        if input_ind is None:
+            return None
+
+        kwargs = self.kwargs or {}
+        window_shape = kwargs.get("window_shape")
+        sliding_axes = kwargs.get("axis")
+        if window_shape is None or sliding_axes is None:
+            return None
+        if len(window_shape) != 1 or len(sliding_axes) != 1:
+            return None
+
+        if parent.axis is None:
+            return None
+        axis = validate_axis(parent.axis, self.ndim)
+
+        window_labels = tuple(label for label in self.out_ind if label not in input_ind)
+        if len(window_labels) != 1:
+            return None
+        window_label = window_labels[0]
+        if window_label not in (self.new_axes or {}):
+            return None
+        try:
+            window_axis = self.out_ind.index(window_label)
+        except ValueError:
+            return None
+        if axis != (window_axis,):
+            return None
+
+        chunks = list(self.chunks)
+        if parent.keepdims:
+            chunks[window_axis] = (1,)
+        else:
+            del chunks[window_axis]
+        chunks = tuple(chunks)
+
+        dtype = parent.dtype
+        return map_blocks(
+            _sliding_window_reduce_block,
+            new_collection(input_expr),
+            chunks=chunks,
+            dtype=dtype,
+            meta=np.empty((0,) * len(chunks), dtype=dtype),
+            enforce_ndim=True,
+            new_axis=window_axis if parent.keepdims else None,
+            token=f"sliding-window-{reducer}",
+            window=int(window_shape[0]),
+            sliding_axis=int(sliding_axes[0]),
+            reducer=reducer,
+            out_dtype=dtype,
+            keepdims=parent.keepdims,
+            reduced_axis=window_axis,
+        ).expr
 
 
 def trim_overlap(x, depth, boundary=None):
@@ -1027,6 +1117,39 @@ def coerce_depth_type(ndim, depth):
     return depth
 
 
+def _sliding_window_reduce_block(
+    block,
+    *,
+    window,
+    sliding_axis,
+    reducer,
+    out_dtype,
+    keepdims,
+    reduced_axis,
+):
+    out_len = block.shape[sliding_axis] - window + 1
+    index = [slice(None)] * block.ndim
+    index[sliding_axis] = slice(0, out_len)
+    out = np.array(block[tuple(index)], dtype=out_dtype, copy=True)
+
+    for offset in range(1, window):
+        index[sliding_axis] = slice(offset, offset + out_len)
+        other = block[tuple(index)]
+        if reducer == "max":
+            np.maximum(out, other, out=out)
+        elif reducer in ("sum", "mean"):
+            np.add(out, other, out=out, casting="unsafe")
+        else:
+            raise NotImplementedError(reducer)
+
+    if reducer == "mean":
+        np.divide(out, window, out=out, casting="unsafe")
+
+    if keepdims:
+        out = np.expand_dims(out, axis=reduced_axis)
+    return out
+
+
 def coerce_boundary(ndim, boundary):
     default = "none"
     if boundary is None:
@@ -1096,7 +1219,7 @@ def sliding_window_view(x, window_shape, axis=None, automatic_rechunk=True):
         (window,) for window in window_shape
     )
 
-    return map_overlap(
+    result = map_overlap(
         np.lib.stride_tricks.sliding_window_view,
         x,
         depth=tuple((0, d) for d in depths),  # Overlap on +ve side only
@@ -1109,6 +1232,7 @@ def sliding_window_view(x, window_shape, axis=None, automatic_rechunk=True):
         window_shape=window_shape,
         axis=axis,
     )
+    return new_collection(SlidingWindowView(*result.expr.operands))
 
 
 def _fill_with_last_one(a, b):
