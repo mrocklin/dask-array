@@ -9,9 +9,9 @@
 use std::collections::HashMap;
 
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
+use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyTuple};
 
-use crate::common::{to_dask_graph, to_task_records, ArgSlot, Compute, Expanded, NeutralTask};
+use crate::common::{to_dask_graph, to_task_records, ArgSlot, Compute, Expanded, NeutralTask, Num};
 
 /// How an input dimension's block id is derived from the output block id.
 enum Axis {
@@ -25,7 +25,59 @@ enum Axis {
 /// dep-name index) whose per-block coord is read off the output coord.
 enum ArgTemplate {
     Lit(usize),
+    Scalar(Num),
     Arr { dep_idx: usize, axes: Vec<Axis> },
+    BlockwiseDep { slots: Vec<ArgSlot> },
+}
+
+fn slot_from_py(value: &Bound<'_, PyAny>, literals: &mut Vec<PyObject>) -> PyResult<ArgSlot> {
+    if value.is_instance_of::<PyBool>() {
+        literals.push(value.clone().unbind());
+        return Ok(ArgSlot::Literal(literals.len() - 1));
+    }
+    if value.is_exact_instance_of::<PyInt>() {
+        if let Ok(i) = value.extract::<i64>() {
+            return Ok(ArgSlot::Scalar(Num::Int(i)));
+        }
+        literals.push(value.clone().unbind());
+        return Ok(ArgSlot::Literal(literals.len() - 1));
+    }
+    if value.is_exact_instance_of::<PyFloat>() {
+        if let Ok(f) = value.extract::<f64>() {
+            return Ok(ArgSlot::Scalar(Num::Float(f)));
+        }
+        literals.push(value.clone().unbind());
+        return Ok(ArgSlot::Literal(literals.len() - 1));
+    }
+    if let Ok(tuple) = value.downcast::<PyTuple>() {
+        let mut ints = Vec::with_capacity(tuple.len());
+        let mut all_ints = true;
+        for item in tuple.iter() {
+            if item.is_exact_instance_of::<PyInt>() {
+                if let Ok(i) = item.extract::<i64>() {
+                    ints.push(i);
+                    continue;
+                }
+            }
+            all_ints = false;
+            break;
+        }
+        if all_ints {
+            return Ok(ArgSlot::IntTuple(ints));
+        }
+        literals.push(value.clone().unbind());
+        return Ok(ArgSlot::Literal(literals.len() - 1));
+    }
+    if let Ok(list) = value.downcast::<PyList>() {
+        let mut items = Vec::with_capacity(list.len());
+        for item in list.iter() {
+            items.push(slot_from_py(&item, literals)?);
+        }
+        return Ok(ArgSlot::List(items));
+    }
+
+    literals.push(value.clone().unbind());
+    Ok(ArgSlot::Literal(literals.len() - 1))
 }
 
 #[pyclass]
@@ -67,8 +119,28 @@ impl BlockwiseLayer {
             let kind: String = item.get_item(0)?.extract()?;
             match kind.as_str() {
                 "literal" => {
-                    template.push(ArgTemplate::Lit(literals.len()));
-                    literals.push(item.get_item(1)?.unbind());
+                    let value = item.get_item(1)?;
+                    if value.is_instance_of::<PyBool>() {
+                        template.push(ArgTemplate::Lit(literals.len()));
+                        literals.push(value.unbind());
+                    } else if value.is_exact_instance_of::<PyInt>() {
+                        if let Ok(i) = value.extract::<i64>() {
+                            template.push(ArgTemplate::Scalar(Num::Int(i)));
+                        } else {
+                            template.push(ArgTemplate::Lit(literals.len()));
+                            literals.push(value.unbind());
+                        }
+                    } else if value.is_exact_instance_of::<PyFloat>() {
+                        if let Ok(f) = value.extract::<f64>() {
+                            template.push(ArgTemplate::Scalar(Num::Float(f)));
+                        } else {
+                            template.push(ArgTemplate::Lit(literals.len()));
+                            literals.push(value.unbind());
+                        }
+                    } else {
+                        template.push(ArgTemplate::Lit(literals.len()));
+                        literals.push(value.unbind());
+                    }
                 }
                 "array" => {
                     let dep_name: String = item.get_item(1)?.extract()?;
@@ -94,6 +166,24 @@ impl BlockwiseLayer {
                     let dep_idx = dep_names.len();
                     dep_names.push(dep_name);
                     template.push(ArgTemplate::Arr { dep_idx, axes });
+                }
+                "blockwise_dep" => {
+                    let values = item.get_item(1)?.downcast_into::<PyList>()?;
+                    let expected: usize = if numblocks.is_empty() {
+                        1
+                    } else {
+                        numblocks.iter().product()
+                    };
+                    if values.len() != expected {
+                        return Err(pyo3::exceptions::PyValueError::new_err(
+                            "blockwise dep values length does not match output blocks",
+                        ));
+                    }
+                    let mut slots = Vec::with_capacity(values.len());
+                    for value in values.iter() {
+                        slots.push(slot_from_py(&value, &mut literals)?);
+                    }
+                    template.push(ArgTemplate::BlockwiseDep { slots });
                 }
                 _ => return Err(pyo3::exceptions::PyValueError::new_err("bad arg kind")),
             }
@@ -136,12 +226,14 @@ impl BlockwiseLayer {
         let mut tasks = Vec::with_capacity(total);
         let mut coord = vec![0u32; ndim];
 
-        for _ in 0..total {
+        for task_idx in 0..total {
             let slots = self
                 .template
                 .iter()
                 .map(|t| match t {
                     ArgTemplate::Lit(i) => ArgSlot::Literal(*i),
+                    ArgTemplate::Scalar(n) => ArgSlot::Scalar(*n),
+                    ArgTemplate::BlockwiseDep { slots } => slots[task_idx].clone(),
                     ArgTemplate::Arr { dep_idx, axes } => {
                         let dep_coord = axes
                             .iter()

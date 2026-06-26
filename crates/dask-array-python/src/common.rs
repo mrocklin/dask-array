@@ -26,6 +26,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyString, PyTuple};
 
 /// One positional argument of a task, resolved per output block.
+#[derive(Clone)]
 pub enum ArgSlot {
     /// Index into the layer's shared literal values.
     Literal(usize),
@@ -58,6 +59,7 @@ pub enum Num {
 }
 
 /// One element of a getitem index tuple.
+#[derive(Clone)]
 pub enum IndexElem {
     /// `slice(start, stop, step)`; a `None` maps to Python `None`.
     Slice {

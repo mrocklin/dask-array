@@ -1,9 +1,10 @@
-"""Frisky roundtrip for the PartialReduce + Rechunk layers.
+"""Frisky roundtrip for native dask-array layers.
 
 Builds each collection on a `da.ones`/`da.full` base (all covered layers), runs
-it through the transparent records path on an in-process Frisky cluster
-(`dask.compute(x)` -> `Client.submit_tasks`), and checks the result against
-numpy. Asserts the records path was actually taken (not a silent dask fallback).
+it through the transparent Frisky path on an in-process Frisky cluster, and
+checks the result against numpy. Asserts Frisky was actually used (not a silent
+dask fallback). Current Frisky prefers scheduler-side expression submission,
+falling back to client-side records.
 
     PYTHONPATH=/Users/mrocklin/workspace/dask-array \
       MATURIN_IMPORT_HOOK_ENABLED=0 \
@@ -87,6 +88,18 @@ def cases():
         lambda: da.from_array(np.arange(20, dtype="f8"), chunks=5).blocks[[3, 1, 0, 2]],
         np.arange(20, dtype="f8").reshape(4, 5)[[3, 1, 0, 2]].ravel(),
     )
+    # shuffle (distinct data, real cluster -> source takes + output-order restore)
+    sh = np.arange(32, dtype="f8").reshape(4, 8)
+    yield (
+        "shuffle axis1",
+        lambda: da.shuffle(da.from_array(sh, chunks=(2, 4)), [[6, 5, 2], [4, 1], [3, 0, 7]], axis=1),
+        sh[:, [6, 5, 2, 4, 1, 3, 0, 7]],
+    )
+    yield (
+        "shuffle axis0",
+        lambda: da.shuffle(da.from_array(sh, chunks=(2, 4)), [[3, 1], [0, 2]], axis=0),
+        sh[[3, 1, 0, 2], :],
+    )
     # coarsen (distinct data, real cluster -> serialization + per-block reduction)
     cx = np.arange(48, dtype="f8").reshape(6, 8)
     yield (
@@ -139,33 +152,48 @@ def cases():
 
 
 def main():
-    calls = {"n": 0}
-    orig = fdask._frisky_compute_collections
+    calls = {"expression": 0, "records": 0}
+    orig_expression = fdask._submit_via_expression
+    orig_records = fdask._frisky_compute_collections
 
-    def spy(client, collections):
-        out = orig(client, collections)
-        calls["n"] += out is not None
+    def spy_expression(client, collections):
+        out = orig_expression(client, collections)
+        calls["expression"] += out is not None
         return out
 
-    fdask._frisky_compute_collections = spy
+    def spy_records(client, collections):
+        out = orig_records(client, collections)
+        calls["records"] += out is not None
+        return out
+
+    fdask._submit_via_expression = spy_expression
+    fdask._frisky_compute_collections = spy_records
 
     failures = 0
     with LocalCluster(n_workers=2) as cluster:
         with Client(cluster.scheduler):
             for label, build, expected in cases():
-                before = calls["n"]
+                before = calls.copy()
                 try:
                     (got,) = dask.compute(build())
-                    used = calls["n"] > before
+                    path = (
+                        "expression"
+                        if calls["expression"] > before["expression"]
+                        else "records"
+                        if calls["records"] > before["records"]
+                        else "none"
+                    )
+                    used = path != "none"
                     ok = np.allclose(np.asarray(got), expected) and np.shape(got) == np.shape(expected)
                 except Exception as e:  # noqa: BLE001
-                    ok, used = False, False
+                    ok, used, path = False, False, "none"
                     got = f"{type(e).__name__}: {str(e)[:60]}"
                 bad = not (ok and used)
                 failures += bad
-                print(f"  {'BAD' if bad else 'OK '} {label:<26} match={ok} records={used}")
+                print(f"  {'BAD' if bad else 'OK '} {label:<26} match={ok} frisky={path}")
 
-    fdask._frisky_compute_collections = orig
+    fdask._submit_via_expression = orig_expression
+    fdask._frisky_compute_collections = orig_records
     print("\nroundtrip:", "all good" if not failures else f"{failures} FAILURES")
     raise SystemExit(1 if failures else 0)
 

@@ -34,6 +34,7 @@ _EXPORTS = {
     "RechunkLayer": ("dask_array._frisky.rechunk", "RechunkLayer"),
     "ReshapeLayer": ("dask_array._frisky.reshape", "ReshapeLayer"),
     "SliceLayer": ("dask_array._frisky.slicing", "SliceLayer"),
+    "ShuffleLayer": ("dask_array._frisky.shuffle", "ShuffleLayer"),
     "SqueezeLayer": ("dask_array._frisky.squeeze", "SqueezeLayer"),
     "StackLayer": ("dask_array._frisky.stack", "StackLayer"),
     "collect_task_records": ("dask_array._frisky.collect", "collect_task_records"),

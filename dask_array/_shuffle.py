@@ -342,6 +342,17 @@ class Shuffle(ArrayExpr):
             self.operand("name"),
         )
 
+    def _frisky_layer(self):
+        from dask_array._frisky import ShuffleLayer
+
+        return ShuffleLayer(
+            self._name,
+            self.array._name,
+            self.array.chunks,
+            self.axis,
+            self._new_chunks,
+        )
+
     def _layer(self) -> dict:
         chunks = self.array.chunks
         axis = self.axis

@@ -151,6 +151,9 @@ def cases():
     yield "blocks repeat", arr((20,), (5,)).blocks[[0, 0, 2, 2]]
     yield "blocks 2d", arr((12, 12), (4, 4)).blocks[1:, ::2]
     yield "blocks 2d single+slice", arr((12, 12), (4, 4)).blocks[2, 0:2]
+    # shuffle (sorted source takes + output-order restore)
+    yield "shuffle axis1", da.shuffle(arr((4, 8), (2, 4)), [[6, 5, 2], [4, 1], [3, 0, 7]], axis=1)
+    yield "shuffle axis0", da.shuffle(arr((4, 8), (2, 4)), [[3, 1], [0, 2]], axis=0)
     # coarsen (per-block reduction over fixed neighborhoods)
     yield "coarsen 1d sum f2", da.coarsen(np.sum, arr((12,), (4,)), {0: 2})
     yield "coarsen 1d max f3", da.coarsen(np.max, arr((12,), (6,)), {0: 3})

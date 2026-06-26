@@ -38,13 +38,14 @@ mod overlap;
 mod rechunk;
 mod reduction;
 mod reshape;
+mod shuffle;
 mod slicing;
 mod squeeze;
 mod stack;
 
 /// Protocol revision for the native extension. Python checks this on import so
 /// a stale `.so` fails loudly instead of silently producing wrong tasks.
-const PROTOCOL_REVISION: usize = 22;
+const PROTOCOL_REVISION: usize = 25;
 
 #[pyfunction]
 fn protocol_revision() -> usize {
@@ -74,6 +75,7 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<reduction::PartialReduceLayer>()?;
     m.add_class::<rechunk::RechunkLayer>()?;
     m.add_class::<reshape::ReshapeLayer>()?;
+    m.add_class::<shuffle::ShuffleLayer>()?;
     m.add_class::<slicing::SliceLayer>()?;
     m.add_class::<squeeze::SqueezeLayer>()?;
     m.add_class::<stack::StackLayer>()?;

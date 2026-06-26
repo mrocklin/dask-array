@@ -384,6 +384,24 @@ class Blockwise(ArrayExpr):
                         # silently emitting refs to blocks that don't exist.
                         raise NotImplementedError("unaligned chunks (expr not lowered)")
                 args.append(("array", arg._name, tuple(label_id(i) for i in ind), tuple(nb)))
+            elif isinstance(arg, ArrayBlockwiseDep):
+                nb = arg.numblocks
+                if len(ind) != len(nb):
+                    raise NotImplementedError("index does not match ArrayBlockwiseDep ndim")
+
+                dep_values = []
+                for output_block_id in product(*[range(n) for n in out_numblocks]):
+                    output_location = dict(zip(self.out_ind, output_block_id))
+                    dep_block_id = []
+                    for d, label in enumerate(ind):
+                        if nb[d] == 1:
+                            dep_block_id.append(0)
+                        elif label in output_location:
+                            dep_block_id.append(output_location[label])
+                        else:
+                            raise NotImplementedError("contracted ArrayBlockwiseDep dimension")
+                    dep_values.append(arg[tuple(dep_block_id)])
+                args.append(("blockwise_dep", dep_values))
             else:
                 raise NotImplementedError("ArrayBlockwiseDep argument")
 
