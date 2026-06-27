@@ -27,7 +27,92 @@ stock dask rather than submit an incomplete graph (which would silently hang).
 
 from __future__ import annotations
 
+import json
+import math
+
+import numpy as np
+
 from dask_array._frisky.graph_records import GraphRecordsLayer
+
+
+def _jsonify(v, depth=0):
+    """Render a parameter value as a bounded, JSON-safe form for display. Anything
+    we don't model becomes a truncated ``repr`` — never the raw object, so a stray
+    numpy array or closure can't bloat (or break) the blob."""
+    if v is None or isinstance(v, (bool, int, str)):
+        return v
+    if isinstance(v, float):
+        return v if math.isfinite(v) else None
+    if isinstance(v, np.dtype):
+        return str(v)
+    if isinstance(v, np.generic):  # numpy scalar
+        return _jsonify(v.item(), depth)
+    if isinstance(v, np.ndarray):  # summarize, never embed the data
+        return f"<ndarray shape={tuple(v.shape)} dtype={v.dtype}>"
+    if isinstance(v, slice):
+        return {"start": _jsonify(v.start), "stop": _jsonify(v.stop), "step": _jsonify(v.step)}
+    if isinstance(v, (list, tuple)):
+        if depth >= 4:
+            return repr(v)[:200]
+        out = [_jsonify(x, depth + 1) for x in v[:32]]
+        if len(v) > 32:
+            out.append(f"...(+{len(v) - 32} more)")
+        return out
+    if isinstance(v, dict):
+        if depth >= 4:
+            return repr(v)[:200]
+        return {str(k): _jsonify(val, depth + 1) for k, val in list(v.items())[:32]}
+    if callable(v):
+        return getattr(v, "__name__", None) or repr(v)[:200]
+    return repr(v)[:200]
+
+
+def _expr_params(e):
+    """The expression's scalar/config *parameters* — op, axis, chunks, dtype,
+    indexer, kwargs, … — NOT its array inputs (child expressions, whether named
+    operands or trailing varargs). Each value is rendered JSON-safe and bounded by
+    :func:`_jsonify`. Defensive: any hiccup yields ``{}`` rather than sinking the
+    whole metadata blob."""
+    try:
+        from dask._expr import Expr
+
+        names = getattr(e, "_parameters", None) or []
+        operands = getattr(e, "operands", None) or []
+        params = {}
+        for name, val in zip(names, operands):
+            if isinstance(val, Expr):
+                continue  # a single array input
+            if isinstance(val, (list, tuple)) and any(isinstance(x, Expr) for x in val):
+                continue  # a collection of array inputs (e.g. stack/concatenate)
+            params[name] = _jsonify(val)
+        return params
+    except Exception:
+        return {}
+
+
+def _layer_metadata(e):
+    """A small JSON blob describing the expression/layer — operation kind, shape,
+    chunking, dtype, and the expression's scalar *parameters* — for Frisky to
+    display against the layer's *group*. Opaque to Frisky (it stores the string
+    verbatim and never parses it); this keeps the scheduler array-agnostic. One
+    blob per layer (not per task).
+
+    Returns a JSON string, or ``None`` when it can't be built JSON-safely (a node
+    without these attrs, unknown/``nan`` dims, or non-coercible values) — in which
+    case the group simply has no metadata."""
+    try:
+        meta = {
+            "op": type(e).__name__,
+            "shape": [int(s) for s in e.shape],
+            "numblocks": [int(n) for n in e.numblocks],
+            "chunks": [[int(b) for b in dim] for dim in e.chunks],
+            "dtype": str(e.dtype),
+            "params": _expr_params(e),
+        }
+        # allow_nan=False → invalid-JSON NaN/Inf raise instead of being emitted.
+        return json.dumps(meta, allow_nan=False)
+    except (AttributeError, TypeError, ValueError):
+        return None
 
 
 def _walk_records(roots, seen, records):
@@ -56,14 +141,20 @@ def _walk_records(roots, seen, records):
         stack.extend(e.dependencies())
 
 
-def _walk_record_chunks(roots, seen, chunks, records):
+def _walk_record_chunks(roots, seen, chunks, records, chunk_groups):
     """Like ``_walk_records`` but each node contributes EITHER a binary records
     LAYER chunk (``to_records_chunk``, the fast Rust-to-Rust path) appended to
     ``chunks``, OR plain ``(key, func, args, kwargs, deps)`` records appended to
     ``records`` (the from_array source, generic ``GraphRecordsLayer`` fallback, or
     any layer whose Rust backend doesn't yet emit chunks). Frisky decodes both and
     unions them under one ``dask.order`` pass, so a graph need not be all-or-nothing
-    to get the speedup on the layers that support it."""
+    to get the speedup on the layers that support it.
+
+    ``chunk_groups`` is kept parallel to ``chunks``: for each emitted chunk, the
+    producing expr's ``(_name, metadata_json)`` — its stable layer identity (which
+    a key prefix can't always recover) and an opaque JSON description. Frisky ties
+    that layer's tasks to this group. Residual ``records`` carry no group entry
+    (Frisky key-derives them)."""
     stack = list(roots)
     while stack:
         e = stack.pop()
@@ -90,6 +181,7 @@ def _walk_record_chunks(roots, seen, chunks, records):
                 chunk = None
         if chunk is not None:
             chunks.append(chunk)
+            chunk_groups.append((e._name, _layer_metadata(e)))
         else:
             records.extend(layer.to_task_records())
 
@@ -97,19 +189,24 @@ def _walk_record_chunks(roots, seen, chunks, records):
 
 
 def collect_record_chunks(collection, seen=None):
-    """Hybrid binary/Python records for ``collection``: ``(chunks, records)``.
+    """Hybrid binary/Python records for ``collection``:
+    ``(chunks, records, chunk_groups)``.
 
     ``chunks`` is a list of binary records LAYER chunks (bytes); ``records`` is a
-    list of plain task records for the layers that didn't go binary. Same
-    ``seen`` semantics as :func:`collect_task_records` — pass a shared set across
-    a multi-collection submission so a shared subgraph is expanded once.
-    Completeness is checked by the caller over the combined union (Frisky)."""
+    list of plain task records for the layers that didn't go binary;
+    ``chunk_groups`` is parallel to ``chunks`` — each ``(layer _name,
+    metadata_json)`` so Frisky groups the layer's tasks by their true identity and
+    can show the layer's shape/chunks/dtype. Same ``seen`` semantics as
+    :func:`collect_task_records` — pass a shared set across a multi-collection
+    submission so a shared subgraph is expanded once. Completeness is checked by
+    the caller over the combined union (Frisky)."""
     if seen is None:
         seen = set()
     chunks = []
     records = []
-    _walk_record_chunks([collection._lowered_expr], seen, chunks, records)
-    return chunks, records
+    chunk_groups = []
+    _walk_record_chunks([collection._lowered_expr], seen, chunks, records, chunk_groups)
+    return chunks, records, chunk_groups
 
 
 def _check_complete(records):

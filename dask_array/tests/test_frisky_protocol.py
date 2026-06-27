@@ -43,7 +43,7 @@ def test_numeric_scalar_blockwise_uses_binary_records():
 
     x = new_collection((da.ones((4, 4), chunks=(2, 2)) + 1).expr.optimize(fuse=False))
 
-    chunks, records = x.__frisky_records_chunks__()
+    chunks, records, _chunk_groups = x.__frisky_records_chunks__()
 
     assert len(chunks) == 2
     assert records == []
@@ -55,10 +55,41 @@ def test_sliding_window_overlap_uses_binary_records():
 
     x = da.sliding_window_view(da.ones(12, chunks=4), 3).sum()
 
-    chunks, records = x.__frisky_records_chunks__()
+    chunks, records, _chunk_groups = x.__frisky_records_chunks__()
 
     assert chunks
     assert records == []
+
+
+def test_chunk_groups_carry_name_and_metadata():
+    """Each binary chunk ships its producing expr's ``_name`` (the stable layer
+    identity, which a key prefix can't always recover) plus an opaque JSON blob of
+    op/shape/chunks/dtype, parallel to ``chunks``."""
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    import json
+
+    x = new_collection((da.ones((4, 4), chunks=(2, 2)) + 1).expr.optimize(fuse=False))
+    chunks, records, chunk_groups = x.__frisky_records_chunks__()
+
+    assert len(chunk_groups) == len(chunks) == 2
+    for name, meta in chunk_groups:
+        assert isinstance(name, str) and name  # the expr `_name`
+        info = json.loads(meta)
+        assert info["shape"] == [4, 4]
+        assert info["chunks"] == [[2, 2], [2, 2]]
+        assert info["numblocks"] == [2, 2]
+        assert info["dtype"]  # e.g. "float64"
+        assert "op" in info
+        assert isinstance(info["params"], dict)  # scalar params, not array inputs
+    # The two layers are distinct exprs => distinct group names.
+    assert len({name for name, _ in chunk_groups}) == 2
+
+    # The expression's scalar parameters are captured (op/shape/etc.), while its
+    # array inputs (child exprs) are excluded.
+    by_op = {json.loads(m)["op"]: json.loads(m)["params"] for _, m in chunk_groups}
+    assert by_op["Elemwise"]["op"] == "add"  # the `+ 1` operator, not an array
+    assert by_op["Ones"]["shape"] == [4, 4]  # a scalar param on the source
 
 
 def test_overlap_native_layer_matches_legacy_graph():
@@ -204,7 +235,7 @@ def test_bool_scalar_blockwise_stays_on_python_records():
 
     x = new_collection((da.ones((4, 4), chunks=(2, 2)) == True).expr.optimize(fuse=False))  # noqa: E712
 
-    chunks, records = x.__frisky_records_chunks__()
+    chunks, records, _chunk_groups = x.__frisky_records_chunks__()
 
     assert len(chunks) == 1
     assert records
@@ -217,7 +248,7 @@ def test_numpy_scalar_blockwise_stays_on_python_records():
     scalar = np.float64(1)
     x = new_collection((da.ones((4, 4), chunks=(2, 2), dtype="float32") + scalar).expr.optimize(fuse=False))
 
-    chunks, records = x.__frisky_records_chunks__()
+    chunks, records, _chunk_groups = x.__frisky_records_chunks__()
 
     assert len(chunks) == 1
     assert records
@@ -231,7 +262,7 @@ def test_large_int_scalar_blockwise_stays_on_python_records():
     scalar = 10**20
     x = new_collection((da.ones((4, 4), chunks=(2, 2)) + scalar).expr.optimize(fuse=False))
 
-    chunks, records = x.__frisky_records_chunks__()
+    chunks, records, _chunk_groups = x.__frisky_records_chunks__()
 
     assert len(chunks) == 1
     assert records
