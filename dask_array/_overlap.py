@@ -316,16 +316,6 @@ class SlidingWindowView(Blockwise):
 
     def _simplify_up(self, parent, dependents):
         from dask_array.reductions._reduction import Reduction
-        from dask_array.reductions._common import (
-            chunk_max,
-            chunk_min,
-            mean_agg,
-            mean_chunk,
-            mean_combine,
-            moment_agg,
-            moment_chunk,
-            moment_combine,
-        )
 
         if not isinstance(parent, Reduction):
             return super()._simplify_up(parent, dependents)
@@ -334,53 +324,31 @@ class SlidingWindowView(Blockwise):
         if parent.weights is not None or parent.output_size != 1:
             return None
 
-        reducer = None
-        ddof = 0
-        if parent.chunk is chunk.sum and parent.aggregate is chunk.sum and parent.combine is None:
-            reducer = "sum"
-        elif parent.chunk is chunk.prod and parent.aggregate is chunk.prod and parent.combine is None:
-            reducer = "prod"
-        elif parent.chunk is chunk.any and parent.aggregate is chunk.any and parent.combine is None:
-            reducer = "any"
-        elif parent.chunk is chunk.all and parent.aggregate is chunk.all and parent.combine is None:
-            reducer = "all"
-        elif parent.chunk is chunk_min and parent.aggregate is chunk.min and parent.combine is chunk_min:
-            reducer = "min"
-        elif parent.chunk is chunk_max and parent.aggregate is chunk.max and parent.combine is chunk_max:
-            reducer = "max"
-        elif (
-            parent.chunk is mean_chunk
-            and parent.aggregate is mean_agg
-            and parent.combine is mean_combine
-            and not parent.concatenate
-        ):
-            reducer = "mean"
-        elif (
-            isinstance(parent.chunk, functools.partial)
-            and parent.chunk.func is moment_chunk
-            and parent.chunk.keywords.get("order", 2) == 2
-            and "sum" not in parent.chunk.keywords
-            and "numel" not in parent.chunk.keywords
-            and isinstance(parent.aggregate, functools.partial)
-            and parent.aggregate.func is moment_agg
-            and parent.aggregate.keywords.get("order", 2) == 2
-            and "sum" not in parent.aggregate.keywords
-            and parent.combine is moment_combine
-            and not parent.concatenate
-        ):
-            reducer = "var"
-            ddof = parent.aggregate.keywords.get("ddof", 0)
-            implicit_complex_dtype = parent.chunk.keywords.get("implicit_complex_dtype", False)
+        reducer = parent.sliding_window_reducer
         if reducer is None:
             return None
+
+        ddof = 0
+        implicit_complex_dtype = False
+        if reducer in ("mean", "nanmean", "var", "nanvar") and parent.concatenate:
+            return None
+        if reducer in ("var", "nanvar"):
+            if not isinstance(parent.chunk, functools.partial) or not isinstance(parent.aggregate, functools.partial):
+                return None
+            ddof = parent.aggregate.keywords.get("ddof", 0)
+            implicit_complex_dtype = parent.chunk.keywords.get("implicit_complex_dtype", False)
 
         if len(self.args) != 2:
             return None
         input_expr, input_ind = self.args
         if input_ind is None:
             return None
+        if reducer.startswith("nan") and not (
+            np.issubdtype(input_expr.dtype, np.number) or np.issubdtype(input_expr.dtype, np.bool_)
+        ):
+            return None
         if (
-            reducer == "var"
+            reducer in ("var", "nanvar")
             and np.issubdtype(input_expr.dtype, np.complexfloating)
             and np.issubdtype(parent.dtype, np.complexfloating)
             and not implicit_complex_dtype
@@ -468,9 +436,9 @@ class SlidingWindowView(Blockwise):
             token=f"sliding-window-{reducer}",
             window=int(window_shape[0]),
             sliding_axis=int(sliding_axes[0]),
-            reducer=reducer,
-            ddof=ddof if reducer == "var" else 0,
-            implicit_complex_dtype=implicit_complex_dtype if reducer == "var" else False,
+            reduction_cls=type(parent),
+            ddof=ddof if reducer in ("var", "nanvar") else 0,
+            implicit_complex_dtype=implicit_complex_dtype if reducer in ("var", "nanvar") else False,
             out_dtype=dtype,
             keepdims=parent.keepdims,
             reduced_axis=window_axis,
@@ -1202,86 +1170,21 @@ def _sliding_window_reduce_block(
     *,
     window,
     sliding_axis,
-    reducer,
+    reduction_cls,
     ddof,
     implicit_complex_dtype,
     out_dtype,
     keepdims,
     reduced_axis,
 ):
-    out_len = block.shape[sliding_axis] - window + 1
-    index = [slice(None)] * block.ndim
-    index[sliding_axis] = slice(0, out_len)
-
-    if reducer == "var":
-        input_is_complex = np.issubdtype(block.dtype, np.complexfloating)
-        explicit_real_complex = (
-            input_is_complex and not implicit_complex_dtype and not np.issubdtype(out_dtype, np.complexfloating)
-        )
-        if explicit_real_complex:
-            first = block[tuple(index)]
-            mean = np.array(first.real, dtype=out_dtype, copy=True)
-            m2 = np.zeros(mean.shape, dtype=out_dtype)
-            imag_m2 = np.array(first.imag * first.imag, dtype=out_dtype, copy=True)
-        else:
-            acc_dtype = np.result_type(block.dtype, out_dtype)
-            mean = np.array(block[tuple(index)], dtype=acc_dtype, copy=True)
-            m2 = np.zeros(mean.shape, dtype=out_dtype)
-            imag_m2 = None
-        count = 1
-
-        for offset in range(1, window):
-            index[sliding_axis] = slice(offset, offset + out_len)
-            raw_value = block[tuple(index)]
-            if explicit_real_complex:
-                value = np.asarray(raw_value.real, dtype=out_dtype)
-                imag = np.asarray(raw_value.imag, dtype=out_dtype)
-                imag_m2 += imag * imag
-            else:
-                value = np.asarray(raw_value, dtype=mean.dtype)
-            count += 1
-            delta = value - mean
-            mean += delta / count
-            delta2 = value - mean
-            if not explicit_real_complex and np.issubdtype(mean.dtype, np.complexfloating):
-                m2 += np.real(np.conj(delta) * delta2)
-            else:
-                m2 += delta * delta2
-
-        denominator = count - ddof
-        if denominator < 0:
-            out = np.full_like(m2, np.nan, dtype=out_dtype)
-        else:
-            with np.errstate(divide="ignore", invalid="ignore"):
-                out = (m2 + imag_m2 if imag_m2 is not None else m2) / denominator
-            out = np.array(out, dtype=out_dtype, copy=False)
-
-        if keepdims:
-            out = np.expand_dims(out, axis=reduced_axis)
-        return out
-
-    out = np.array(block[tuple(index)], dtype=out_dtype, copy=True)
-
-    for offset in range(1, window):
-        index[sliding_axis] = slice(offset, offset + out_len)
-        other = block[tuple(index)]
-        if reducer == "max":
-            np.maximum(out, other, out=out)
-        elif reducer == "min":
-            np.minimum(out, other, out=out)
-        elif reducer == "prod":
-            np.multiply(out, other, out=out, casting="unsafe")
-        elif reducer == "any":
-            np.logical_or(out, other, out=out)
-        elif reducer == "all":
-            np.logical_and(out, other, out=out)
-        elif reducer in ("sum", "mean"):
-            np.add(out, other, out=out, casting="unsafe")
-        else:
-            raise NotImplementedError(reducer)
-
-    if reducer == "mean":
-        np.divide(out, window, out=out, casting="unsafe")
+    out = reduction_cls.sliding_window_reduce_block(
+        block,
+        window=window,
+        sliding_axis=sliding_axis,
+        out_dtype=out_dtype,
+        ddof=ddof,
+        implicit_complex_dtype=implicit_complex_dtype,
+    )
 
     if keepdims:
         out = np.expand_dims(out, axis=reduced_axis)

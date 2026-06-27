@@ -30,6 +30,10 @@ class Reduction(ArrayExpr):
     cascade. The physical implementation is deferred to _lower().
     """
 
+    sliding_window_reducer = None
+    sliding_window_binop = None
+    sliding_window_binop_kwargs = {}
+
     _parameters = [
         "array",
         "chunk",
@@ -61,6 +65,7 @@ class Reduction(ArrayExpr):
     def __dask_tokenize__(self):
         if not self._determ_token:
             self._determ_token = _tokenize_deterministic(
+                type(self),
                 self.chunk,
                 self.aggregate,
                 self.array,
@@ -136,7 +141,7 @@ class Reduction(ArrayExpr):
             if self.weights is not None:
                 sliced_weights = new_collection(self.weights)[input_index].expr
 
-            return Reduction(
+            return type(self)(
                 sliced_input.expr,
                 self.chunk,
                 self.aggregate,
@@ -228,6 +233,36 @@ class Reduction(ArrayExpr):
 
         return result
 
+    @classmethod
+    def sliding_window_reduce_block(
+        cls,
+        block,
+        *,
+        window,
+        sliding_axis,
+        out_dtype,
+        ddof=0,
+        implicit_complex_dtype=False,
+    ):
+        if cls.sliding_window_binop is None:
+            raise NotImplementedError(cls.__name__)
+
+        out_len = block.shape[sliding_axis] - window + 1
+        index = [slice(None)] * block.ndim
+        index[sliding_axis] = slice(0, out_len)
+        out = np.array(block[tuple(index)], dtype=out_dtype, copy=True)
+
+        for offset in range(1, window):
+            index[sliding_axis] = slice(offset, offset + out_len)
+            other = block[tuple(index)]
+            cls.sliding_window_binop(out, other, out=out, **cls.sliding_window_binop_kwargs)
+
+        return cls.sliding_window_finalize(out, window=window)
+
+    @classmethod
+    def sliding_window_finalize(cls, out, *, window):
+        return out
+
 
 def reduction(
     x,
@@ -244,6 +279,7 @@ def reduction(
     output_size=1,
     meta=None,
     weights=None,
+    reduction_cls=Reduction,
 ):
     """General version of reductions
 
@@ -379,7 +415,7 @@ def reduction(
 
     # Create the Reduction expression
     result = new_collection(
-        Reduction(
+        reduction_cls(
             x.expr,
             chunk,
             aggregate,
@@ -402,6 +438,291 @@ def reduction(
 
         return _handle_out(out, result)
     return result
+
+
+def _sliding_window_nan_skip_reduce_block(block, *, window, sliding_axis, out_dtype, identity, binop):
+    out_len = block.shape[sliding_axis] - window + 1
+    index = [slice(None)] * block.ndim
+    index[sliding_axis] = slice(0, out_len)
+    first = block[tuple(index)]
+    out = np.full(first.shape, identity, dtype=out_dtype)
+
+    for offset in range(window):
+        index[sliding_axis] = slice(offset, offset + out_len)
+        other = block[tuple(index)]
+        valid = ~np.isnan(other)
+        value = np.where(valid, other, identity)
+        binop(out, value, out=out, casting="unsafe")
+
+    return out
+
+
+def _sliding_window_variance_mean_dtype(input_dtype, out_dtype):
+    out_dtype = np.dtype(out_dtype)
+    if np.issubdtype(out_dtype, np.inexact):
+        return np.result_type(input_dtype, out_dtype)
+    return np.result_type(input_dtype, np.float64)
+
+
+def _sliding_window_variance_m2_dtype(out_dtype):
+    out_dtype = np.dtype(out_dtype)
+    if np.issubdtype(out_dtype, np.inexact):
+        return out_dtype
+    return np.result_type(out_dtype, np.float64)
+
+
+class Sum(Reduction):
+    sliding_window_reducer = "sum"
+    sliding_window_binop = np.add
+    sliding_window_binop_kwargs = {"casting": "unsafe"}
+
+
+class Prod(Reduction):
+    sliding_window_reducer = "prod"
+    sliding_window_binop = np.multiply
+    sliding_window_binop_kwargs = {"casting": "unsafe"}
+
+
+class Min(Reduction):
+    sliding_window_reducer = "min"
+    sliding_window_binop = np.minimum
+
+
+class Max(Reduction):
+    sliding_window_reducer = "max"
+    sliding_window_binop = np.maximum
+
+
+class Any(Reduction):
+    sliding_window_reducer = "any"
+    sliding_window_binop = np.logical_or
+
+
+class All(Reduction):
+    sliding_window_reducer = "all"
+    sliding_window_binop = np.logical_and
+
+
+class Mean(Reduction):
+    sliding_window_reducer = "mean"
+    sliding_window_binop = np.add
+    sliding_window_binop_kwargs = {"casting": "unsafe"}
+
+    @classmethod
+    def sliding_window_finalize(cls, out, *, window):
+        np.divide(out, window, out=out, casting="unsafe")
+        return out
+
+
+class Var(Reduction):
+    sliding_window_reducer = "var"
+
+    @classmethod
+    def sliding_window_reduce_block(
+        cls,
+        block,
+        *,
+        window,
+        sliding_axis,
+        out_dtype,
+        ddof=0,
+        implicit_complex_dtype=False,
+    ):
+        out_len = block.shape[sliding_axis] - window + 1
+        index = [slice(None)] * block.ndim
+        index[sliding_axis] = slice(0, out_len)
+        input_is_complex = np.issubdtype(block.dtype, np.complexfloating)
+        explicit_real_complex = (
+            input_is_complex and not implicit_complex_dtype and not np.issubdtype(out_dtype, np.complexfloating)
+        )
+        if explicit_real_complex:
+            first = block[tuple(index)]
+            mean_dtype = _sliding_window_variance_mean_dtype(first.real.dtype, out_dtype)
+            m2_dtype = _sliding_window_variance_m2_dtype(out_dtype)
+            mean = np.array(first.real, dtype=mean_dtype, copy=True)
+            m2 = np.zeros(mean.shape, dtype=m2_dtype)
+            imag_m2 = np.array(first.imag * first.imag, dtype=m2_dtype, copy=True)
+        else:
+            mean_dtype = _sliding_window_variance_mean_dtype(block.dtype, out_dtype)
+            m2_dtype = _sliding_window_variance_m2_dtype(out_dtype)
+            mean = np.array(block[tuple(index)], dtype=mean_dtype, copy=True)
+            m2 = np.zeros(mean.shape, dtype=m2_dtype)
+            imag_m2 = None
+        count = 1
+
+        for offset in range(1, window):
+            index[sliding_axis] = slice(offset, offset + out_len)
+            raw_value = block[tuple(index)]
+            if explicit_real_complex:
+                value = np.asarray(raw_value.real, dtype=mean.dtype)
+                imag = np.asarray(raw_value.imag, dtype=m2.dtype)
+                imag_m2 += imag * imag
+            else:
+                value = np.asarray(raw_value, dtype=mean.dtype)
+            count += 1
+            delta = value - mean
+            mean += delta / count
+            delta2 = value - mean
+            if not explicit_real_complex and np.issubdtype(mean.dtype, np.complexfloating):
+                m2 += np.real(np.conj(delta) * delta2)
+            else:
+                m2 += delta * delta2
+
+        denominator = count - ddof
+        if denominator < 0:
+            return np.full_like(m2, np.nan, dtype=out_dtype)
+
+        with np.errstate(divide="ignore", invalid="ignore"):
+            out = (m2 + imag_m2 if imag_m2 is not None else m2) / denominator
+        return np.asarray(out, dtype=out_dtype)
+
+
+class NanSum(Reduction):
+    sliding_window_reducer = "nansum"
+
+    @classmethod
+    def sliding_window_reduce_block(
+        cls,
+        block,
+        *,
+        window,
+        sliding_axis,
+        out_dtype,
+        ddof=0,
+        implicit_complex_dtype=False,
+    ):
+        return _sliding_window_nan_skip_reduce_block(
+            block, window=window, sliding_axis=sliding_axis, out_dtype=out_dtype, identity=0, binop=np.add
+        )
+
+
+class NanProd(Reduction):
+    sliding_window_reducer = "nanprod"
+
+    @classmethod
+    def sliding_window_reduce_block(
+        cls,
+        block,
+        *,
+        window,
+        sliding_axis,
+        out_dtype,
+        ddof=0,
+        implicit_complex_dtype=False,
+    ):
+        return _sliding_window_nan_skip_reduce_block(
+            block, window=window, sliding_axis=sliding_axis, out_dtype=out_dtype, identity=1, binop=np.multiply
+        )
+
+
+class NanMin(Reduction):
+    sliding_window_reducer = "nanmin"
+    sliding_window_binop = np.fmin
+
+
+class NanMax(Reduction):
+    sliding_window_reducer = "nanmax"
+    sliding_window_binop = np.fmax
+
+
+class NanMean(Reduction):
+    sliding_window_reducer = "nanmean"
+
+    @classmethod
+    def sliding_window_reduce_block(
+        cls,
+        block,
+        *,
+        window,
+        sliding_axis,
+        out_dtype,
+        ddof=0,
+        implicit_complex_dtype=False,
+    ):
+        out_len = block.shape[sliding_axis] - window + 1
+        index = [slice(None)] * block.ndim
+        index[sliding_axis] = slice(0, out_len)
+        first = block[tuple(index)]
+        out = np.zeros(first.shape, dtype=out_dtype)
+        count = np.zeros(first.shape, dtype=np.int64)
+
+        for offset in range(window):
+            index[sliding_axis] = slice(offset, offset + out_len)
+            other = block[tuple(index)]
+            valid = ~np.isnan(other)
+            value = np.where(valid, other, 0)
+            np.add(out, value, out=out, casting="unsafe")
+            count += valid
+
+        with np.errstate(divide="ignore", invalid="ignore"):
+            np.divide(out, count, out=out, casting="unsafe")
+        return out
+
+
+class NanVar(Reduction):
+    sliding_window_reducer = "nanvar"
+
+    @classmethod
+    def sliding_window_reduce_block(
+        cls,
+        block,
+        *,
+        window,
+        sliding_axis,
+        out_dtype,
+        ddof=0,
+        implicit_complex_dtype=False,
+    ):
+        out_len = block.shape[sliding_axis] - window + 1
+        index = [slice(None)] * block.ndim
+        index[sliding_axis] = slice(0, out_len)
+        input_is_complex = np.issubdtype(block.dtype, np.complexfloating)
+        explicit_real_complex = (
+            input_is_complex and not implicit_complex_dtype and not np.issubdtype(out_dtype, np.complexfloating)
+        )
+        first = block[tuple(index)]
+        if explicit_real_complex:
+            mean_dtype = _sliding_window_variance_mean_dtype(first.real.dtype, out_dtype)
+            m2_dtype = _sliding_window_variance_m2_dtype(out_dtype)
+            mean = np.zeros(first.shape, dtype=mean_dtype)
+            m2 = np.zeros(first.shape, dtype=m2_dtype)
+            imag_m2 = np.zeros(first.shape, dtype=m2_dtype)
+        else:
+            mean_dtype = _sliding_window_variance_mean_dtype(block.dtype, out_dtype)
+            m2_dtype = _sliding_window_variance_m2_dtype(out_dtype)
+            mean = np.zeros(first.shape, dtype=mean_dtype)
+            m2 = np.zeros(first.shape, dtype=m2_dtype)
+            imag_m2 = None
+        count = np.zeros(first.shape, dtype=np.int64)
+
+        for offset in range(window):
+            index[sliding_axis] = slice(offset, offset + out_len)
+            raw_value = block[tuple(index)]
+            valid = ~np.isnan(raw_value)
+            if explicit_real_complex:
+                value = np.asarray(raw_value.real, dtype=mean.dtype)
+                imag = np.asarray(raw_value.imag, dtype=m2.dtype)
+                imag_m2 += np.where(valid, imag * imag, 0)
+            else:
+                value = np.asarray(raw_value, dtype=mean.dtype)
+            new_count = count + valid
+            delta = value - mean
+            divisor = np.where(valid, new_count, 1)
+            with np.errstate(invalid="ignore"):
+                mean += np.where(valid, delta / divisor, 0)
+            delta2 = value - mean
+            if not explicit_real_complex and np.issubdtype(mean.dtype, np.complexfloating):
+                update = np.real(np.conj(delta) * delta2)
+            else:
+                update = delta * delta2
+            m2 += np.where(valid, update, 0)
+            count = new_count
+
+        denominator = count - ddof
+        with np.errstate(divide="ignore", invalid="ignore"):
+            out = (m2 + imag_m2 if imag_m2 is not None else m2) / denominator
+        out = np.where(denominator < 0, np.nan, out)
+        return np.asarray(out, dtype=out_dtype)
 
 
 def _tree_reduce(

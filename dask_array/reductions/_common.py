@@ -15,7 +15,23 @@ from dask_array._core_utils import _concatenate2
 from dask_array._dispatch import divide_lookup, numel_lookup, nannumel_lookup
 from dask_array._utils import array_safe, asarray_safe, meta_from_array
 from dask_array import _chunk as chunk
-from dask_array.reductions._reduction import reduction
+from dask_array.reductions._reduction import (
+    All,
+    Any,
+    Max,
+    Mean,
+    Min,
+    NanMax,
+    NanMean,
+    NanMin,
+    NanProd,
+    NanSum,
+    NanVar,
+    Prod,
+    Sum,
+    Var,
+    reduction,
+)
 from dask_array.reductions._arg_reduction import arg_reduction
 
 
@@ -50,6 +66,7 @@ def sum(a, axis=None, dtype=None, keepdims=False, split_every=None, out=None):
         dtype=dtype,
         split_every=split_every,
         out=out,
+        reduction_cls=Sum,
     )
 
 
@@ -68,6 +85,7 @@ def prod(a, axis=None, dtype=None, keepdims=False, split_every=None, out=None):
         dtype=dt,
         split_every=split_every,
         out=out,
+        reduction_cls=Prod,
     )
 
 
@@ -99,6 +117,7 @@ def min(a, axis=None, keepdims=False, split_every=None, out=None):
         dtype=a.dtype,
         split_every=split_every,
         out=out,
+        reduction_cls=Min,
     )
 
 
@@ -114,6 +133,7 @@ def max(a, axis=None, keepdims=False, split_every=None, out=None):
         dtype=a.dtype,
         split_every=split_every,
         out=out,
+        reduction_cls=Max,
     )
 
 
@@ -128,6 +148,7 @@ def any(a, axis=None, keepdims=False, split_every=None, out=None):
         dtype="bool",
         split_every=split_every,
         out=out,
+        reduction_cls=Any,
     )
 
 
@@ -142,6 +163,7 @@ def all(a, axis=None, keepdims=False, split_every=None, out=None):
         dtype="bool",
         split_every=split_every,
         out=out,
+        reduction_cls=All,
     )
 
 
@@ -161,6 +183,7 @@ def nansum(a, axis=None, dtype=None, keepdims=False, split_every=None, out=None)
         dtype=dt,
         split_every=split_every,
         out=out,
+        reduction_cls=NanSum,
     )
 
 
@@ -179,6 +202,7 @@ def nanprod(a, axis=None, dtype=None, keepdims=False, split_every=None, out=None
         dtype=dt,
         split_every=split_every,
         out=out,
+        reduction_cls=NanProd,
     )
 
 
@@ -217,6 +241,7 @@ def nanmin(a, axis=None, keepdims=False, split_every=None, out=None):
         dtype=a.dtype,
         split_every=split_every,
         out=out,
+        reduction_cls=NanMin,
     )
 
 
@@ -237,6 +262,7 @@ def nanmax(a, axis=None, keepdims=False, split_every=None, out=None):
         dtype=a.dtype,
         split_every=split_every,
         out=out,
+        reduction_cls=NanMax,
     )
 
 
@@ -313,6 +339,7 @@ def mean(a, axis=None, dtype=None, keepdims=False, split_every=None, out=None):
         combine=mean_combine,
         out=out,
         concatenate=False,
+        reduction_cls=Mean,
     )
 
 
@@ -333,6 +360,7 @@ def nanmean(a, axis=None, dtype=None, keepdims=False, split_every=None, out=None
         out=out,
         concatenate=False,
         combine=partial(mean_combine, sum=chunk.nansum, numel=nannumel),
+        reduction_cls=NanMean,
     )
 
 
@@ -561,6 +589,7 @@ def var(a, axis=None, dtype=None, keepdims=False, ddof=0, split_every=None, out=
         name="var",
         out=out,
         concatenate=False,
+        reduction_cls=Var,
     )
 
 
@@ -589,6 +618,7 @@ def nanvar(a, axis=None, dtype=None, keepdims=False, ddof=0, split_every=None, o
         combine=partial(moment_combine, sum=np.nansum),
         out=out,
         concatenate=False,
+        reduction_cls=NanVar,
     )
 
 
