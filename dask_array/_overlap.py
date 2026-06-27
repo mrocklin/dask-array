@@ -316,7 +316,7 @@ class SlidingWindowView(Blockwise):
 
     def _simplify_up(self, parent, dependents):
         from dask_array.reductions._reduction import Reduction
-        from dask_array.reductions._common import chunk_max, mean_agg, mean_chunk, mean_combine
+        from dask_array.reductions._common import chunk_max, chunk_min, mean_agg, mean_chunk, mean_combine
 
         if not isinstance(parent, Reduction):
             return super()._simplify_up(parent, dependents)
@@ -328,6 +328,14 @@ class SlidingWindowView(Blockwise):
         reducer = None
         if parent.chunk is chunk.sum and parent.aggregate is chunk.sum and parent.combine is None:
             reducer = "sum"
+        elif parent.chunk is chunk.prod and parent.aggregate is chunk.prod and parent.combine is None:
+            reducer = "prod"
+        elif parent.chunk is chunk.any and parent.aggregate is chunk.any and parent.combine is None:
+            reducer = "any"
+        elif parent.chunk is chunk.all and parent.aggregate is chunk.all and parent.combine is None:
+            reducer = "all"
+        elif parent.chunk is chunk_min and parent.aggregate is chunk.min and parent.combine is chunk_min:
+            reducer = "min"
         elif parent.chunk is chunk_max and parent.aggregate is chunk.max and parent.combine is chunk_max:
             reducer = "max"
         elif (
@@ -372,6 +380,43 @@ class SlidingWindowView(Blockwise):
             return None
 
         chunks = list(self.chunks)
+        sliding_axis = int(sliding_axes[0])
+        window = int(window_shape[0])
+        reduced_input_expr = input_expr
+
+        from dask_array._rechunk import Rechunk
+
+        if isinstance(input_expr, OverlapInternal) and isinstance(input_expr.array, Rechunk):
+            rechunk = input_expr.array
+            depth = window - 1
+            matches_generated_overlap = True
+            for ax in range(rechunk.ndim):
+                value = input_expr.axes.get(ax, 0)
+                if ax == sliding_axis:
+                    matches_generated_overlap &= value == (0, depth)
+                else:
+                    matches_generated_overlap &= value == 0 or value == (0, 0)
+
+            if matches_generated_overlap:
+                # The parent reduction removes the materialized window axis, so
+                # keep automatic rechunking limited to the rolling axis.
+                reduced_input_chunks = list(rechunk.array.chunks)
+                reduced_input_chunks[sliding_axis] = ensure_minimum_chunksize(
+                    window, reduced_input_chunks[sliding_axis]
+                )
+                reduced_input_chunks = tuple(reduced_input_chunks)
+
+                if reduced_input_chunks != rechunk.chunks:
+                    reduced_array = new_collection(rechunk.array).rechunk(reduced_input_chunks)
+                    reduced_input_expr = OverlapInternal(reduced_array.expr, input_expr.axes)
+
+                    label_chunks = dict(zip(input_ind, reduced_array.chunks))
+                    sliding_chunks = list(label_chunks[input_ind[sliding_axis]])
+                    sliding_chunks[-1] -= depth
+                    label_chunks[input_ind[sliding_axis]] = tuple(sliding_chunks)
+                    label_chunks[window_label] = (window,)
+                    chunks = [label_chunks[label] for label in self.out_ind]
+
         if parent.keepdims:
             chunks[window_axis] = (1,)
         else:
@@ -381,7 +426,7 @@ class SlidingWindowView(Blockwise):
         dtype = parent.dtype
         return map_blocks(
             _sliding_window_reduce_block,
-            new_collection(input_expr),
+            new_collection(reduced_input_expr),
             chunks=chunks,
             dtype=dtype,
             meta=np.empty((0,) * len(chunks), dtype=dtype),
@@ -1137,6 +1182,14 @@ def _sliding_window_reduce_block(
         other = block[tuple(index)]
         if reducer == "max":
             np.maximum(out, other, out=out)
+        elif reducer == "min":
+            np.minimum(out, other, out=out)
+        elif reducer == "prod":
+            np.multiply(out, other, out=out, casting="unsafe")
+        elif reducer == "any":
+            np.logical_or(out, other, out=out)
+        elif reducer == "all":
+            np.logical_and(out, other, out=out)
         elif reducer in ("sum", "mean"):
             np.add(out, other, out=out, casting="unsafe")
         else:
