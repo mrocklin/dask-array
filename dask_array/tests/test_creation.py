@@ -1012,6 +1012,12 @@ def test_string_chunks_require_byte_unit(chunks):
         da.ones((4, 5), chunks=chunks)
 
 
+@pytest.mark.parametrize("chunks", [("1", "1"), ("1B", "1B")])
+def test_1d_explicit_string_chunk_tuples_are_rejected(chunks):
+    with pytest.raises(ValueError, match="explicit chunk tuples"):
+        da.ones((4,), chunks=chunks)
+
+
 @pytest.mark.parametrize("chunks", ["-1B", ("-1B", "-1B")])
 def test_string_byte_chunks_must_not_be_negative(chunks):
     with pytest.raises(ValueError, match="negative"):

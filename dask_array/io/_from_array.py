@@ -311,16 +311,12 @@ class FromArray(IO):
                 for dim_chunks, storage, slc, dim_size in zip(chunks, storage_chunks, region, self.array.shape):
                     start, stop, step = slc.indices(dim_size)
 
-                    target_matches_storage = start % storage == 0
-                    for chunk in dim_chunks[:-1]:
-                        if chunk % storage:
-                            target_matches_storage = False
-                            break
-                    if target_matches_storage:
-                        last_chunk = dim_chunks[-1]
-                        target_matches_storage = last_chunk <= storage or last_chunk % storage == 0
-
-                    if target_matches_storage:
+                    splits_storage = (
+                        start % storage
+                        or any(chunk % storage for chunk in dim_chunks[:-1])
+                        or (dim_chunks[-1] > storage and dim_chunks[-1] % storage)
+                    )
+                    if not splits_storage:
                         read_chunks.append(dim_chunks)
                     else:
                         if step != 1:

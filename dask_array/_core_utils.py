@@ -768,6 +768,8 @@ def normalize_chunks(chunks, shape=None, limit=None, dtype=None, previous_chunks
         chunks = ((0,),) * len(shape)
 
     if shape and len(shape) == 1 and len(chunks) > 1 and all(isinstance(c, (Number, str)) for c in chunks):
+        if any(isinstance(c, str) for c in chunks):
+            raise ValueError(f"String values are not supported inside explicit chunk tuples. Got chunks={chunks}")
         chunks = (chunks,)
 
     if shape and len(chunks) != len(shape):

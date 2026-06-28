@@ -155,6 +155,12 @@ def test_records_from_arraylike_region_pushdown():
     _assert_records_match(arr, base[2:7, 3:12])
 
 
+def test_records_from_region_rechunk_pushdown():
+    base = np.arange(25 * 10).reshape(25, 10)
+    arr = da.from_array(base, chunks=(8, 2))[1:17].rechunk((4, 4))
+    _assert_records_match(arr, base[1:17])
+
+
 def test_records_from_arraylike_no_asarray():
     base = np.arange(120.0).reshape(8, 15)
     arr = da.from_array(_ArrayLike(base), chunks=(3, 5), asarray=False)
