@@ -120,6 +120,22 @@ def _records(key, node):
     if isinstance(node, Alias):
         return [(out_key, toolz.identity, (TaskRef(_norm_key(node.target)),), {}, [str(_norm_key(node.target))])]
     if isinstance(node, DataNode):
+        # A persisted collection's FromGraph maps each block key to the frisky
+        # Future holding its data. Emit a real dependency edge to that future's
+        # key (so the worker resolves it) rather than a literal arg with no edge,
+        # which would flow an unresolved placeholder into the consuming op. The
+        # future's ``.key`` is already the scheduler's registered key string.
+        # Import Future lazily: this module only runs under Frisky, but a
+        # future-free graph must not require Frisky to be importable.
+        try:
+            from frisky import Future
+
+            is_future = isinstance(node.value, Future)
+        except ImportError:
+            is_future = False
+        if is_future:
+            future_key = str(node.value.key)
+            return [(out_key, toolz.identity, (TaskRef(future_key),), {}, [future_key])]
         return [(out_key, toolz.identity, (node.value,), {}, [])]
     fl = _Flattener(out_key)
     deps = set()

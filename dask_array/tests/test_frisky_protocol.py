@@ -256,3 +256,28 @@ def test_frisky_scheduler_uses_frisky_graph(array_scheduler, monkeypatch):
     (result,) = dask.compute(x)
 
     np.testing.assert_array_equal(result, np.full((2, 2), 7.0))
+
+
+def test_persisted_collection_arithmetic_roundtrips(array_scheduler):
+    """Chained persist: a persisted collection lowers to a ``FromGraph`` whose
+    blocks ARE frisky Futures. Doing arithmetic on it and recomputing must wire
+    those futures as dependency edges through the records/expression path —
+    otherwise the worker runs the consuming op on an unresolved placeholder
+    (regression: ``TypeError: unsupported operand type(s) for *:
+    'types.SimpleNamespace' and 'int'``). The dask-array suite otherwise only
+    exercises ``_layer``, never the records path, so this is the only coverage."""
+    if array_scheduler != "frisky":
+        pytest.skip("requires --scheduler=frisky")
+
+    x = da.ones((4, 4), chunks=(2, 2)) + 1
+    xp = x.persist()
+    # The persisted collection is FromGraph-backed (its blocks are futures).
+    assert type(xp.expr).__name__ == "FromGraph"
+
+    # Recomputing the persisted collection directly: an unresolved placeholder
+    # would have no shape and crash in finalize/concatenate.
+    np.testing.assert_array_equal(xp.compute(), np.full((4, 4), 2.0))
+    # Arithmetic on the persisted collection, then compute (the reported crash).
+    np.testing.assert_array_equal((xp * 2).compute(), np.full((4, 4), 4.0))
+    # A reduction over the persisted collection also resolves its blocks.
+    np.testing.assert_array_equal((xp + 5).sum().compute(), np.full((4, 4), 7.0).sum())
