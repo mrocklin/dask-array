@@ -779,11 +779,19 @@ def normalize_chunks(chunks, shape=None, limit=None, dtype=None, previous_chunks
     # Verify there is only one consistent value of limit or chunk-bytes used.
     for c in chunks:
         if isinstance(c, str) and c != "auto":
+            chunk_string = c.replace(" ", "")
+            if not chunk_string or not chunk_string[-1].isalpha():
+                raise ValueError(
+                    "String chunk sizes must be 'auto' or byte sizes with a byte unit like 'B', 'MB', or 'MiB'. "
+                    f"Got {c!r}"
+                )
             parsed = parse_bytes(c)
+            if parsed < 0:
+                raise ValueError(f"String chunk byte sizes must not be negative. Got {c!r}")
             if limit is None:
                 limit = parsed
             elif parsed != limit:
-                raise ValueError(f"Only one consistent value of limit or chunk is allowed.Used {parsed} != {limit}")
+                raise ValueError(f"Only one consistent value of limit or chunk is allowed. Used {parsed} != {limit}")
     # Substitute byte limits with 'auto' now that limit is set.
     chunks = tuple("auto" if isinstance(c, str) and c != "auto" else c for c in chunks)
 

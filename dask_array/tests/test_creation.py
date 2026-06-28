@@ -1006,6 +1006,24 @@ def test_auto_chunks():
         assert 4 < x.npartitions < 32
 
 
+@pytest.mark.parametrize("chunks", ["1", "1e6", ("1", "1"), ("-1", "-1")])
+def test_string_chunks_require_byte_unit(chunks):
+    with pytest.raises(ValueError, match="byte unit"):
+        da.ones((4, 5), chunks=chunks)
+
+
+@pytest.mark.parametrize("chunks", ["-1B", ("-1B", "-1B")])
+def test_string_byte_chunks_must_not_be_negative(chunks):
+    with pytest.raises(ValueError, match="negative"):
+        da.ones((4, 5), chunks=chunks)
+
+
+@pytest.mark.parametrize("chunks", ["1B", ("1 MiB", "1 MiB")])
+def test_string_byte_chunks_accept_units(chunks):
+    x = da.ones((4, 5), chunks=chunks)
+    assert x.shape == (4, 5)
+
+
 def test_string_auto_chunk():
     with pytest.raises(ValueError):
         da.full((10000, 10000), "auto_chunk", chunks="auto")
