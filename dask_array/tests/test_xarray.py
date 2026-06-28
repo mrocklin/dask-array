@@ -11,7 +11,14 @@ import pytest
 xr = pytest.importorskip("xarray")
 
 import dask_array as da
+from dask_array._rechunk import TasksRechunk
 from dask_array._xarray import DaskArrayExprManager
+
+
+def _contains_expr_type(expr, typ):
+    if isinstance(expr, typ):
+        return True
+    return any(_contains_expr_type(dep, typ) for dep in expr.dependencies())
 
 
 def test_public_xarray_api_available_from_package():
@@ -34,6 +41,20 @@ def test_public_xarray_register_and_isactive(monkeypatch):
 
     assert da.xarray.isactive()
     assert isinstance(managers["dask"], DaskArrayExprManager)
+
+
+def test_xarray_rolling_full_time_chunk_avoids_padding_rechunk():
+    da.xarray.register()
+    x = xr.DataArray(
+        da.ones((100, 6, 8), chunks=(100, 3, 4)),
+        dims=("time", "latitude", "longitude"),
+    )
+
+    result = (x > 0).rolling(time=72, min_periods=72).sum().max("time")
+    optimized = result.data.expr.optimize()
+
+    assert not _contains_expr_type(optimized, TasksRechunk)
+    np.testing.assert_allclose(result.compute().values, np.full((6, 8), 72.0))
 
 
 class TestDaskArrayExprManager:

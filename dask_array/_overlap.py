@@ -402,21 +402,33 @@ class SlidingWindowView(Blockwise):
                 # The parent reduction removes the materialized window axis, so
                 # keep automatic rechunking limited to the rolling axis.
                 reduced_input_chunks = list(rechunk.array.chunks)
-                reduced_input_chunks[sliding_axis] = ensure_minimum_chunksize(
-                    window, reduced_input_chunks[sliding_axis]
-                )
+                sliding_axis_chunks = reduced_input_chunks[sliding_axis]
+                known_sliding_axis_chunks = all(not np.isnan(chunk) for chunk in sliding_axis_chunks)
+                if depth and (
+                    not known_sliding_axis_chunks
+                    or min(sliding_axis_chunks) < depth
+                    or sliding_axis_chunks[-1] <= depth
+                ):
+                    sliding_axis_chunks = ensure_minimum_chunksize(window, sliding_axis_chunks)
+                reduced_input_chunks[sliding_axis] = sliding_axis_chunks
                 reduced_input_chunks = tuple(reduced_input_chunks)
 
-                if reduced_input_chunks != rechunk.chunks:
+                if reduced_input_chunks == rechunk.array.chunks:
+                    reduced_array_expr = rechunk.array
+                    reduced_array_chunks = rechunk.array.chunks
+                else:
                     reduced_array = new_collection(rechunk.array).rechunk(reduced_input_chunks)
-                    reduced_input_expr = OverlapInternal(reduced_array.expr, input_expr.axes)
+                    reduced_array_expr = reduced_array.expr
+                    reduced_array_chunks = reduced_array.chunks
 
-                    label_chunks = dict(zip(input_ind, reduced_array.chunks))
-                    sliding_chunks = list(label_chunks[input_ind[sliding_axis]])
-                    sliding_chunks[-1] -= depth
-                    label_chunks[input_ind[sliding_axis]] = tuple(sliding_chunks)
-                    label_chunks[window_label] = (window,)
-                    chunks = [label_chunks[label] for label in self.out_ind]
+                reduced_input_expr = OverlapInternal(reduced_array_expr, input_expr.axes)
+
+                label_chunks = dict(zip(input_ind, reduced_array_chunks))
+                sliding_chunks = list(label_chunks[input_ind[sliding_axis]])
+                sliding_chunks[-1] -= depth
+                label_chunks[input_ind[sliding_axis]] = tuple(sliding_chunks)
+                label_chunks[window_label] = (window,)
+                chunks = [label_chunks[label] for label in self.out_ind]
 
         if parent.keepdims:
             chunks[window_axis] = (1,)

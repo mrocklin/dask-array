@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 import dask_array as da
+from dask_array._rechunk import TasksRechunk
 
 
 def _contains_sliding_window_view(expr):
@@ -13,6 +14,12 @@ def _contains_sliding_window_view(expr):
     if func is np.lib.stride_tricks.sliding_window_view:
         return True
     return any(_contains_sliding_window_view(dep) for dep in expr.dependencies())
+
+
+def _contains_tasks_rechunk(expr):
+    if isinstance(expr, TasksRechunk):
+        return True
+    return any(_contains_tasks_rechunk(dep) for dep in expr.dependencies())
 
 
 @pytest.mark.parametrize("reduction", ["min", "max", "sum", "prod", "mean"])
@@ -157,6 +164,28 @@ def test_sliding_window_nanvar_uses_stable_block_algorithm():
     assert result.expr.simplify().chunks == ((25,), (4, 4))
     assert not _contains_sliding_window_view(result.expr.simplify())
     np.testing.assert_allclose(result.compute(), expected, rtol=5e-7, atol=1e-8)
+
+
+def test_sliding_window_reduction_avoids_rechunking_left_padding_chunk():
+    window = 4
+    data = np.arange(10 * 2, dtype=np.int64).reshape(10, 2)
+    padding = np.full((window - 1, 2), -1, dtype=data.dtype)
+    x = da.concatenate(
+        [
+            da.from_array(padding, chunks=(window - 1, 2)),
+            da.from_array(data, chunks=(10, 2)),
+        ],
+        axis=0,
+    )
+    full_data = np.concatenate([padding, data])
+
+    result = da.sliding_window_view(x, window_shape=window, axis=0).sum(axis=-1)
+    expected = np.lib.stride_tricks.sliding_window_view(full_data, window, axis=0).sum(axis=-1)
+
+    optimized = result.expr.optimize()
+    assert optimized.chunks == ((window - 1, data.shape[0] - (window - 1)), (2,))
+    assert not _contains_tasks_rechunk(optimized)
+    np.testing.assert_array_equal(result.compute(), expected)
 
 
 @pytest.mark.parametrize("reduction", ["var", "nanvar", "std", "nanstd"])
