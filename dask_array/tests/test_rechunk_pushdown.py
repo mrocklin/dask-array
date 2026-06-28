@@ -62,6 +62,26 @@ class _LazyIndexingAdapter:
         return ("_LazyIndexingAdapter", self.array.__dask_tokenize__())
 
 
+class _VirtualChunkedStore:
+    def __init__(self, shape, chunks, dtype="float32"):
+        self.shape = shape
+        self.chunks = chunks
+        self.dtype = np.dtype(dtype)
+        self.ndim = len(shape)
+
+    def __getitem__(self, index):
+        shape = []
+        for ind, size in zip(index, self.shape):
+            if isinstance(ind, slice):
+                shape.append(len(range(*ind.indices(size))))
+            else:
+                shape.append(1)
+        return np.zeros(tuple(shape), dtype=self.dtype)
+
+    def __dask_tokenize__(self):
+        return ("_VirtualChunkedStore", self.shape, self.chunks, self.dtype.str)
+
+
 def _from_array_exprs(expr):
     seen = set()
     found = []
@@ -84,11 +104,16 @@ def _assert_from_array_reads_respect_storage_chunks(expr):
         storage_chunks = _source_storage_chunks(from_array.array)
         if storage_chunks is None:
             continue
-        for chunks, storage in zip(from_array.chunks, storage_chunks):
+        region = from_array.operand("_region")
+        if region is None:
+            offsets = (0,) * len(storage_chunks)
+        else:
+            offsets = tuple(slc.indices(dim_size)[0] for slc, dim_size in zip(region, from_array.array.shape))
+        for chunks, storage, offset in zip(from_array.chunks, storage_chunks, offsets):
             boundary = 0
             for chunk in chunks[:-1]:
                 boundary += chunk
-                assert boundary % storage == 0
+                assert (offset + boundary) % storage == 0
 
 
 def _with_chunks(array, chunks):
@@ -353,6 +378,83 @@ def test_rechunk_pushdown_eliminates_storage_aligned_rechunk():
     assert y.chunks == ((10, 10), (10, 10, 10))
     _assert_from_array_reads_respect_storage_chunks(simplified)
     np.testing.assert_array_equal(y.compute(scheduler="synchronous"), store.data)
+
+
+def test_rechunk_pushdown_through_region_pushes_storage_compatible_axes():
+    store = _VirtualChunkedStore(shape=(20000, 721, 1440), chunks=(8736, 12, 12))
+    x = da.from_array(store, chunks=store.chunks, asarray=False)
+
+    y = x[:8760].rechunk((8760, 60, 60))
+    simplified = y.expr.simplify()
+    (from_array,) = _from_array_exprs(simplified)
+
+    assert y.chunks == ((8760,), (60,) * 12 + (1,), (60,) * 24)
+    assert from_array.chunks == ((8736, 24), (60,) * 12 + (1,), (60,) * 24)
+    _assert_from_array_reads_respect_storage_chunks(simplified)
+
+
+def test_rechunk_pushdown_through_offset_region_pushes_other_axes():
+    store = _VirtualChunkedStore(shape=(20000, 721, 1440), chunks=(8736, 12, 12))
+    x = da.from_array(store, chunks=store.chunks, asarray=False)
+
+    y = x[10:8770].rechunk((8760, 60, 60))
+    simplified = y.expr.simplify()
+    (from_array,) = _from_array_exprs(simplified)
+
+    assert y.chunks == ((8760,), (60,) * 12 + (1,), (60,) * 24)
+    assert from_array.chunks == ((8726, 34), (60,) * 12 + (1,), (60,) * 24)
+    _assert_from_array_reads_respect_storage_chunks(simplified)
+
+
+def test_rechunk_pushdown_through_offset_region_preserves_values_and_reads():
+    store = _RecordingChunkedStore(shape=(25, 10), chunks=(8, 2))
+    x = da.from_array(store, chunks=store.chunks, asarray=False)
+
+    y = x[1:17].rechunk((4, 4))
+    simplified = y.expr.simplify()
+    (from_array,) = _from_array_exprs(simplified)
+
+    assert y.chunks == ((4, 4, 4, 4), (4, 4, 2))
+    assert from_array.chunks == ((7, 8, 1), (4, 4, 2))
+    _assert_from_array_reads_respect_storage_chunks(simplified)
+
+    store.calls.clear()
+    np.testing.assert_array_equal(y.compute(scheduler="synchronous"), store.data[1:17])
+    data_calls = [call for call in store.calls if all(slc.stop > slc.start for slc in call)]
+    _assert_slice_calls_match(
+        data_calls,
+        [
+            (time, col)
+            for time in (slice(1, 8, None), slice(8, 16, None), slice(16, 17, None))
+            for col in (slice(0, 4, None), slice(4, 8, None), slice(8, 10, None))
+        ],
+    )
+
+
+def test_rechunk_pushdown_through_region_preserves_values_and_storage_reads():
+    store = _RecordingChunkedStore(shape=(25, 10, 12), chunks=(8, 2, 3))
+    x = da.from_array(store, chunks=store.chunks, asarray=False)
+
+    y = x[:10].rechunk((10, 4, 6))
+    simplified = y.expr.simplify()
+    (from_array,) = _from_array_exprs(simplified)
+
+    assert y.chunks == ((10,), (4, 4, 2), (6, 6))
+    assert from_array.chunks == ((8, 2), (4, 4, 2), (6, 6))
+    _assert_from_array_reads_respect_storage_chunks(simplified)
+
+    store.calls.clear()
+    np.testing.assert_array_equal(y.compute(scheduler="synchronous"), store.data[:10])
+    data_calls = [call for call in store.calls if all(slc.stop > slc.start for slc in call)]
+    _assert_slice_calls_match(
+        data_calls,
+        [
+            (time, lat, lon)
+            for time in (slice(0, 8, None), slice(8, 10, None))
+            for lat in (slice(0, 4, None), slice(4, 8, None), slice(8, 10, None))
+            for lon in (slice(0, 6, None), slice(6, 12, None))
+        ],
+    )
 
 
 def test_rechunk_pushdown_broadcast_elemwise():

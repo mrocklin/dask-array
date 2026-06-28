@@ -301,12 +301,55 @@ class FromArray(IO):
                 if len(storage_chunks) != len(self._effective_shape) or any(c <= 0 for c in storage_chunks):
                     storage_chunks = None
 
-        if storage_chunks is not None and self.operand("_region") is not None:
-            return None
-
         if storage_chunks is not None:
             if any(np.isnan(c) for dim in chunks for c in dim):
                 return None
+
+            region = self.operand("_region")
+            if region is not None:
+                read_chunks = []
+                for dim_chunks, storage, slc, dim_size in zip(chunks, storage_chunks, region, self.array.shape):
+                    start, stop, step = slc.indices(dim_size)
+
+                    target_matches_storage = start % storage == 0
+                    for chunk in dim_chunks[:-1]:
+                        if chunk % storage:
+                            target_matches_storage = False
+                            break
+                    if target_matches_storage:
+                        last_chunk = dim_chunks[-1]
+                        target_matches_storage = last_chunk <= storage or last_chunk % storage == 0
+
+                    if target_matches_storage:
+                        read_chunks.append(dim_chunks)
+                    else:
+                        if step != 1:
+                            return None
+
+                        boundaries = [0]
+                        first_storage_boundary = ((start + storage - 1) // storage) * storage
+                        for boundary in range(first_storage_boundary, stop, storage):
+                            if boundary > start:
+                                boundaries.append(boundary - start)
+                        boundaries.append(stop - start)
+                        read_chunks.append(tuple(right - left for left, right in zip(boundaries, boundaries[1:])))
+
+                read_chunks = tuple(read_chunks)
+                if read_chunks == chunks:
+                    return self._with_chunks(chunks)
+                if read_chunks == self.chunks:
+                    return None
+
+                from dask_array._rechunk import Rechunk
+
+                return Rechunk(
+                    self._with_chunks(read_chunks),
+                    chunks,
+                    threshold,
+                    block_size_limit,
+                    False,
+                    method,
+                )
 
             respects_storage = True
             for dim_chunks, storage in zip(chunks, storage_chunks):
