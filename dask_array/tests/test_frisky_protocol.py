@@ -63,8 +63,9 @@ def test_sliding_window_overlap_uses_binary_records():
 
 def test_chunk_groups_carry_name_and_metadata():
     """Each binary chunk ships its producing expr's ``_name`` (the stable layer
-    identity, which a key prefix can't always recover) plus an opaque JSON blob of
-    op/shape/chunks/dtype, parallel to ``chunks``."""
+    identity, which a key prefix can't always recover), an opaque JSON blob of
+    op/shape/chunks/dtype, and its upstream group names (the child layers' ``_name``s
+    == the layer-DAG edges), parallel to ``chunks``."""
     if importlib.util.find_spec("dask_array._rust") is None:
         pytest.skip("requires Rust extension")
     import json
@@ -73,8 +74,9 @@ def test_chunk_groups_carry_name_and_metadata():
     chunks, records, chunk_groups = x.__frisky_records_chunks__()
 
     assert len(chunk_groups) == len(chunks) == 2
-    for name, meta in chunk_groups:
+    for name, meta, upstream in chunk_groups:
         assert isinstance(name, str) and name  # the expr `_name`
+        assert isinstance(upstream, list)  # upstream group names
         info = json.loads(meta)
         assert info["shape"] == [4, 4]
         assert info["chunks"] == [[2, 2], [2, 2]]
@@ -83,13 +85,71 @@ def test_chunk_groups_carry_name_and_metadata():
         assert "op" in info
         assert isinstance(info["params"], dict)  # scalar params, not array inputs
     # The two layers are distinct exprs => distinct group names.
-    assert len({name for name, _ in chunk_groups}) == 2
+    assert len({name for name, _, _ in chunk_groups}) == 2
+
+    # The layer-DAG edge: the `+ 1` (Elemwise) layer's upstream is the ones source
+    # layer, and the source layer has no upstream.
+    by_op = {json.loads(m)["op"]: (name, up) for name, m, up in chunk_groups}
+    ones_name, ones_up = by_op["Ones"]
+    add_name, add_up = by_op["Elemwise"]
+    assert ones_up == [], "the source layer has no upstream"
+    assert add_up == [ones_name], "the add layer depends on the ones layer"
 
     # The expression's scalar parameters are captured (op/shape/etc.), while its
     # array inputs (child exprs) are excluded.
-    by_op = {json.loads(m)["op"]: json.loads(m)["params"] for _, m in chunk_groups}
-    assert by_op["Elemwise"]["op"] == "add"  # the `+ 1` operator, not an array
-    assert by_op["Ones"]["shape"] == [4, 4]  # a scalar param on the source
+    params = {json.loads(m)["op"]: json.loads(m)["params"] for _, m, _ in chunk_groups}
+    assert params["Elemwise"]["op"] == "add"  # the `+ 1` operator, not an array
+    assert params["Ones"]["shape"] == [4, 4]  # a scalar param on the source
+
+
+def test_summarize_chunks_bounds_finely_chunked_dims():
+    """A dim with many chunks is summarized, not listed — so the metadata blob
+    can't blow up on a 100k-chunk array."""
+    from dask_array._frisky.collect import _MAX_CHUNKS_PER_DIM, _summarize_chunks
+
+    # Few chunks -> listed in full.
+    assert _summarize_chunks([(2, 2, 2)]) == [[2, 2, 2]]
+    # Many chunks -> compact {nchunks, min, max}, not the full list.
+    out = _summarize_chunks([tuple([1] * 1000), (5, 5)])
+    assert out[0] == {"nchunks": 1000, "min": 1, "max": 1}
+    assert out[1] == [5, 5]
+    # Varied chunk sizes -> distinct min/max (a min/max swap would be caught).
+    assert _summarize_chunks([tuple(range(1, 21))])[0] == {"nchunks": 20, "min": 1, "max": 20}
+    # Boundary: == max lists, > max summarizes.
+    assert _summarize_chunks([tuple(range(1, _MAX_CHUNKS_PER_DIM + 1))])[0] == list(range(1, _MAX_CHUNKS_PER_DIM + 1))
+    assert isinstance(_summarize_chunks([tuple(range(_MAX_CHUNKS_PER_DIM + 1))])[0], dict)
+
+
+def test_layer_metadata_stays_small_for_many_chunks():
+    """End-to-end: a finely-chunked array yields a tiny metadata blob."""
+    import json
+
+    from dask_array._frisky.collect import _layer_metadata
+
+    x = da.ones((4000,), chunks=1)  # 4000 chunks in one dim
+    meta = _layer_metadata(x.expr)
+    assert meta is not None
+    info = json.loads(meta)
+    assert info["chunks"][0] == {"nchunks": 4000, "min": 1, "max": 1}
+    assert len(meta) < 1000, f"blob should stay small, got {len(meta)} bytes"
+
+
+def test_layer_metadata_drops_oversized_params(monkeypatch):
+    """A pathological nested `params` can't bloat the blob: when the assembled
+    metadata exceeds the cap, `params` is dropped but op/shape/chunks/dtype
+    survive — so the scheduler never has to drop the whole (useful) blob."""
+    import json
+
+    from dask_array._frisky import collect as collect_mod
+    from dask_array._frisky.collect import _MAX_METADATA_BYTES, _layer_metadata
+
+    monkeypatch.setattr(collect_mod, "_expr_params", lambda e: {"big": "x" * (_MAX_METADATA_BYTES * 2)})
+    meta = _layer_metadata(da.ones((4,), chunks=2).expr)
+    assert meta is not None
+    assert len(meta) <= _MAX_METADATA_BYTES
+    info = json.loads(meta)
+    assert "params" not in info  # dropped...
+    assert info["op"] and info["shape"] == [4] and info["dtype"]  # ...but these survive
 
 
 def test_overlap_native_layer_matches_legacy_graph():

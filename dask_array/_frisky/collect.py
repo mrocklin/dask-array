@@ -52,14 +52,14 @@ def _jsonify(v, depth=0):
     if isinstance(v, slice):
         return {"start": _jsonify(v.start), "stop": _jsonify(v.stop), "step": _jsonify(v.step)}
     if isinstance(v, (list, tuple)):
-        if depth >= 4:
+        if depth >= 3:
             return repr(v)[:200]
         out = [_jsonify(x, depth + 1) for x in v[:32]]
         if len(v) > 32:
             out.append(f"...(+{len(v) - 32} more)")
         return out
     if isinstance(v, dict):
-        if depth >= 4:
+        if depth >= 3:
             return repr(v)[:200]
         return {str(k): _jsonify(val, depth + 1) for k, val in list(v.items())[:32]}
     if callable(v):
@@ -90,12 +90,44 @@ def _expr_params(e):
         return {}
 
 
+# A dimension with more than this many chunks is summarized rather than listed —
+# real arrays can have 100k+ chunks per dim, which would bloat the metadata blob
+# (built here, stored per-group on the scheduler, shipped on every poll, and
+# rendered). Small dims are listed in full so the common case stays legible.
+_MAX_CHUNKS_PER_DIM = 16
+
+# Hard cap on the whole metadata blob. Matches Frisky's scheduler-side cap
+# (MAX_GROUP_METADATA_BYTES, transitions.rs). `chunks` is summarized and
+# `_jsonify` bounds each param, so realistic layers land far under this; the cap
+# only bites a pathological nested `params`, and we drop just `params` (keeping
+# op/shape/chunks/dtype) rather than letting the scheduler drop the whole blob.
+_MAX_METADATA_BYTES = 16 * 1024
+
+
+def _summarize_chunks(chunks):
+    """Bounded per-dimension chunk description: the full size list when a dim has
+    few chunks, else a compact ``{nchunks, min, max}`` so the blob stays small no
+    matter how finely the array is chunked."""
+    out = []
+    for dim in chunks:  # each `dim` is already a tuple of ints — don't copy it
+        if len(dim) <= _MAX_CHUNKS_PER_DIM:
+            out.append([int(b) for b in dim])
+        else:
+            out.append({"nchunks": len(dim), "min": int(min(dim)), "max": int(max(dim))})
+    return out
+
+
 def _layer_metadata(e):
     """A small JSON blob describing the expression/layer — operation kind, shape,
     chunking, dtype, and the expression's scalar *parameters* — for Frisky to
     display against the layer's *group*. Opaque to Frisky (it stores the string
     verbatim and never parses it); this keeps the scheduler array-agnostic. One
     blob per layer (not per task).
+
+    Bounded by construction: `chunks` is summarized for finely-chunked dims (see
+    `_summarize_chunks`) and `params` values are capped by `_jsonify`, so the blob
+    can't blow up on a 100k-chunk array. As a hard backstop, an oversized blob
+    drops `params` (a pathological nested param is the only way to get there).
 
     Returns a JSON string, or ``None`` when it can't be built JSON-safely (a node
     without these attrs, unknown/``nan`` dims, or non-coercible values) — in which
@@ -105,12 +137,16 @@ def _layer_metadata(e):
             "op": type(e).__name__,
             "shape": [int(s) for s in e.shape],
             "numblocks": [int(n) for n in e.numblocks],
-            "chunks": [[int(b) for b in dim] for dim in e.chunks],
+            "chunks": _summarize_chunks(e.chunks),
             "dtype": str(e.dtype),
             "params": _expr_params(e),
         }
         # allow_nan=False → invalid-JSON NaN/Inf raise instead of being emitted.
-        return json.dumps(meta, allow_nan=False)
+        blob = json.dumps(meta, allow_nan=False)
+        if len(blob) > _MAX_METADATA_BYTES:
+            meta.pop("params", None)
+            blob = json.dumps(meta, allow_nan=False)
+        return blob
     except (AttributeError, TypeError, ValueError):
         return None
 
@@ -151,10 +187,13 @@ def _walk_record_chunks(roots, seen, chunks, records, chunk_groups):
     to get the speedup on the layers that support it.
 
     ``chunk_groups`` is kept parallel to ``chunks``: for each emitted chunk, the
-    producing expr's ``(_name, metadata_json)`` — its stable layer identity (which
-    a key prefix can't always recover) and an opaque JSON description. Frisky ties
-    that layer's tasks to this group. Residual ``records`` carry no group entry
-    (Frisky key-derives them)."""
+    producing expr's ``(_name, metadata_json, upstream_group_names)`` — its stable
+    layer identity (which a key prefix can't always recover), an opaque JSON
+    description, and its child layers' ``_name``s (the layer-DAG edges, so Frisky
+    can draw layer→layer data flow without scanning tasks). Frisky ties that
+    layer's tasks to this group. Residual ``records`` carry no group entry (Frisky
+    key-derives them; an edge pointing at such a layer still resolves, since its
+    key-derived group shares the same ``_name``)."""
     stack = list(roots)
     while stack:
         e = stack.pop()
@@ -179,13 +218,16 @@ def _walk_record_chunks(roots, seen, chunks, records, chunk_groups):
                 chunk = to_chunk()
             except NotImplementedError:
                 chunk = None
+        deps = e.dependencies()
         if chunk is not None:
             chunks.append(chunk)
-            chunk_groups.append((e._name, _layer_metadata(e)))
+            # Upstream group names = this layer's child exprs' _names (deduped).
+            upstream = sorted({c._name for c in deps})
+            chunk_groups.append((e._name, _layer_metadata(e), upstream))
         else:
             records.extend(layer.to_task_records())
 
-        stack.extend(e.dependencies())
+        stack.extend(deps)
 
 
 def collect_record_chunks(collection, seen=None):
@@ -195,8 +237,9 @@ def collect_record_chunks(collection, seen=None):
     ``chunks`` is a list of binary records LAYER chunks (bytes); ``records`` is a
     list of plain task records for the layers that didn't go binary;
     ``chunk_groups`` is parallel to ``chunks`` — each ``(layer _name,
-    metadata_json)`` so Frisky groups the layer's tasks by their true identity and
-    can show the layer's shape/chunks/dtype. Same ``seen`` semantics as
+    metadata_json, upstream_group_names)`` so Frisky groups the layer's tasks by
+    their true identity, can show the layer's shape/chunks/dtype, and can draw the
+    layer-DAG edges. Same ``seen`` semantics as
     :func:`collect_task_records` — pass a shared set across a multi-collection
     submission so a shared subgraph is expanded once. Completeness is checked by
     the caller over the combined union (Frisky)."""
