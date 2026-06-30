@@ -333,20 +333,33 @@ def _constant_block():
     return np.full((2, 2), 7.0)
 
 
-def _constant_frisky_graph(self, seen=None):
-    return [(self.__frisky_output_keys__()[0], _constant_block, (), {}, [])]
+def _constant_frisky_records_chunks(self, seen=None):
+    return [], [(self.__frisky_output_keys__()[0], _constant_block, (), {}, [])], []
 
 
-def test_frisky_scheduler_uses_frisky_graph(array_scheduler, monkeypatch):
+def _unexpected_frisky_graph(self, seen=None):
+    raise AssertionError("Frisky should use __frisky_records_chunks__ before __frisky_graph__")
+
+
+def test_frisky_scheduler_uses_records_chunks_protocol(array_scheduler, monkeypatch):
     if array_scheduler != "frisky":
         pytest.skip("requires --scheduler=frisky")
 
     x = da.ones((2, 2), chunks=(2, 2)) + 1
-    monkeypatch.setattr(type(x), "__frisky_graph__", _constant_frisky_graph)
+    monkeypatch.setattr(type(x), "__frisky_records_chunks__", _constant_frisky_records_chunks)
+    monkeypatch.setattr(type(x), "__frisky_graph__", _unexpected_frisky_graph)
 
     (result,) = dask.compute(x)
 
     np.testing.assert_array_equal(result, np.full((2, 2), 7.0))
+
+
+def test_nested_flattened_cumreduction_uses_graph_fallback():
+    x = da.from_array(np.arange(12).reshape(3, 4), chunks=(2, 2))
+    y = da.cumsum(x, axis=None, method="sequential") + 1
+
+    with pytest.raises(NotImplementedError, match="flattened cumulative reductions"):
+        y.__frisky_records_chunks__()
 
 
 def test_persisted_collection_arithmetic_roundtrips(array_scheduler):

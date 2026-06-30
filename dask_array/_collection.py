@@ -228,6 +228,21 @@ class Array(DaskMethodsMixin):
             raise NotImplementedError("masked arrays use the regular dask graph path")
         if any(math.isnan(s) for dim in self.chunks for s in dim):
             raise NotImplementedError("unknown chunks use the regular dask graph path")
+        from dask_array._reshape import ReshapeLowered
+        from dask_array.reductions._cumulative import CumReduction
+
+        stack = [(self._lowered_expr, False)]
+        seen = set()
+        while stack:
+            expr, inside_cumreduction = stack.pop()
+            inside_cumreduction = inside_cumreduction or isinstance(expr, CumReduction)
+            state = (expr._name, inside_cumreduction)
+            if state in seen:
+                continue
+            seen.add(state)
+            if inside_cumreduction and isinstance(expr, ReshapeLowered):
+                raise NotImplementedError("flattened cumulative reductions use the regular dask graph path")
+            stack.extend((dep, inside_cumreduction) for dep in expr.dependencies())
 
     def __frisky_graph__(self, seen=None):
         """Frisky submission protocol (duck-typed; Frisky never imports
