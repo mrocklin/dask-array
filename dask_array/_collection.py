@@ -565,11 +565,6 @@ class Array(DaskMethodsMixin):
 
         index2 = normalize_index(index, self.shape)
 
-        dependencies = {self.name}
-        for i in index2:
-            if isinstance(i, Array):
-                dependencies.add(i.name)
-
         if any(isinstance(i, Array) and i.dtype.kind in "iu" for i in index2):
             self, index2 = slice_with_int_dask_array(self, index2)
         if any(isinstance(i, Array) and i.dtype == bool for i in index2):

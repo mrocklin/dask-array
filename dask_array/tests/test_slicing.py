@@ -871,3 +871,47 @@ def test_boolean_mask_with_unknown_shape(
 
     expected = np.full(20, 2.0)
     assert_eq(x, expected)
+
+
+def test_slice_construction_does_not_lower(monkeypatch):
+    """Slicing an array must not lower the whole input tree during construction.
+
+    Regression test for an O(depth^2) graph-construction blowup. ``__getitem__``
+    used to build an (unused) ``dependencies`` set seeded with ``self.name``, and
+    ``Array.name`` lowers the entire expression (``simplify().lower_completely()``)
+    to match graph keys. So every slice fully lowered its growing input -- deep
+    stacks that slice each layer (e.g. an EW scan's ``state[..., 1]``) paid
+    O(depth) per layer. Building the expression must lower nothing, at any depth.
+    """
+    import dask_array._collection as _collection
+
+    calls = 0
+    orig_lower = _collection._lower
+
+    def counting_lower(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return orig_lower(*args, **kwargs)
+
+    monkeypatch.setattr(_collection, "_lower", counting_lower)
+
+    def build(depth):
+        x = da.from_array(np.zeros((1000, 8)), chunks=(250, 8))
+        y = da.from_array(np.zeros((1000, 8)), chunks=(333, 8))  # mismatched boundaries
+        deep = x
+        for _ in range(depth):
+            # non-trivial (non-``slice(None)``) slice each layer -> exercises __getitem__
+            deep = ((deep + y) * deep.mean(axis=1, keepdims=True))[0:1000]
+        return deep
+
+    calls = 0
+    build(5)
+    shallow = calls
+
+    calls = 0
+    build(20)
+    deep = calls
+
+    # Construction lowers nothing, independent of depth.
+    assert shallow == 0
+    assert deep == 0
