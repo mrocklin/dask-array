@@ -1182,3 +1182,51 @@ def test_nanquantile_two_dims():
     darr = da.from_array(arr, chunks=(2, -1))
     assert_eq(da.nanquantile(darr, 0.75, axis=-1), np.nanquantile(arr, 0.75, axis=-1))
     assert_eq(da.nanpercentile(darr, 0.75, axis=-1), np.nanpercentile(arr, 0.75, axis=-1))
+
+
+def test_deep_reduction_stack_construction_does_not_lower(monkeypatch):
+    """Constructing a deep stack of reductions must not lower them.
+
+    Regression test for an O(tree^2) graph-construction blowup. Chunk
+    unification (`unify_chunks_expr`) used the operand's ``name`` as a grouping
+    key, and ``Reduction.name`` forces a full ``lower_completely()`` of the
+    entire operand subtree. With mismatched chunk boundaries driving the slow
+    path, that fired once per reduction per layer, and lowering is itself
+    O(depth) -- so per-layer construction cost grew with depth.
+
+    Building the expression (no ``.compute()``, no ``__dask_graph__()``) should
+    lower nothing. The true invariant is that the lowering count does not grow
+    with depth; here it is flat at zero at every depth.
+    """
+    from dask_array.reductions._reduction import Reduction
+
+    calls = 0
+    orig_lower = Reduction._lower
+
+    def counting_lower(self):
+        nonlocal calls
+        calls += 1
+        return orig_lower(self)
+
+    monkeypatch.setattr(Reduction, "_lower", counting_lower)
+
+    def build(depth):
+        x = da.from_array(np.random.rand(2000, 8), chunks=(500, 8))
+        y = da.from_array(np.random.rand(2000, 8), chunks=(700, 8))  # mismatched boundaries
+        deep = x
+        for _ in range(depth):
+            deep = (deep + y) * deep.mean(axis=1, keepdims=True) + deep * 0.001
+        return deep
+
+    calls = 0
+    build(5)
+    shallow = calls
+
+    calls = 0
+    build(20)
+    deep = calls
+
+    # No reduction lowering happens during construction, at any depth: per-layer
+    # construction cost stays constant rather than growing as the stack deepens.
+    assert shallow == 0
+    assert deep == 0

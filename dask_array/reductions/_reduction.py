@@ -90,6 +90,14 @@ class Reduction(ArrayExpr):
         """Return the name of the final lowered expression.
 
         This ensures that Array.name matches the task keys in the graph.
+
+        WARNING: this forces a full ``lower_completely()`` of the entire operand
+        subtree (O(subtree) per call, and the lowered name genuinely depends on
+        the lowered input, so it cannot be made cheaper). Never touch ``.name``
+        on a Reduction in a per-node / per-layer construction path -- doing so
+        makes graph construction O(tree^2). Use the cheap ``_name`` (the unique
+        node identifier) for grouping or identity instead. See
+        ``test_deep_reduction_stack_construction_does_not_lower``.
         """
         return self.lower_completely().name
 
