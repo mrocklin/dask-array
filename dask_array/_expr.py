@@ -415,8 +415,13 @@ def unify_chunks_expr(*args, warn=True):
     for a, ind in arginds:
         # Skip scalars (empty tuple index), literals (None), and ArrayBlockwiseDep
         if ind is not None and ind != () and not isinstance(a, ArrayBlockwiseDep):
-            nameinds.append((a.name, ind))
-            blockdim_dict[a.name] = a.chunks
+            # Use _name (cheap, unlowered) rather than name as the grouping key.
+            # name on a Reduction triggers a full lower_completely() of the whole
+            # operand subtree, which makes chunk unification O(tree) per layer and
+            # graph construction O(tree^2) for deep stacks. _name is a unique
+            # per-node identifier, which is all broadcast_dimensions needs here.
+            nameinds.append((a._name, ind))
+            blockdim_dict[a._name] = a.chunks
             max_parts = max(max_parts, math.prod(a.numblocks))
         else:
             nameinds.append((a, ind))
