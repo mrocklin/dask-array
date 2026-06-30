@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import operator
 import warnings
+import weakref
 from functools import cached_property
 
 import numpy as np
@@ -107,6 +108,22 @@ __all__ = [
 ]
 
 
+# Process-wide, ``_name``-keyed cache of one-pass lowering results, shared across
+# every ``_lower`` call.  Lowering is a deterministic, context-free function of a
+# node's structure (captured by its ``_name``), so memoizing by ``_name`` is safe.
+# This relies on every ``_lower`` override depending only on ``self`` — not on
+# config, parent context, or randomness (unlike ``_simplify_up``, or the ``_layer``
+# methods that legitimately read config at graph-build time).  A ``_lower`` that
+# read config would make this cache serve stale results across config changes.
+# The payoff is cross-collection sharing: the 666 quantities of one model Dataset
+# share a deep ancestry, and without this each collection re-lowers (and so
+# re-tokenizes) that shared subtree from scratch — O(N^2) over the Dataset.  With
+# the shared cache a shared subtree lowers once.  Weak values bound the cache to
+# lowered expressions that are still live (each is reachable from some collection's
+# ``_lowered_expr``), so it self-evicts as collections are dropped.
+_LOWER_CACHE: weakref.WeakValueDictionary[str, ArrayExpr] = weakref.WeakValueDictionary()
+
+
 def _lower(expr, optimize_graph=None):
     """Lower an expression to its task graph for ``__dask_graph__``/``__dask_keys__``
     and the Frisky records walk.
@@ -124,12 +141,22 @@ def _lower(expr, optimize_graph=None):
     ``__dask_keys__()``, so the records walk and ``__dask_keys__`` must agree on
     whether they simplified, or the client hangs waiting on keys the graph never
     produces.
+
+    Lowering runs through the shared ``_LOWER_CACHE`` (see above) so a subtree
+    shared by many collections is lowered once rather than once per collection.
+    This reuses dask's own ``lower_once`` step; the only change from
+    ``lower_completely`` is that the per-step cache persists across calls.
     """
     if optimize_graph is None:
         optimize_graph = config.get("array.optimize-graph", True)
     if optimize_graph:
         expr = expr.simplify()
-    return expr.lower_completely()
+    # Equivalent to ``expr.lower_completely()`` but with a persistent cache.
+    while True:
+        new = expr.lower_once(_LOWER_CACHE)
+        if new._name == expr._name:
+            return expr
+        expr = new
 
 
 class Array(DaskMethodsMixin):

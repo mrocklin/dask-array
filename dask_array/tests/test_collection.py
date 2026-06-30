@@ -90,6 +90,56 @@ def test_array_pickle_preserves_lowering_config_for_frisky_records():
     assert set(output_keys) <= produced
 
 
+def test_lowering_shares_work_across_collections_with_shared_ancestry():
+    """Lowering many collections that share a deep ancestry must reuse a shared,
+    name-keyed lowering cache so the common subtree is lowered (and tokenized)
+    once, not once per collection.
+
+    Each collection's ``_lowered_expr`` is computed independently, but the
+    collections overlap: ``cols[k]`` contains ``cols[k-1]`` as a subexpression.
+    Without the shared cache the overlap is re-lowered per collection, so the
+    cost of lowering *all* of them is O(depth**2). We assert near-linear growth
+    by tokenize-call count, which doubles (not quadruples) when depth doubles.
+    """
+    import dask.tokenize
+
+    def build_chain(depth):
+        a = da.ones((100, 100), chunks=(10, 10))
+        cols = []
+        for _ in range(depth):
+            # .mean lowers into a partial-reduce/aggregate subgraph, so lowering
+            # genuinely rebuilds nodes each layer (the quadratic shows up here).
+            a = a + a.mean(axis=1, keepdims=True)
+            cols.append(a)
+        return cols
+
+    def count_lower_tokenize(cols):
+        # Counting lowering work by tokenize calls couples to a dask internal
+        # (``dask.tokenize._tokenize``); there is no public hook. ``tokenize()``
+        # resolves it by module-global lookup at call time, so the patch takes.
+        calls = [0]
+        original = dask.tokenize._tokenize
+
+        def counted(*args, **kwargs):
+            calls[0] += 1
+            return original(*args, **kwargs)
+
+        dask.tokenize._tokenize = counted
+        try:
+            for c in cols:
+                c._lowered_expr
+        finally:
+            dask.tokenize._tokenize = original
+        return calls[0]
+
+    n_d = count_lower_tokenize(build_chain(16))
+    n_2d = count_lower_tokenize(build_chain(32))
+
+    # Linear growth is ~2x; quadratic (the unfixed bug) is ~4x. 3x cleanly
+    # separates the two regimes with margin for incidental variation.
+    assert n_2d < 3 * n_d
+
+
 def test_blockwise():
     x = da.random.random((10, 10), chunks=(5, 5))
     z = da.blockwise(operator.add, "ij", x, "ij", 100, None, dtype=x.dtype)
