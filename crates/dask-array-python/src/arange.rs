@@ -18,11 +18,11 @@ use crate::common::{to_dask_graph, to_task_records, ArgSlot, Compute, Expanded, 
 pub struct ArangeLayer {
     name: String,
     /// `functools.partial(chunk.arange, like=like)` — the shared chunk function.
-    func: PyObject,
+    func: Py<PyAny>,
     /// Shared kwargs (empty — everything is positional / baked into the partial).
-    kwargs: PyObject,
+    kwargs: Py<PyAny>,
     /// Shared literals `[step, dtype]`, referenced by `ArgSlot::Literal(0|1)`.
-    literals: Vec<PyObject>,
+    literals: Vec<Py<PyAny>>,
     blockstarts: Vec<Num>,
     blockstops: Vec<Num>,
     sizes: Vec<i64>,
@@ -35,10 +35,10 @@ impl ArangeLayer {
     #[new]
     fn new(
         name: String,
-        func: PyObject,
-        kwargs: PyObject,
-        step: PyObject,
-        dtype: PyObject,
+        func: Py<PyAny>,
+        kwargs: Py<PyAny>,
+        step: Py<PyAny>,
+        dtype: Py<PyAny>,
         blockstarts: Vec<Num>,
         blockstops: Vec<Num>,
         sizes: Vec<i64>,

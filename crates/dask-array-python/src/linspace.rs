@@ -20,9 +20,9 @@ pub struct LinspaceLayer {
     name: String,
     /// `functools.partial(chunk.linspace, endpoint=..., dtype=...)` — the shared
     /// chunk function.
-    func: PyObject,
+    func: Py<PyAny>,
     /// Shared kwargs (empty — `endpoint`/`dtype` are baked into the partial).
-    kwargs: PyObject,
+    kwargs: Py<PyAny>,
     blockstarts: Vec<Num>,
     blockstops: Vec<Num>,
     sizes: Vec<i64>,
@@ -35,8 +35,8 @@ impl LinspaceLayer {
     #[new]
     fn new(
         name: String,
-        func: PyObject,
-        kwargs: PyObject,
+        func: Py<PyAny>,
+        kwargs: Py<PyAny>,
         blockstarts: Vec<Num>,
         blockstops: Vec<Num>,
         sizes: Vec<i64>,

@@ -35,9 +35,9 @@ struct Step {
 
 #[pyclass]
 pub struct RechunkLayer {
-    getitem: PyObject,
-    concatenate3: PyObject,
-    kwargs: PyObject,
+    getitem: Py<PyAny>,
+    concatenate3: Py<PyAny>,
+    kwargs: Py<PyAny>,
     /// All key/dep names, interned; both `name_idx` and `Dep::name_idx` index it.
     names: Vec<String>,
     steps: Vec<Step>,
@@ -60,9 +60,9 @@ impl RechunkLayer {
     /// Steps chain — a step's `old_name` is the previous step's `merge_name`.
     #[new]
     fn new(
-        getitem: PyObject,
-        concatenate3: PyObject,
-        kwargs: PyObject,
+        getitem: Py<PyAny>,
+        concatenate3: Py<PyAny>,
+        kwargs: Py<PyAny>,
         steps: Vec<(String, Vec<Vec<i64>>, Vec<Vec<i64>>, String, String)>,
     ) -> PyResult<Self> {
         let mut names: Vec<String> = Vec::new();

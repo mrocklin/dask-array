@@ -25,9 +25,9 @@ pub struct ReshapeLayer {
     /// Name of the output array.
     name: String,
     /// `dask.utils.M.reshape` — the single shared task function.
-    func: PyObject,
+    func: Py<PyAny>,
     /// Empty dict, stored so `Expanded.kwargs` has a valid reference.
-    kwargs: PyObject,
+    kwargs: Py<PyAny>,
     /// Name of the single input array. Stored as a 1-element `Vec` so it can be
     /// borrowed as `dep_names` (the `ArgSlot::Dep` always uses `name_idx == 0`).
     dep_names: Vec<String>,
@@ -45,8 +45,8 @@ impl ReshapeLayer {
     #[new]
     fn new(
         name: String,
-        func: PyObject,
-        kwargs: PyObject,
+        func: Py<PyAny>,
+        kwargs: Py<PyAny>,
         dep_name: String,
         in_numblocks: Vec<usize>,
         out_numblocks: Vec<usize>,

@@ -21,11 +21,11 @@ use crate::common::{to_dask_graph, to_task_records, ArgSlot, Compute, Expanded, 
 pub struct Diag1DLayer {
     name: String,
     /// `[np.diag, np.zeros_like]`.
-    funcs: Vec<PyObject>,
+    funcs: Vec<Py<PyAny>>,
     /// Shared kwargs (empty — the per-block `shape` rides in `CallKw`).
-    kwargs: PyObject,
+    kwargs: Py<PyAny>,
     /// Shared literals `[meta]` (the 2-D prototype for `np.zeros_like`).
-    literals: Vec<PyObject>,
+    literals: Vec<Py<PyAny>>,
     /// The single input array name (`ArgSlot::Dep` uses `name_idx == 0`).
     dep_names: Vec<String>,
     /// 1-D input chunk sizes; the block grid is `chunks_1d.len()` square.
@@ -37,10 +37,10 @@ impl Diag1DLayer {
     #[new]
     fn new(
         name: String,
-        diag_fn: PyObject,
-        zeros_like_fn: PyObject,
-        kwargs: PyObject,
-        meta: PyObject,
+        diag_fn: Py<PyAny>,
+        zeros_like_fn: Py<PyAny>,
+        kwargs: Py<PyAny>,
+        meta: Py<PyAny>,
         dep_name: String,
         chunks_1d: Vec<i64>,
     ) -> Self {
@@ -117,8 +117,8 @@ impl Diag1DLayer {
 #[pyclass]
 pub struct Diag2DSimpleLayer {
     name: String,
-    func: PyObject,
-    kwargs: PyObject,
+    func: Py<PyAny>,
+    kwargs: Py<PyAny>,
     dep_names: Vec<String>,
     /// Number of diagonal blocks (the 2-D input is square in blocks).
     nblocks: usize,
@@ -129,8 +129,8 @@ impl Diag2DSimpleLayer {
     #[new]
     fn new(
         name: String,
-        diag_fn: PyObject,
-        kwargs: PyObject,
+        diag_fn: Py<PyAny>,
+        kwargs: Py<PyAny>,
         dep_name: String,
         nblocks: usize,
     ) -> Self {

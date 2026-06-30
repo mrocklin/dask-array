@@ -35,9 +35,9 @@ struct Dim {
 pub struct FromArrayGetterLayer {
     name: String,
     /// The source array, placed once as the data node.
-    array: PyObject,
+    array: Py<PyAny>,
     /// `getter` / `getter_nofancy` — the per-block slicing function.
-    getitem: PyObject,
+    getitem: Py<PyAny>,
     dims: Vec<Dim>,
     /// Embed the array in each task (`inline_array=True`) instead of a data node.
     inline_array: bool,
@@ -97,8 +97,8 @@ impl FromArrayGetterLayer {
     #[pyo3(signature = (name, array, getitem, dims, inline_array, extra_args=None))]
     fn new(
         name: String,
-        array: PyObject,
-        getitem: PyObject,
+        array: Py<PyAny>,
+        getitem: Py<PyAny>,
         dims: Vec<(Vec<i64>, i64)>,
         inline_array: bool,
         extra_args: Option<(bool, bool)>,

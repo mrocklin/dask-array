@@ -21,10 +21,10 @@ pub struct CoarsenLayer {
     /// Output layer name.
     name: String,
     /// The shared `functools.partial(chunk.coarsen, reduction, axes=..., ...)`.
-    func: PyObject,
+    func: Py<PyAny>,
     /// Shared kwargs applied to every call — usually empty (everything is baked
     /// into the partial).
-    kwargs: PyObject,
+    kwargs: Py<PyAny>,
     /// Name of the single input dependency.
     dep_name: String,
     /// Number of blocks per dimension. Coarsen preserves the block grid (one
@@ -40,8 +40,8 @@ impl CoarsenLayer {
     #[new]
     fn new(
         name: String,
-        func: PyObject,
-        kwargs: PyObject,
+        func: Py<PyAny>,
+        kwargs: Py<PyAny>,
         dep_name: String,
         numblocks: Vec<usize>,
     ) -> Self {

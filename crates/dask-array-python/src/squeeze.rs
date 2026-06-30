@@ -15,9 +15,9 @@ pub struct SqueezeLayer {
     /// Output layer name.
     name: String,
     /// `np.squeeze` (or equivalent partial).
-    func: PyObject,
+    func: Py<PyAny>,
     /// `{"axis": chunk_axis}` — shared across all tasks.
-    kwargs: PyObject,
+    kwargs: Py<PyAny>,
     /// Name of the single input dependency.
     dep_name: String,
     /// Number of output blocks per dimension (len = output ndim).
@@ -36,8 +36,8 @@ impl SqueezeLayer {
     #[new]
     fn new(
         name: String,
-        func: PyObject,
-        kwargs: PyObject,
+        func: Py<PyAny>,
+        kwargs: Py<PyAny>,
         dep_name: String,
         numblocks: Vec<usize>,
         input_ndim: usize,

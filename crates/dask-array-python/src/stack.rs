@@ -20,9 +20,9 @@ pub struct StackLayer {
     /// Output layer name.
     name: String,
     /// `getitem` function (shared for every task).
-    func: PyObject,
+    func: Py<PyAny>,
     /// Empty kwargs dict (stack tasks take no kwargs).
-    kwargs: PyObject,
+    kwargs: Py<PyAny>,
     /// Names of the input arrays, one per stacked array; `dep_names[i]` is the
     /// array selected when the new-axis coordinate equals `i`.
     dep_names: Vec<String>,
@@ -32,7 +32,7 @@ pub struct StackLayer {
     axis: usize,
     /// The shared indexer tuple: `(slice(None),)*axis + (None,) + (slice(None),)*(ndim-axis)`.
     /// Stored as a Python object and passed as `ArgSlot::Literal(0)` to every task.
-    indexer: PyObject,
+    indexer: Py<PyAny>,
 }
 
 #[pymethods]
@@ -40,12 +40,12 @@ impl StackLayer {
     #[new]
     fn new(
         name: String,
-        func: PyObject,
-        kwargs: PyObject,
+        func: Py<PyAny>,
+        kwargs: Py<PyAny>,
         dep_names: Vec<String>,
         out_numblocks: Vec<usize>,
         axis: usize,
-        indexer: PyObject,
+        indexer: Py<PyAny>,
     ) -> Self {
         Self {
             name,

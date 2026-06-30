@@ -2,6 +2,7 @@
 name = "dask-array-rust"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.83"
 
 [lib]
 # Imported from Python as `dask_array._rust`; maturin places the built
@@ -13,4 +14,4 @@ crate-type = ["cdylib"]
 # Deliberately self-contained: only pyo3. This crate emits ordinary Frisky
 # task tuples, so it has no dependency on any frisky crate and Frisky stays
 # agnostic to array semantics.
-pyo3 = { version = "0.23", features = ["extension-module", "abi3-py310"] }
+pyo3 = { version = "0.29", features = ["extension-module", "abi3-py310"] }

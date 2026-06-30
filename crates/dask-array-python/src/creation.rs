@@ -13,8 +13,8 @@ use crate::common::{to_dask_graph, to_task_records, ArgSlot, Compute, Expanded, 
 #[pyclass]
 pub struct CreationLayer {
     name: String,
-    func: PyObject,
-    kwargs: PyObject,
+    func: Py<PyAny>,
+    kwargs: Py<PyAny>,
     /// Chunk sizes per dimension; `chunks[d].len()` is the block count on `d`.
     chunks: Vec<Vec<i64>>,
 }
@@ -22,7 +22,7 @@ pub struct CreationLayer {
 #[pymethods]
 impl CreationLayer {
     #[new]
-    fn new(name: String, func: PyObject, kwargs: PyObject, chunks: Vec<Vec<i64>>) -> Self {
+    fn new(name: String, func: Py<PyAny>, kwargs: Py<PyAny>, chunks: Vec<Vec<i64>>) -> Self {
         Self {
             name,
             func,

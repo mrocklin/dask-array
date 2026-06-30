@@ -15,8 +15,8 @@ use crate::common::{to_dask_graph, to_task_records, ArgSlot, Compute, Expanded, 
 #[pyclass]
 pub struct PartialReduceLayer {
     name: String,
-    func: PyObject,
-    kwargs: PyObject,
+    func: Py<PyAny>,
+    kwargs: Py<PyAny>,
     dep_name: String,
     numblocks: Vec<usize>,
     /// Per dimension: the `split_every` step for a reduced axis, or `0` for a
@@ -30,8 +30,8 @@ impl PartialReduceLayer {
     #[new]
     fn new(
         name: String,
-        func: PyObject,
-        kwargs: PyObject,
+        func: Py<PyAny>,
+        kwargs: Py<PyAny>,
         dep_name: String,
         numblocks: Vec<usize>,
         steps: Vec<usize>,

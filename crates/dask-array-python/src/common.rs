@@ -104,10 +104,10 @@ pub struct Expanded<'a> {
     /// Names of the keys this layer produces; [`NeutralTask::name_idx`] indexes.
     pub names: Vec<&'a str>,
     /// Distinct task functions; [`Compute::Call`]'s `func_idx` indexes.
-    pub funcs: Vec<&'a PyObject>,
+    pub funcs: Vec<&'a Py<PyAny>>,
     /// Shared keyword arguments applied to every `Call` (usually empty).
-    pub kwargs: &'a PyObject,
-    pub literals: &'a [PyObject],
+    pub kwargs: &'a Py<PyAny>,
+    pub literals: &'a [Py<PyAny>],
     /// Names of dependencies referenced by [`ArgSlot::Dep`] (external arrays and
     /// this layer's own intermediates); the slot's `name_idx` indexes.
     pub dep_names: &'a [String],
@@ -229,7 +229,7 @@ pub fn to_dask_graph<'py>(py: Python<'py>, exp: &Expanded) -> PyResult<Bound<'py
     let list_cls = ts.getattr("List")?;
     let alias_cls = ts.getattr("Alias")?;
     let slice_cls = py.import("builtins")?.getattr("slice")?;
-    let kwargs = exp.kwargs.bind(py).downcast::<PyDict>()?.clone();
+    let kwargs = exp.kwargs.bind(py).cast::<PyDict>()?.clone();
 
     let dsk = PyDict::new(py);
     for task in &exp.tasks {
@@ -374,7 +374,7 @@ pub fn to_task_records<'py>(py: Python<'py>, exp: &Expanded) -> PyResult<Bound<'
                 // Per-task kwargs (CallKw) merge over the shared dict — a kwarg
                 // value that is a Dep registers in `deps` like any other arg.
                 let kw = if let Compute::CallKw { kwargs: per, .. } = &task.compute {
-                    let d = kwargs.downcast::<PyDict>()?.copy()?;
+                    let d = kwargs.cast::<PyDict>()?.copy()?;
                     for (name, slot) in per {
                         d.set_item(
                             name,
@@ -531,7 +531,7 @@ fn w_slot(buf: &mut Vec<u8>, slot: &ArgSlot) -> PyResult<()> {
 /// `functools.partial` when non-empty, matching `to_task_records`'s effective
 /// func); the per-task records are raw bytes.
 pub fn to_records_chunk<'py>(py: Python<'py>, exp: &Expanded) -> PyResult<Bound<'py, PyBytes>> {
-    let kwargs = exp.kwargs.bind(py).downcast::<PyDict>()?;
+    let kwargs = exp.kwargs.bind(py).cast::<PyDict>()?;
     let kwargs_empty = kwargs.is_empty();
     let cloudpickle_dumps = py.import("cloudpickle")?.getattr("dumps")?;
     let partial = py.import("functools")?.getattr("partial")?;

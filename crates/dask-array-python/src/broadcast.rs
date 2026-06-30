@@ -23,8 +23,8 @@ use crate::common::{to_dask_graph, to_task_records, ArgSlot, Compute, Expanded, 
 #[pyclass]
 pub struct BroadcastLayer {
     name: String,
-    func: PyObject,
-    kwargs: PyObject,
+    func: Py<PyAny>,
+    kwargs: Py<PyAny>,
     /// Name of the input array.
     dep_name: String,
     /// Per-output-block chunk sizes: `out_chunks[d][i]` = size of the i-th
@@ -43,8 +43,8 @@ impl BroadcastLayer {
     #[new]
     fn new(
         name: String,
-        func: PyObject,
-        kwargs: PyObject,
+        func: Py<PyAny>,
+        kwargs: Py<PyAny>,
         dep_name: String,
         out_chunks: Vec<Vec<i64>>,
         ndim_new: usize,

@@ -27,11 +27,11 @@ pub struct ArgChunkLayer {
     /// Output layer name.
     name: String,
     /// The shared `chunk_func` (the partialed arg-chunk function).
-    func: PyObject,
+    func: Py<PyAny>,
     /// Shared kwargs applied to every call — empty.
-    kwargs: PyObject,
+    kwargs: Py<PyAny>,
     /// Shared literals `[axis]`, referenced by `ArgSlot::Literal(0)`.
-    literals: Vec<PyObject>,
+    literals: Vec<Py<PyAny>>,
     /// Name of the single input dependency.
     dep_names: Vec<String>,
     /// Number of blocks per dimension (input grid; arg-chunk preserves the grid,
@@ -59,9 +59,9 @@ impl ArgChunkLayer {
     #[allow(clippy::too_many_arguments)]
     fn new(
         name: String,
-        func: PyObject,
-        kwargs: PyObject,
-        axis: PyObject,
+        func: Py<PyAny>,
+        kwargs: Py<PyAny>,
+        axis: Py<PyAny>,
         dep_name: String,
         numblocks: Vec<usize>,
         ravel: bool,

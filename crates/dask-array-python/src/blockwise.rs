@@ -30,7 +30,7 @@ enum ArgTemplate {
     BlockwiseDep { slots: Vec<ArgSlot> },
 }
 
-fn slot_from_py(value: &Bound<'_, PyAny>, literals: &mut Vec<PyObject>) -> PyResult<ArgSlot> {
+fn slot_from_py(value: &Bound<'_, PyAny>, literals: &mut Vec<Py<PyAny>>) -> PyResult<ArgSlot> {
     if value.is_instance_of::<PyBool>() {
         literals.push(value.clone().unbind());
         return Ok(ArgSlot::Literal(literals.len() - 1));
@@ -49,7 +49,7 @@ fn slot_from_py(value: &Bound<'_, PyAny>, literals: &mut Vec<PyObject>) -> PyRes
         literals.push(value.clone().unbind());
         return Ok(ArgSlot::Literal(literals.len() - 1));
     }
-    if let Ok(tuple) = value.downcast::<PyTuple>() {
+    if let Ok(tuple) = value.cast::<PyTuple>() {
         let mut ints = Vec::with_capacity(tuple.len());
         let mut all_ints = true;
         for item in tuple.iter() {
@@ -68,7 +68,7 @@ fn slot_from_py(value: &Bound<'_, PyAny>, literals: &mut Vec<PyObject>) -> PyRes
         literals.push(value.clone().unbind());
         return Ok(ArgSlot::Literal(literals.len() - 1));
     }
-    if let Ok(list) = value.downcast::<PyList>() {
+    if let Ok(list) = value.cast::<PyList>() {
         let mut items = Vec::with_capacity(list.len());
         for item in list.iter() {
             items.push(slot_from_py(&item, literals)?);
@@ -83,9 +83,9 @@ fn slot_from_py(value: &Bound<'_, PyAny>, literals: &mut Vec<PyObject>) -> PyRes
 #[pyclass]
 pub struct BlockwiseLayer {
     name: String,
-    func: PyObject,
-    kwargs: PyObject,
-    literals: Vec<PyObject>,
+    func: Py<PyAny>,
+    kwargs: Py<PyAny>,
+    literals: Vec<Py<PyAny>>,
     dep_names: Vec<String>,
     numblocks: Vec<usize>,
     template: Vec<ArgTemplate>,
@@ -100,8 +100,8 @@ impl BlockwiseLayer {
     #[new]
     fn new(
         name: String,
-        func: PyObject,
-        kwargs: PyObject,
+        func: Py<PyAny>,
+        kwargs: Py<PyAny>,
         numblocks: Vec<usize>,
         out_ind: Vec<i64>,
         args: Bound<'_, PyList>,
@@ -111,7 +111,7 @@ impl BlockwiseLayer {
             pos.insert(label, i);
         }
 
-        let mut literals: Vec<PyObject> = Vec::new();
+        let mut literals: Vec<Py<PyAny>> = Vec::new();
         let mut dep_names: Vec<String> = Vec::new();
         let mut template: Vec<ArgTemplate> = Vec::with_capacity(args.len());
 
@@ -168,7 +168,7 @@ impl BlockwiseLayer {
                     template.push(ArgTemplate::Arr { dep_idx, axes });
                 }
                 "blockwise_dep" => {
-                    let values = item.get_item(1)?.downcast_into::<PyList>()?;
+                    let values = item.get_item(1)?.cast_into::<PyList>()?;
                     let expected: usize = if numblocks.is_empty() {
                         1
                     } else {

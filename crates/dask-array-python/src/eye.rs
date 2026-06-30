@@ -22,11 +22,11 @@ use crate::common::{to_dask_graph, to_task_records, ArgSlot, Compute, Expanded, 
 pub struct EyeLayer {
     name: String,
     /// `[np.eye, np.zeros]`; `Compute::Call{func_idx}` picks per block.
-    funcs: Vec<PyObject>,
+    funcs: Vec<Py<PyAny>>,
     /// Shared kwargs (empty — everything is positional).
-    kwargs: PyObject,
+    kwargs: Py<PyAny>,
     /// Shared literals `[dtype]`, referenced by `ArgSlot::Literal(0)`.
-    literals: Vec<PyObject>,
+    literals: Vec<Py<PyAny>>,
     /// Vertical (row) chunk sizes; `vchunks.len()` is the block count on dim 0.
     vchunks: Vec<i64>,
     /// Horizontal (column) chunk sizes; `hchunks.len()` is the block count on dim 1.
@@ -45,10 +45,10 @@ impl EyeLayer {
     #[new]
     fn new(
         name: String,
-        eye_fn: PyObject,
-        zeros_fn: PyObject,
-        kwargs: PyObject,
-        dtype: PyObject,
+        eye_fn: Py<PyAny>,
+        zeros_fn: Py<PyAny>,
+        kwargs: Py<PyAny>,
+        dtype: Py<PyAny>,
         vchunks: Vec<i64>,
         hchunks: Vec<i64>,
         chunk_size: i64,

@@ -17,10 +17,10 @@ use crate::common::{to_dask_graph, to_task_records, ArgSlot, Compute, Expanded, 
 pub struct ExpandDimsLayer {
     name: String,
     input_name: String,
-    func: PyObject,
-    kwargs: PyObject,
+    func: Py<PyAny>,
+    kwargs: Py<PyAny>,
     /// The shared indexer tuple (one per layer, same for every block).
-    indexer: PyObject,
+    indexer: Py<PyAny>,
     /// Block counts of the INPUT array (output has 1 block on each new axis).
     input_numblocks: Vec<usize>,
     /// Sorted expansion axes (positions in the OUTPUT coordinate).
@@ -33,9 +33,9 @@ impl ExpandDimsLayer {
     fn new(
         name: String,
         input_name: String,
-        func: PyObject,
-        kwargs: PyObject,
-        indexer: PyObject,
+        func: Py<PyAny>,
+        kwargs: Py<PyAny>,
+        indexer: Py<PyAny>,
         input_numblocks: Vec<usize>,
         axes: Vec<usize>,
     ) -> Self {

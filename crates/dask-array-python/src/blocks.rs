@@ -33,7 +33,7 @@ pub struct BlocksLayer {
     /// along `d`.
     index_maps: Vec<Vec<u32>>,
     /// Empty dict, stored so `Expanded.kwargs` has a valid reference.
-    empty_kwargs: PyObject,
+    empty_kwargs: Py<PyAny>,
 }
 
 #[pymethods]

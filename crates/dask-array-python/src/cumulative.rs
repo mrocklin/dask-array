@@ -45,11 +45,11 @@ pub struct CumReductionLayer {
     /// four; `Dep`s reference chunk/extra/tail/x.
     names: Vec<String>,
     /// `[chunk_func, np.full_like, operator.getitem, binop]`.
-    funcs: Vec<PyObject>,
+    funcs: Vec<Py<PyAny>>,
     /// Shared kwargs (empty — the per-block `shape` rides in `CallKw`).
-    kwargs: PyObject,
+    kwargs: Py<PyAny>,
     /// `[meta, ident, dtype]` for the `full_like` identity blocks.
-    literals: Vec<PyObject>,
+    literals: Vec<Py<PyAny>>,
     axis: usize,
     numblocks: Vec<usize>,
     /// Per-dimension chunk sizes (for the identity block shapes).
@@ -62,14 +62,14 @@ impl CumReductionLayer {
     #[allow(clippy::too_many_arguments)]
     fn new(
         name: String,
-        chunk_func: PyObject,
-        full_like: PyObject,
-        getitem: PyObject,
-        binop: PyObject,
-        kwargs: PyObject,
-        meta: PyObject,
-        ident: PyObject,
-        dtype: PyObject,
+        chunk_func: Py<PyAny>,
+        full_like: Py<PyAny>,
+        getitem: Py<PyAny>,
+        binop: Py<PyAny>,
+        kwargs: Py<PyAny>,
+        meta: Py<PyAny>,
+        ident: Py<PyAny>,
+        dtype: Py<PyAny>,
         x_name: String,
         axis: usize,
         numblocks: Vec<usize>,

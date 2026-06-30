@@ -29,9 +29,9 @@ struct Depth {
 pub struct OverlapLayer {
     names: Vec<String>,
     dep_names: Vec<String>,
-    getitem: PyObject,
-    concatenate_shaped: PyObject,
-    kwargs: PyObject,
+    getitem: Py<PyAny>,
+    concatenate_shaped: Py<PyAny>,
+    kwargs: Py<PyAny>,
     numblocks: Vec<u32>,
     depths: Vec<Depth>,
 }
@@ -43,9 +43,9 @@ impl OverlapLayer {
     fn new(
         name: String,
         dep_name: String,
-        getitem: PyObject,
-        concatenate_shaped: PyObject,
-        kwargs: PyObject,
+        getitem: Py<PyAny>,
+        concatenate_shaped: Py<PyAny>,
+        kwargs: Py<PyAny>,
         numblocks: Vec<u32>,
         axis_depths: Vec<(usize, i64, i64)>,
     ) -> PyResult<Self> {

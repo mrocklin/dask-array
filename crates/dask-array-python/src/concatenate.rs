@@ -36,7 +36,7 @@ pub struct ConcatenateLayer {
     /// Number of output blocks per output dimension (len = ndim).
     out_numblocks: Vec<usize>,
     /// Empty dict, stored so `Expanded.kwargs` has a valid reference.
-    empty_kwargs: PyObject,
+    empty_kwargs: Py<PyAny>,
 }
 
 #[pymethods]

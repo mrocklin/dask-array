@@ -24,8 +24,8 @@ by `maturin develop` (below) and is ignored by `pip`/`uv`.
 
 ### Building the Rust accelerator (optional)
 
-If you have a Rust toolchain and want the native layers, build the extension into
-the source tree with maturin:
+If you have Rust >= 1.83 and want the native layers, build the extension into the
+source tree with maturin:
 
 ```bash
 MATURIN_IMPORT_HOOK_ENABLED=0 maturin develop --release

@@ -31,8 +31,8 @@ struct Dim {
 #[pyclass]
 pub struct SliceLayer {
     name: String,
-    getitem: PyObject,
-    kwargs: PyObject,
+    getitem: Py<PyAny>,
+    kwargs: Py<PyAny>,
     dep_name: String,
     allow_opt: bool,
     dims: Vec<Dim>,
@@ -45,8 +45,8 @@ impl SliceLayer {
     #[new]
     fn new(
         name: String,
-        getitem: PyObject,
-        kwargs: PyObject,
+        getitem: Py<PyAny>,
+        kwargs: Py<PyAny>,
         dep_name: String,
         allow_opt: bool,
         dims: Vec<(
