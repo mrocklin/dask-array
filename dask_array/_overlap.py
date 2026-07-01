@@ -300,6 +300,14 @@ class MapOverlap(ArrayExpr):
         result = map_blocks(self.func, *[new_collection(a) for a in overlapped], **self._kwargs)
 
         if self.trim_output:
+            # trim_internal records one output chunk per current result block in
+            # adjust_chunks. Pin the grid first if nested simplification would
+            # split/merge blocks underneath it.
+            result_expr = result.expr
+            simplified_result_expr = result_expr.simplify()
+            if simplified_result_expr.chunks != result_expr.chunks:
+                result = new_collection(simplified_result_expr).rechunk(result_expr.chunks)
+
             # Find highest-rank array for trim settings
             i = sorted(enumerate(overlapped), key=lambda v: (v[1].ndim, -v[0]))[-1][0]
             trim_depth = dict(self.depth[i])

@@ -121,6 +121,12 @@ def add_neighbors_2d(x):
     return result
 
 
+def lag1(x):
+    result = np.full_like(x, np.nan)
+    result[1:] = x[:-1]
+    return result
+
+
 def test_slice_through_2d_overlap():
     """Slice through 2D overlap - pushes when beneficial."""
     arr = np.arange(10000).reshape((100, 100)).astype(float)
@@ -364,3 +370,18 @@ def test_slice_on_overlap_axis_value_correctness():
     # Compare against unoptimized computation
     full_result = result.compute()
     assert_eq(sliced, full_result[:50, :50])
+
+
+def test_nested_overlap_tail_slice_after_rechunk():
+    arr = np.arange(30, dtype="float64").reshape(15, 2)
+    x = da.from_array(arr, chunks=(3, 2))
+
+    inner = da.map_overlap(lambda block: block, x, depth={0: 4, 1: 0}, boundary="none", trim=True)
+    assert inner.chunks[0] == (6, 9)
+
+    outer = da.map_overlap(lag1, inner, depth={0: 1, 1: 0}, boundary=np.nan, trim=True)
+    result = outer[8:10]
+
+    expected = np.full_like(arr, np.nan)
+    expected[1:] = arr[:-1]
+    assert_eq(result, expected[8:10])
