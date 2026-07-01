@@ -385,3 +385,58 @@ def test_nested_overlap_tail_slice_after_rechunk():
     expected = np.full_like(arr, np.nan)
     expected[1:] = arr[:-1]
     assert_eq(result, expected[8:10])
+
+
+def test_nested_overlap_lowers_in_linear_work():
+    """A depth-D chain of map_overlap must lower with O(D) work, not O(2**D).
+
+    Regression guard: map_blocks once read its input collection's ``.name``
+    while building the trim layer, which forced a full nested re-lowering of the
+    intermediate.  Inside overlap's own ``_lower`` that recursed once per nesting
+    level, so each added overlap doubled the lowering work (a 16-deep chain took
+    ~40s).  ``MapOverlap._lower`` should fire exactly once per overlap.
+    """
+    from dask_array._overlap import MapOverlap
+
+    # Deep enough that a 2**D regression is unmistakable (2**13 = 8192 >> 13) but
+    # shallow enough that a regressed run fails in seconds rather than hanging.
+    depth = 12
+    x = da.ones((70, 5), chunks=(10, 5))
+    for _ in range(depth):
+        x = x.map_overlap(lambda b: b, depth={0: 1}, boundary="none")
+
+    calls = []
+    original = MapOverlap._lower
+    try:
+        MapOverlap._lower = lambda self: (calls.append(1), original(self))[1]
+        graph = x.__dask_graph__()
+    finally:
+        MapOverlap._lower = original
+
+    # One lowering per overlap (allow one extra for a benign future pass); the
+    # exponential blowup would be 2**(D+1) - 1.
+    assert len(calls) <= depth + 1
+    assert len(graph) > 0
+
+
+def test_slice_pushdown_into_nested_overlap_is_correct():
+    """Slicing through a nested overlap+rechunk chain must give correct values.
+
+    Regression guard for a silently-wrong result: overlap's ``_lower`` used to
+    ``simplify()`` its trim input and rechunk it back to the *un-sliced* grid.
+    When a slice pushed into the outer map_overlap (changing the block grid),
+    that pin forced the correctly-sliced grid back to the stale one, truncating
+    the output (here to shape (3, 2) instead of (5, 2)).
+    """
+    n = 16
+    arr = np.arange(n * 2, dtype="float64").reshape(n, 2)
+    x = da.from_array(arr, chunks=(3, 2))
+    x = da.map_overlap(lambda b: b * 2.0, x, depth={0: 2, 1: 0}, boundary="none", trim=True)
+    x = da.map_overlap(lambda b: b, x, depth={0: 3, 1: 0}, boundary="periodic", trim=True)
+    x = x.rechunk((7, 2))
+    x = da.map_overlap(lambda b: b * 2.0, x, depth={0: 1, 1: 0}, boundary="periodic", trim=True)
+    x = da.map_overlap(lambda b: b * 2.0, x, depth={0: 3, 1: 0}, boundary="periodic", trim=True)
+
+    # Full (no slice pushdown) result is the oracle for the sliced one.
+    full = x.compute()
+    assert_eq(x[6:11], full[6:11])

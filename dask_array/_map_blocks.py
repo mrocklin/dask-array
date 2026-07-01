@@ -465,7 +465,11 @@ def map_blocks(
 
     if extra_argpairs:
         # Rewrite the Blockwise layer to inject block_info/block_id.
-        # Use token=out.name to preserve name prefix from first blockwise.
+        # Use the first blockwise's *logical* (un-lowered) expr name as the name
+        # prefix.  Reading ``out.name`` here would force ``out._lowered_expr`` — a
+        # full lowering of this intermediate — mid-construction; when map_blocks
+        # runs inside another op's ``_lower`` (e.g. overlap trim) that nested
+        # lowering recurses, turning a depth-D overlap chain into O(2**D) work.
         out = blockwise(
             _pass_extra_kwargs,
             out_ind,
@@ -475,7 +479,7 @@ def map_blocks(
             None,
             *concat(extra_argpairs),
             *concat(argpairs),
-            token=out.name,
+            token=out.expr._name,
             dtype=out.dtype,
             concatenate=needs_concatenate,
             align_arrays=False,
