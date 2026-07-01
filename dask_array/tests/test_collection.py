@@ -1000,3 +1000,40 @@ def test_fusion_blockwise_multiblock_contracted_prevents_fusion():
     # Should NOT fuse since Blockwise isn't fusable
     optimized = close.expr.optimize(fuse=True)
     assert not isinstance(optimized, FusedBlockwise)
+
+
+def test_new_collection_after_legacy_array_backend_steals_dispatch():
+    """dask-core new_collection must handle dask_array exprs even after
+    dask.array's array-expr backend imports late and steals the shared
+    np.ndarray dispatch slot.
+
+    Regression test: dask_array and dask.array both register a get_collection_type
+    handler under the np.ndarray key (last-writer-wins). When dask.array's
+    array-expr backend imports after dask_array -- as happens during an
+    xarray/frisky __dask_exprs__ composite descent -- its handler wins and
+    assumes a dask.array expr, reading .divisions which a dask_array expr lacks.
+    """
+    from dask._collections import new_collection
+    from dask._dispatch import get_collection_type
+
+    # Capture the pre-test handler *before* the stealing import below, so the
+    # finally restores the true prior state rather than relying on the fix's own
+    # re-assertion to clean up the process-global dispatch after itself.
+    original = get_collection_type.dispatch(np.ndarray)
+    try:
+        # Simulate the import-order race: dask.array's array-expr backend
+        # registers its np.ndarray handler last (importing it runs that
+        # registration, exactly as a late composite-descent import does).
+        import dask.array._array_expr._backends as legacy_backend
+
+        get_collection_type.register(np.ndarray)(legacy_backend.get_collection_type_array)
+
+        expr = (da.ones((10, 10), chunks=(5, 5)) + 1).expr
+        assert type(expr._meta) is np.ndarray
+
+        rebuilt = new_collection(expr)
+
+        assert isinstance(rebuilt, Array)
+        assert_eq(rebuilt, np.ones((10, 10)) + 1)
+    finally:
+        get_collection_type.register(np.ndarray)(original)

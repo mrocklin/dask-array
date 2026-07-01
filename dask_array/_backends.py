@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import functools
+
 import numpy as np
 
 from dask._dispatch import get_collection_type
@@ -101,4 +103,56 @@ def register_collection_types() -> None:
     _register_collection_type(object, get_collection_type_object)
 
 
+def ensure_collection_types_registered() -> None:
+    """Re-assert our ``get_collection_type`` registration if it has been stolen.
+
+    ``dask._collections.new_collection`` dispatches on ``type(expr._meta)`` -- a
+    ``numpy.ndarray`` -- via the single shared ``get_collection_type`` Dispatch.
+    Both dask.array's array-expr backend and dask_array register a handler under
+    the ``np.ndarray`` (and ``object``) key, and ``Dispatch.register`` is
+    last-writer-wins. Whenever dask.array's ``_array_expr._backends`` imports
+    *after* us (e.g. during an xarray/frisky ``__dask_exprs__`` composite
+    descent), it steals those slots; its ``create_array_collection`` then assumes
+    a dask.array expr and reads ``.divisions``, which a dask_array expr lacks.
+
+    dask_array can't win a one-shot registration race, so re-assert our
+    registration lazily right before ``new_collection`` dispatches. Our
+    ``create_array_collection`` still guards with ``isinstance(expr, ArrayExpr)``
+    and falls back to the prior handler for non-dask_array exprs, so reclaiming
+    the slot is safe.
+    """
+    # np.ndarray stands in for every key we own: register_collection_types
+    # registers them (np.ndarray, object, sparse/scipy) together, so they are
+    # stolen and reclaimed as a set.
+    if get_collection_type.dispatch(np.ndarray) is not get_collection_type_array:
+        register_collection_types()
+
+
+def _patch_new_collection() -> None:
+    """Wrap ``dask._collections.new_collection`` to re-assert our registration.
+
+    This is the exact dispatch site frisky/xarray use during composite descent:
+    a pre-built dask_array expr is handed to dask-core's ``new_collection`` with
+    no intervening dask_array call, so re-asserting anywhere else is too early.
+    Wrapping ``new_collection`` re-claims the shared ``np.ndarray``/``object``
+    dispatch slot immediately before the dispatch, whichever backend imported
+    last. Idempotent -- a re-import of this module leaves the single wrapper in
+    place.
+    """
+    import dask._collections as _collections
+
+    original = _collections.new_collection
+    if getattr(original, "_dask_array_reassert", False):
+        return
+
+    @functools.wraps(original)
+    def new_collection(expr):
+        ensure_collection_types_registered()
+        return original(expr)
+
+    new_collection._dask_array_reassert = True
+    _collections.new_collection = new_collection
+
+
 register_collection_types()
+_patch_new_collection()
