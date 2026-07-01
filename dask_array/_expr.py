@@ -6,6 +6,7 @@ import re
 import warnings
 from functools import cached_property, reduce
 from operator import mul
+from typing import NamedTuple
 
 import numpy as np
 import toolz
@@ -23,6 +24,13 @@ from dask.layers import ArrayBlockwiseDep
 from dask.utils import cached_cumsum, funcname
 
 _OBJECT_AT_PATTERN = re.compile(r"<.+? at 0x[0-9a-fA-F]+>")
+
+
+class TransferBytes(NamedTuple):
+    """(min, max) bytes moved between workers; see ArrayExpr.transfer_bytes."""
+
+    min: float
+    max: float
 
 
 def _collect_cached_property_names(cls):
@@ -215,6 +223,58 @@ class ArrayExpr(SingletonExpr):
     def size(self) -> T_IntOrNaN:
         """Number of elements in array"""
         return reduce(mul, self.shape, 1)
+
+    @property
+    def nbytes(self) -> T_IntOrNaN:
+        """Number of bytes in array"""
+        return self.size * self.dtype.itemsize
+
+    @cached_property
+    def transfer_bytes(self):
+        """Estimated (min, max) bytes moved between workers by this node.
+
+        Counts only this node's incoming edges: the bytes of dependency
+        blocks that cross a worker boundary to compute this node's output
+        blocks.  Sum over the graph for a whole-graph estimate — on the
+        *optimized* expression, since un-lowered nodes (MapOverlap, Sum,
+        unaligned Elemwise) don't yet contain the rechunks and partials
+        their lowering introduces.
+
+        min assumes ideal placement: corresponding blocks of inputs and
+        output are co-located, each task runs where its largest input
+        piece lives, and slicing happens at the source.  Aligned elemwise
+        ops cost 0, overlaps cost their ghost cells, rechunks cost the
+        data that changes blocks.
+
+        max assumes no co-location: every task fetches every input block
+        it touches, whole, from a remote worker.  Real schedulers land
+        between the two.
+
+        This default assumes a block-aligned mapping: 1:1 is free under
+        min, a small input broadcast to f output blocks moves f-1 copies,
+        and a k-into-1 gather moves the (k-1)/k that must join the
+        co-located block.  Classes that mix data across blocks (Rechunk,
+        Shuffle, OverlapInternal, PartialReduce, ...) override; pure alias
+        nodes (Concatenate) cost (0, 0).
+        """
+        out_blocks = reduce(mul, self.numblocks, 1)
+        lo = 0.0
+        hi = 0.0
+        seen = set()
+        for dep in self.dependencies():
+            # a duplicated operand (x + x) is one dependency in the layer
+            if not isinstance(dep, ArrayExpr) or dep._name in seen:
+                continue
+            seen.add(dep._name)
+            ratio = out_blocks / max(1, reduce(mul, dep.numblocks, 1))
+            nbytes = dep.nbytes
+            if ratio >= 1:
+                lo += nbytes * (ratio - 1.0)
+                hi += nbytes * ratio
+            else:
+                lo += nbytes * (1.0 - ratio)
+                hi += nbytes
+        return TransferBytes(lo, hi)
 
     @property
     def name(self):
@@ -504,6 +564,11 @@ class ChunksOverride(ArrayExpr):
     @functools.cached_property
     def chunks(self):
         return self._chunks
+
+    @functools.cached_property
+    def transfer_bytes(self):
+        # Pure 1:1 alias layer -- no data moves.
+        return TransferBytes(0.0, 0.0)
 
     def _frisky_layer(self):
         from dask_array._frisky.blocks import BlocksLayer

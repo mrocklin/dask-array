@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import math
 from itertools import product
 from numbers import Integral
 
@@ -483,6 +484,34 @@ class SliceSlicesIntegers(Slice):
             if not isinstance(i, Integral)
         ]
         return tuple(map(tuple, new_blockdims))
+
+    @functools.cached_property
+    def transfer_bytes(self):
+        # See ArrayExpr.transfer_bytes.  Basic slices never recombine blocks:
+        # each output block is cut from exactly one input block (see _layer),
+        # so nothing must move under min.  Under max each getitem task fetches
+        # its whole input block; full-block aliases fetch nothing.
+        from dask_array._expr import TransferBytes
+
+        x = self.array
+        if any(math.isnan(c) for dim in x.chunks for c in dim):
+            return TransferBytes(math.nan, math.nan)
+        index = tuple(self.index) + (slice(None),) * (x.ndim - len(self.index))
+        reads = 1.0
+        aliased = 1.0
+        for shape, chunks, idx in zip(x.shape, x.chunks, index):
+            block_slices = _slice_1d(shape, chunks, idx)
+            reads_ax = 0.0
+            alias_ax = 0.0
+            for bnum, sl in block_slices.items():
+                reads_ax += chunks[bnum]
+                if sl == slice(None, None, None):
+                    alias_ax += chunks[bnum]
+            reads *= reads_ax
+            aliased *= alias_ax
+        if not self.allow_getitem_optimization:
+            aliased = 0.0
+        return TransferBytes(0.0, x.dtype.itemsize * (reads - aliased))
 
     def _frisky_layer(self):
         from dask_array._frisky.slicing import SliceLayer

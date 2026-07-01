@@ -947,6 +947,25 @@ class PartialReduce(ArrayExpr):
             chunks = list(getter(chunks))
         return tuple(chunks)
 
+    @cached_property
+    def transfer_bytes(self):
+        # See ArrayExpr.transfer_bytes.  Each output block combines a group of
+        # split_every input blocks; the largest of each group hosts the
+        # combine under min, everything is fetched remotely under max.
+        from dask_array._expr import TransferBytes
+
+        x = self.array
+        if any(math.isnan(c) for dim in x.chunks for c in dim):
+            return TransferBytes(math.nan, math.nan)
+        largest = 1.0
+        for i, chunks in enumerate(x.chunks):
+            if i in self.split_every:
+                largest *= sum(max(group) for group in partition_all(self.split_every[i], chunks))
+            else:
+                largest *= sum(chunks)
+        nbytes = x.nbytes
+        return TransferBytes(nbytes - x.dtype.itemsize * largest, nbytes)
+
     def _layer(self):
         x = self.array
         parts = [list(partition_all(self.split_every.get(i, 1), range(n))) for (i, n) in enumerate(x.numblocks)]

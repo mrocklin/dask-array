@@ -136,6 +136,44 @@ class Blockwise(ArrayExpr):
     def dtype(self):
         return super().dtype
 
+    @cached_property
+    def transfer_bytes(self):
+        # See ArrayExpr.transfer_bytes.  Aligned indices are free under min.
+        # Broadcasting (arg lacks an output index, or has one block where the
+        # output has many) replicates the arg to `fanout` output blocks;
+        # contraction (arg index absent from out_ind) gathers `gather` arg
+        # blocks per output block, of which one is co-located.  When fanout
+        # and contraction combine on one arg the min credits one co-located
+        # block per gathered read-set, a convention chosen for simplicity --
+        # rare in practice since tensordot/dot lower contractions through
+        # PartialReduce instead.
+        from dask_array._expr import ArrayExpr, TransferBytes
+
+        out_numblocks = dict(zip(self.out_ind, self.numblocks))
+        lo = 0.0
+        hi = 0.0
+        seen = set()
+        for arg, ind in toolz.partition(2, self.args):
+            if ind is None or not isinstance(arg, ArrayExpr):
+                continue
+            # a duplicated (arg, ind) pair (x + x) is one dependency per task
+            if (arg._name, ind) in seen:
+                continue
+            seen.add((arg._name, ind))
+            arg_numblocks = dict(zip(ind, arg.numblocks))
+            fanout = 1.0
+            for i, n in out_numblocks.items():
+                if n > 1 and arg_numblocks.get(i, 1) == 1:
+                    fanout *= n
+            gather = 1
+            for i, n in zip(ind, arg.numblocks):
+                if i not in out_numblocks:
+                    gather *= n
+            nbytes = arg.nbytes
+            lo += nbytes * (fanout - 1.0 / gather)
+            hi += nbytes * fanout
+        return TransferBytes(lo, hi)
+
     @property
     def _is_blockwise_fusable(self):
         # Blockwise with concatenate requires special handling not yet implemented

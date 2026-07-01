@@ -35,6 +35,17 @@ class Stack(ArrayExpr):
     def _name(self):
         return "stack-" + self.deterministic_token
 
+    @functools.cached_property
+    def transfer_bytes(self):
+        # See ArrayExpr.transfer_bytes.  Each output block is a getitem view
+        # of exactly one input block (the inputs partition the output along
+        # the new axis), so it is free under min and each block is fetched
+        # once under max.
+        from dask_array._expr import ArrayExpr, TransferBytes
+
+        hi = sum(a.nbytes for a in self.args if isinstance(a, ArrayExpr))
+        return TransferBytes(0.0, hi)
+
     def _layer(self) -> dict:
         keys = list(product([self._name], *[range(len(bd)) for bd in self.chunks]))
         names = [a.name for a in self.args]

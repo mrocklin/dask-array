@@ -39,6 +39,14 @@ class Concatenate(ArrayExpr):
     def _name(self):
         return "stack-" + self.deterministic_token
 
+    @functools.cached_property
+    def transfer_bytes(self):
+        # Pure alias routing (each output block IS an input block, see _layer)
+        # -- schedulers resolve aliases without moving data.
+        from dask_array._expr import TransferBytes
+
+        return TransferBytes(0.0, 0.0)
+
     def _frisky_layer(self):
         from dask_array._frisky.concatenate import ConcatenateLayer
 

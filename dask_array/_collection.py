@@ -473,6 +473,16 @@ class Array(DaskMethodsMixin):
         return self.dtype.itemsize
 
     @property
+    def transfer_bytes(self):
+        """Estimated (min, max) inter-worker bytes moved by this node.
+
+        See ArrayExpr.transfer_bytes.  Counts only the root expression's
+        incoming edges; walk the optimized expression graph and sum for a
+        whole-computation estimate.
+        """
+        return self.expr.transfer_bytes
+
+    @property
     def name(self):
         return self._name
 

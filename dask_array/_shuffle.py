@@ -231,6 +231,42 @@ class Shuffle(ArrayExpr):
             new_chunks.append(current_chunk)
         return new_chunks
 
+    @functools.cached_property
+    def transfer_bytes(self):
+        # See ArrayExpr.transfer_bytes.  Structurally a permuting rechunk
+        # along one axis: per-(output-chunk, source-chunk) split tasks that
+        # fetch a whole source block, then merges gathering the pieces.
+        # Under min each output chunk is assembled where its largest source
+        # contribution lives; under max every split fetches its source block
+        # whole and every multi-source merge fetches all its pieces.
+        from bisect import bisect_right
+        from itertools import accumulate
+
+        from dask_array._expr import TransferBytes
+
+        x = self.array
+        if any(math.isnan(c) for dim in x.chunks for c in dim):
+            return TransferBytes(math.nan, math.nan)
+        axis_chunks = x.chunks[self.axis]
+        n = sum(axis_chunks)
+        if not n:
+            return TransferBytes(0.0, 0.0)
+        row_bytes = x.nbytes / n  # bytes of one hyperplane along the axis
+        bounds = list(accumulate(axis_chunks))
+        lo = 0.0
+        splits = 0.0
+        merges = 0.0
+        for idx in self._new_chunks:
+            counts: dict[int, int] = {}
+            for i in idx:
+                block = bisect_right(bounds, i)
+                counts[block] = counts.get(block, 0) + 1
+            lo += len(idx) - max(counts.values(), default=0)
+            splits += sum(axis_chunks[block] for block in counts)
+            if len(counts) > 1:
+                merges += len(idx)
+        return TransferBytes(lo * row_bytes, (splits + merges) * row_bytes)
+
     def _simplify_down(self):
         """Push shuffle through various operations using _accept_shuffle pattern."""
         # Check if child can accept this shuffle

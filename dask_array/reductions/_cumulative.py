@@ -116,6 +116,23 @@ class CumReduction(ArrayExpr):
     def chunks(self):
         return self.array.chunks
 
+    @cached_property
+    def transfer_bytes(self):
+        # See ArrayExpr.transfer_bytes.  The sequential scan carries one
+        # hyperplane of accumulated state across each block boundary along the
+        # axis; the per-block scans themselves are co-located under min.
+        # Under max the per-block scans fetch their input blocks, both the
+        # `extra` and `result` tasks re-fetch a per-block block whole, and
+        # each boundary carry is fetched twice (once by the next `extra`,
+        # once by its `result`) -- see _layer.
+        from dask_array._expr import TransferBytes
+
+        x = self.array
+        k = x.numblocks[self.axis]
+        n = x.shape[self.axis]
+        carry = (k - 1) * (x.nbytes / n) if n else 0.0
+        return TransferBytes(carry, x.nbytes * (1 + 2 * (k - 1) / k) + 2 * carry)
+
     def _frisky_layer(self):
         from dask_array._frisky.cumulative import CumReductionLayer
 
@@ -256,6 +273,20 @@ class CumReductionBlelloch(ArrayExpr):
     @cached_property
     def chunks(self):
         return self.array.chunks
+
+    @cached_property
+    def transfer_bytes(self):
+        # See ArrayExpr.transfer_bytes.  Blelloch's up/down sweeps plus the
+        # final combine move roughly three hyperplanes of carried state per
+        # block boundary; under max the batch phase and _prefixscan_combine
+        # each fetch every input block whole.
+        from dask_array._expr import TransferBytes
+
+        x = self.array
+        k = x.numblocks[self.axis]
+        n = x.shape[self.axis]
+        carry = 3 * (k - 1) * (x.nbytes / n) if n else 0.0
+        return TransferBytes(carry, 2 * x.nbytes + carry)
 
     def _layer(self):
         import builtins as py_builtins

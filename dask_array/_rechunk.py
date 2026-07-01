@@ -573,6 +573,65 @@ def _choose_rechunk_method(old_chunks, new_chunks, threshold=None):
     return "tasks" if graph_size < graph_size_threshold else "p2p"
 
 
+def _rechunk_stage_transfer(old_chunks, new_chunks, itemsize):
+    """(min, max) bytes moved by one rechunk stage old_chunks -> new_chunks.
+
+    min: each new block is assembled where its largest single-old-block piece
+    lives; slicing happens at the source, so only the other pieces move.
+    max: every cut old block is fetched whole by each split task that slices
+    it, and every multi-source merge fetches all its pieces remotely
+    (single-source new blocks are aliases, see _compute_rechunk).
+
+    Everything factorizes per axis because blocks form a grid: sums over the
+    block grid of per-axis products are products of per-axis sums.
+    """
+    total = 1.0  # elements per stage (constant across stages)
+    largest = 1.0  # Σ_new max single-old overlap
+    reads = 1.0  # Σ_old c * (#new blocks intersecting)
+    uncut = 1.0  # Σ_old c over blocks contained in a single new block
+    single = 1.0  # Σ_new c over blocks with a single old source
+    for old, new in zip(old_chunks, new_chunks):
+        if any(math.isnan(c) for c in old) or any(math.isnan(c) for c in new):
+            return math.nan, math.nan
+        t_ax = sum(old)
+        l_ax = 0.0
+        u_ax = 0.0
+        s_ax = 0.0
+        n_intersections = [0] * len(old)
+        j = 0
+        old_start = 0.0
+        new_start = 0.0
+        for c_new in new:
+            new_end = new_start + c_new
+            best = 0.0
+            n_sources = 0
+            while True:
+                old_end = old_start + old[j]
+                overlap = min(old_end, new_end) - max(old_start, new_start)
+                if overlap > 0:
+                    n_intersections[j] += 1
+                    n_sources += 1
+                    if overlap == old[j]:
+                        u_ax += old[j]
+                    best = max(best, overlap)
+                if old_end <= new_end and j + 1 < len(old):
+                    j += 1
+                    old_start = old_end
+                else:
+                    break
+            l_ax += best
+            if n_sources <= 1:
+                s_ax += c_new
+            new_start = new_end
+        r_ax = sum(c * n for c, n in zip(old, n_intersections))
+        total *= t_ax
+        largest *= l_ax
+        reads *= r_ax
+        uncut *= u_ax
+        single *= s_ax
+    return itemsize * (total - largest), itemsize * (reads - uncut + total - single)
+
+
 # ============================================================================
 # Expression classes
 # ============================================================================
@@ -639,6 +698,29 @@ class Rechunk(ArrayExpr):
         _validate_rechunk(x.chunks, chunks)
 
         return chunks
+
+    @cached_property
+    def transfer_bytes(self):
+        # See ArrayExpr.transfer_bytes.  Sums _rechunk_stage_transfer over the
+        # stages plan_rechunk would emit (a single logical rechunk may move
+        # the data several times).
+        from dask_array._expr import TransferBytes
+
+        old = self.array.chunks
+        new = self.chunks
+        itemsize = self.dtype.itemsize
+        if any(math.isnan(c) for dim in (*old, *new) for c in dim):
+            return TransferBytes(math.nan, math.nan)
+        steps = plan_rechunk(old, new, itemsize, self.threshold, self.block_size_limit)
+        lo = 0.0
+        hi = 0.0
+        prev = old
+        for chunks in steps:
+            stage_lo, stage_hi = _rechunk_stage_transfer(prev, chunks, itemsize)
+            lo += stage_lo
+            hi += stage_hi
+            prev = chunks
+        return TransferBytes(lo, hi)
 
     def _simplify_down(self):
         # No-op rechunk: if chunks already match, return the original array
@@ -1043,6 +1125,20 @@ class P2PRechunk(ArrayExpr):
                 self.block_size_limit,
             )
         return self.array
+
+    @cached_property
+    def transfer_bytes(self):
+        # See ArrayExpr.transfer_bytes.  P2P moves each byte over the wire at
+        # most once (shards that stay on their worker stay local under min).
+        from dask_array._expr import TransferBytes
+
+        itemsize = self.dtype.itemsize
+        old = self.array.chunks
+        new = self.chunks
+        if any(math.isnan(c) for dim in (*old, *new) for c in dim):
+            return TransferBytes(math.nan, math.nan)
+        lo, _ = _rechunk_stage_transfer(old, new, itemsize)
+        return TransferBytes(lo, self.array.nbytes)
 
     def _simplify_down(self):
         # P2PRechunk is a lowered form - don't apply further simplifications

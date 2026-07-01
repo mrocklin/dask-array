@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import math
 import weakref
 import warnings
 from functools import reduce
@@ -86,6 +87,34 @@ class OverlapInternal(ArrayExpr):
     @functools.cached_property
     def _name(self) -> str:
         return f"overlap-{super()._name}"
+
+    @functools.cached_property
+    def transfer_bytes(self):
+        # See ArrayExpr.transfer_bytes.  min is the ghost-cell exchange: each
+        # internal block boundary ships `before + after` hyperplanes to its
+        # neighbor.  Under max every center block is fetched whole, and each
+        # ghost fragment is a separate getitem task (see ArrayOverlapLayer)
+        # that also fetches its whole neighbor block.  Corner (diagonal)
+        # fragments of multi-axis overlaps are ignored throughout.
+        from dask_array._expr import TransferBytes
+
+        x = self.array
+        itemsize = x.dtype.itemsize
+        ghost = 0.0
+        fetches = 0.0
+        for axis, chunks in enumerate(x.chunks):
+            depth = self.axes.get(axis, 0)
+            before, after = depth if isinstance(depth, tuple) else (depth, depth)
+            if len(chunks) < 2 or (before == 0 and after == 0):
+                continue
+            cross_section = itemsize * math.prod(s for i, s in enumerate(x.shape) if i != axis)
+            ghost += (before + after) * (len(chunks) - 1) * cross_section
+            total = sum(chunks)
+            if before:
+                fetches += (total - chunks[0]) * cross_section
+            if after:
+                fetches += (total - chunks[-1]) * cross_section
+        return TransferBytes(ghost, x.nbytes + fetches + ghost)
 
     def _layer(self) -> dict:
         x = self.array
