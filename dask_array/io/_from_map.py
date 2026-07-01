@@ -138,6 +138,22 @@ class FromMap(IO):
             dsk[key] = Task(key, _map_block, func, values[idx], block_shape, kwargs)
         return dsk
 
+    def _frisky_layer(self):
+        """Native records layer: the O(n_blocks) expansion runs in Rust instead
+        of the generic ``GraphRecordsLayer`` re-lowering ``_layer()``. Values are
+        flattened C-order to match the Rust layer's row-major block iteration
+        (and ``_layer``'s ``itertools.product``)."""
+        from dask_array._frisky.from_map import FromMapLayer
+
+        return FromMapLayer(
+            self._name,
+            _map_block,
+            self.operand("func"),
+            self.operand("kwargs") or {},
+            list(self.operand("values").ravel(order="C")),
+            [list(c) for c in self.chunks],
+        )
+
 
 def from_map(func, values, chunks=None, dtype=None, meta=None, name=None, **kwargs):
     """Create a dask array by mapping ``func`` over a grid of per-block values.

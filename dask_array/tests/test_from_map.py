@@ -28,6 +28,8 @@ from_map / the rewrite exist, so they are RED until implemented.
 
 from __future__ import annotations
 
+import importlib.util
+
 import dask
 import numpy as np
 import pytest
@@ -418,3 +420,86 @@ def test_from_map_rejects_values_shape_mismatch():
 def test_from_map_requires_chunks():
     with pytest.raises(ValueError, match="chunks"):
         da.from_map(_load, _obj([1, 2, 3]), dtype="int64")
+
+
+# ---------------------------------------------------------------------------
+# native (Rust) FromMapLayer: parity with the generic fallback
+# ---------------------------------------------------------------------------
+
+
+def _norm_records(recs):
+    """Comparable form: key string, func name, repr(args), repr(kwargs), deps."""
+    return sorted(
+        (str(k), getattr(f, "__name__", repr(f)), repr(a), repr(kw), sorted(str(d) for d in deps))
+        for k, f, a, kw, deps in recs
+    )
+
+
+def test_native_from_map_layer_records_match_fallback():
+    """The Rust FromMapLayer must emit exactly the records the generic
+    GraphRecordsLayer fallback does -- same keys, func, args, kwargs, deps."""
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    from dask_array._frisky.graph_records import GraphRecordsLayer
+
+    vals2d = np.empty((2, 2), dtype=object)
+    vals2d[:] = [[1, 2], [3, 4]]
+    zerod = np.empty((), dtype=object)
+    zerod[()] = 7
+    cases = {
+        "1d": da.from_map(_load, _obj([1, 2, 3]), chunks=((5, 5, 5),), dtype="int64"),
+        "2d": da.from_map(lambda v: np.full((2, 3), v, dtype="int64"), vals2d, chunks=((2, 2), (3, 3)), dtype="int64"),
+        "0d": da.from_map(lambda v: v, zerod, chunks=(), dtype="int64"),
+        "kwargs": da.from_map(lambda v, *, s=1: np.full(5, v * s), _obj([1, 2]), chunks=((5, 5),), dtype="int64", s=3),
+        "folded-stack": da.stack([da.from_delayed(dask.delayed(_load)(v), (5,), dtype="int64") for v in [1, 2, 3]]),
+    }
+    for label, coll in cases.items():
+        expr = coll._lowered_expr
+        native = expr._frisky_layer().to_task_records()
+        fallback = GraphRecordsLayer(expr).to_task_records()
+        assert _norm_records(native) == _norm_records(fallback), label
+
+
+def test_native_from_map_layer_graph_matches_legacy():
+    """Per-block values from the native graph equal the legacy _layer graph.
+    Uses a NON-SQUARE grid built from a transposed (non-contiguous) values view
+    with distinct per-cell values -- this exercises the load-bearing C-order
+    ravel and would catch a row/column-swap that a symmetric contiguous grid
+    hides."""
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    from dask.core import flatten
+    from dask.local import get_sync
+
+    base = np.empty((3, 2), dtype=object)
+    base[:] = np.arange(6).reshape(3, 2) * 10
+    vals = base.T  # (2, 3), non-C-contiguous
+    assert vals.shape == (2, 3) and not vals.flags["C_CONTIGUOUS"]
+    a = da.from_map(lambda v: np.full((2, 4), v, dtype="int64"), vals, chunks=((2, 2), (4, 4, 4)), dtype="int64")
+    expr = a._lowered_expr
+    legacy = expr._layer()
+    native = expr._frisky_layer().to_dask_graph()
+    for key in flatten(a.__dask_keys__()):
+        np.testing.assert_array_equal(get_sync(native, key), get_sync(legacy, key))
+
+
+def test_collect_selects_native_from_map_layer(monkeypatch):
+    """collect_task_records must route FromMap through the native FromMapLayer,
+    not the generic GraphRecordsLayer fallback -- guards the _frisky_layer wiring
+    (a regression there is silent, since the fallback is parity-equal)."""
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    from dask_array._frisky import collect as collect_mod
+    from dask_array._frisky.graph_records import GraphRecordsLayer
+
+    fell_back = []
+
+    class SpyGraphRecordsLayer(GraphRecordsLayer):
+        def __init__(self, expr):
+            fell_back.append(type(expr).__name__)
+            super().__init__(expr)
+
+    monkeypatch.setattr(collect_mod, "GraphRecordsLayer", SpyGraphRecordsLayer)
+    a = da.from_map(_load, _obj([1, 2, 3]), chunks=((5, 5, 5),), dtype="int64")
+    collect_mod.collect_task_records(a)
+    assert "FromMap" not in fell_back

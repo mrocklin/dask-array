@@ -26,6 +26,7 @@ _EXPORTS = {
     "EyeLayer": ("dask_array._frisky.eye", "EyeLayer"),
     "FromArrayGetterLayer": ("dask_array._frisky.from_array", "FromArrayGetterLayer"),
     "FromArrayLayer": ("dask_array._frisky.from_array", "FromArrayLayer"),
+    "FromMapLayer": ("dask_array._frisky.from_map", "FromMapLayer"),
     "FusedBlockwiseLayer": ("dask_array._frisky.fused_blockwise", "FusedBlockwiseLayer"),
     "LinspaceLayer": ("dask_array._frisky.linspace", "LinspaceLayer"),
     "OverlapLayer": ("dask_array._frisky.overlap", "OverlapLayer"),
