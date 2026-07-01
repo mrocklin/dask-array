@@ -72,6 +72,16 @@ class Stack(ArrayExpr):
             indexer=indexer,
         )
 
+    def _simplify_down(self):
+        """Merge a stack of ``FromMap`` children into one ``FromMap`` (adding the
+        new unit axis). Children reach ``FromMap`` either directly or by the
+        ``FromDelayed`` normalize step; ``simplify`` runs to a fixpoint, so nested
+        ``concatenate(stack(...))`` collapses in stages. Declines (returns None)
+        unless every child is a matching ``FromMap``."""
+        from dask_array.io._from_map import _merge_from_maps
+
+        return _merge_from_maps(self.args, self.axis, new_axis=True, dtype=self.dtype, meta=self._meta)
+
     def _simplify_up(self, parent, dependents):
         """Allow slice and shuffle operations to push through Stack."""
         from dask_array._shuffle import Shuffle

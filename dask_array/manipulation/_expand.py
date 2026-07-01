@@ -83,6 +83,32 @@ class ExpandDims(ArrayExpr):
             axes=sorted(self.axes),
         )
 
+    def _simplify_down(self):
+        """Fold a unit-axis expansion into a ``FromMap`` source: the new axes
+        become ``(1,)`` chunks and unit dims in the ``values`` grid. Each block's
+        func output is reshaped to its (now higher-rank) chunk shape by
+        ``_map_block``, so no func change is needed. This lets patterns like
+        ``da.block`` over mixed-rank pieces (which wraps sources in ``expand_dims``)
+        collapse to a single ``FromMap`` via the Stack/Concatenate merge fixpoint."""
+        from dask_array.io._from_map import FromMap
+
+        child = self.array
+        if isinstance(child, FromMap):
+            axes = sorted(self.axes)
+            values = np.expand_dims(child.operand("values"), tuple(axes))
+            chunks = list(child.chunks)
+            for ax in axes:
+                chunks.insert(ax, (1,))
+            return FromMap(
+                child.operand("func"),
+                values,
+                tuple(chunks),
+                self.dtype,
+                self._meta,
+                child.operand("kwargs"),
+                None,
+            )
+
     def _simplify_up(self, parent, dependents):
         """Allow slice and shuffle operations to push through ExpandDims."""
         from dask_array._shuffle import Shuffle

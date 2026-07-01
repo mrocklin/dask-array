@@ -6,6 +6,7 @@ from dask_array.io._base import IO
 from dask_array.io._from_array import FromArray
 from dask_array.io._from_delayed import FromDelayed, from_delayed
 from dask_array.io._from_graph import FromGraph
+from dask_array.io._from_map import FromMap, from_map
 from dask_array.io._from_npy_stack import FromNpyStack, from_npy_stack
 from dask_array.io._store import (
     get_scheduler_lock,
@@ -23,8 +24,10 @@ __all__ = [
     "FromArray",
     "FromDelayed",
     "FromGraph",
+    "FromMap",
     "FromNpyStack",
     "from_delayed",
+    "from_map",
     "from_npy_stack",
     "from_tiledb",
     "from_zarr",

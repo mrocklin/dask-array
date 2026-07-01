@@ -77,6 +77,15 @@ class Concatenate(ArrayExpr):
 
         return dsk
 
+    def _simplify_down(self):
+        """Merge a concatenation of ``FromMap`` children into one ``FromMap``.
+        Grids combine by ``np.concatenate`` on the ``values`` arrays and the
+        chunk lists along ``axis``. Declines unless every child is a matching
+        ``FromMap`` (see ``_merge_from_maps``); the fixpoint handles nesting."""
+        from dask_array.io._from_map import _merge_from_maps
+
+        return _merge_from_maps(self.args, self.axis, new_axis=False, dtype=self.dtype, meta=self._meta)
+
     def _simplify_up(self, parent, dependents):
         """Allow slice and shuffle operations to push through Concatenate."""
         from dask_array._shuffle import Shuffle

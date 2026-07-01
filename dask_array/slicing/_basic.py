@@ -425,6 +425,14 @@ class SliceSlicesIntegers(Slice):
     _parameters = ["array", "index", "allow_getitem_optimization"]
 
     def _simplify_down(self):
+        # A pure identity slice (every dim a full slice, no integers/reordering)
+        # is a no-op -> drop it. Children that implement `_accept_slice` (FromArray,
+        # Blockwise, ...) already absorb identity slices; this covers the rest
+        # (e.g. FromMap), so e.g. `expand_dims`'s trailing full-slice vanishes and
+        # the node underneath is exposed to its parent.
+        if len(self.index) == self.array.ndim and all(idx == slice(None, None, None) for idx in self.index):
+            return self.array
+
         # Slice(Slice(x)) -> single Slice with fused indices
         if isinstance(self.array, SliceSlicesIntegers):
             try:

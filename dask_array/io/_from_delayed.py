@@ -42,6 +42,48 @@ class FromDelayed(IO):
             return prefix
         return "from-delayed-" + self.deterministic_token
 
+    def _simplify_down(self):
+        """Normalize a single-call delayed body into a 1-block ``FromMap``.
+
+        When the delayed value is one self-contained call (a single ``Task`` with
+        no task dependencies -- ``delayed(f)(x, k=v)``), we can represent this
+        array as a grouped ``FromMap`` block instead of an opaque delayed graph.
+        This is the seam that lets ``stack``/``concatenate`` merge the common
+        ``stack([from_delayed(...) ...])`` pattern into one clean layer. Anything
+        that isn't a single self-contained call (nested delayed, literal data) or
+        that has unknown chunks is left untouched."""
+        from dask._task_spec import Task
+
+        from dask_array.io._from_map import FromMap, _apply_call
+
+        graph = self.operand("value").__dask_graph__()
+        node = next(iter(graph.values())) if len(graph) == 1 else None
+        shape = self.operand("shape")
+
+        # A single self-contained call (`delayed(f)(x, k=v)`: one Task, no task
+        # deps) over known chunks, and not a user-named output (whose key we must
+        # preserve), can be represented as a grouped 1-block FromMap. Further
+        # normalization cases (e.g. literal-data delayeds) would be added as more
+        # `if` branches, so keep the applies-condition positive.
+        if (
+            not self.operand("_name_prefix")
+            and isinstance(node, Task)
+            and not node.dependencies
+            and not any(s != s for s in shape)  # known (non-nan) dims
+        ):
+            bundle = (node.func, tuple(node.args), dict(node.kwargs or {}))
+            values = np.empty((1,) * len(shape), dtype=object)
+            values.flat[0] = bundle
+            return FromMap(
+                _apply_call,
+                values,
+                self.chunks,
+                self.operand("dtype"),
+                self.operand("_meta"),
+                None,
+                None,
+            )
+
     def _layer(self):
         from dask._task_spec import Alias
         from dask.base import is_dask_collection

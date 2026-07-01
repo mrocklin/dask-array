@@ -140,6 +140,7 @@ from dask_array.creation import (
 )
 from dask_array.io import (
     from_delayed,
+    from_map,
     from_npy_stack,
     from_tiledb,
     from_zarr,
