@@ -110,8 +110,10 @@ legacy `_layer()` — faithful by construction.
   tuple whose dependency slots hold a `dask._task_spec.TaskRef(dep_key)`.
 - Hand-off: `Array.__frisky_graph__()` (duck-typed — Frisky never imports
   `dask_array`) returns them; `Client.submit_tasks(records, output_keys)` submits.
-  The surface is versioned by `PROTOCOL_REVISION`, synced between `_frisky/base.py`
-  and Frisky's `lib.rs` (mismatch fails loudly at import).
+  The native build is tracked by `NATIVE_BUILD_GENERATION`, synced between
+  `_frisky/base.py` and the Rust `lib.rs` so a stale `.so` fails loudly at import
+  — a LOCAL check, not a wire protocol (Frisky never reads it). The Frisky-facing
+  records grammar is versioned separately by `common::RECORDS_PROTOCOL_VERSION`.
 - `collect_task_records` checks every dep is produced by some record, else raises →
   whole-graph fallback — an unfaithful translation degrades rather than miscomputes.
 
@@ -123,5 +125,5 @@ legacy `_layer()` — faithful by construction.
   is validated by `bench/diff_records.py` (vs `scheduler="synchronous"`).
 - The build is pure-Python by default; the native accelerator is opt-in via
   `maturin develop` (the records path falls back to the pure-Python
-  `GraphRecordsLayer` when `_rust` is absent). Bump `PROTOCOL_REVISION` on both
-  sides when the record surface changes. See [docs/development.md](docs/development.md).
+  `GraphRecordsLayer` when `_rust` is absent). Bump `NATIVE_BUILD_GENERATION` on
+  both sides after any Rust change. See [docs/development.md](docs/development.md).

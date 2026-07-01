@@ -15,13 +15,16 @@ from typing import Any
 from dask_array import _rust
 
 # Fail loudly if a stale native extension is imported (source changed but the
-# .so wasn't rebuilt) rather than silently producing wrong tasks. Bump this and
-# PROTOCOL_REVISION in crates/dask-array-python/src/lib.rs together.
-_PROTOCOL_REVISION = 26
-if _rust.protocol_revision() != _PROTOCOL_REVISION:
+# .so wasn't rebuilt) rather than silently mishandling a changed call. Bump this
+# and NATIVE_BUILD_GENERATION in crates/dask-array-python/src/lib.rs together on
+# any Rust change. This is a LOCAL build-freshness check, not a wire protocol;
+# the Frisky-coordinated version is the records grammar (common::RECORDS_PROTOCOL
+# _VERSION), which a plain layer addition does not touch.
+_NATIVE_BUILD_GENERATION = 26
+if _rust.native_build_generation() != _NATIVE_BUILD_GENERATION:
     raise ImportError(
-        f"dask_array._rust is at protocol revision {_rust.protocol_revision()}, "
-        f"expected {_PROTOCOL_REVISION}; rebuild the native extension with "
+        f"dask_array._rust is at native build generation {_rust.native_build_generation()}, "
+        f"expected {_NATIVE_BUILD_GENERATION}; rebuild the native extension with "
         f"`maturin develop`."
     )
 

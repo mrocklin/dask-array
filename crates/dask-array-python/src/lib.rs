@@ -44,19 +44,24 @@ mod slicing;
 mod squeeze;
 mod stack;
 
-/// Protocol revision for the native extension. Python checks this on import so
-/// a stale `.so` fails loudly instead of silently producing wrong tasks.
-const PROTOCOL_REVISION: usize = 26;
+/// Generation counter for this native build. Python (`base.py`) checks it on
+/// import so a stale `.so` (source changed but not rebuilt) fails loudly instead
+/// of silently mishandling a changed call. This is LOCAL to dask-array — it is
+/// not a wire protocol and Frisky never reads it. The version Frisky *does*
+/// coordinate on is the binary records grammar (`common::RECORDS_PROTOCOL_VERSION`
+/// ↔ Frisky's `records_proto::CHUNK_GRAMMAR_VERSION`), which only moves when the
+/// chunk byte-grammar changes — not when a layer is added.
+const NATIVE_BUILD_GENERATION: usize = 26;
 
 #[pyfunction]
-fn protocol_revision() -> usize {
-    PROTOCOL_REVISION
+fn native_build_generation() -> usize {
+    NATIVE_BUILD_GENERATION
 }
 
 #[pymodule]
 fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add("PROTOCOL_REVISION", PROTOCOL_REVISION)?;
-    m.add_function(wrap_pyfunction!(protocol_revision, m)?)?;
+    m.add("NATIVE_BUILD_GENERATION", NATIVE_BUILD_GENERATION)?;
+    m.add_function(wrap_pyfunction!(native_build_generation, m)?)?;
     m.add_class::<arange::ArangeLayer>()?;
     m.add_class::<arg_chunk::ArgChunkLayer>()?;
     m.add_class::<blocks::BlocksLayer>()?;

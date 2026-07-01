@@ -40,10 +40,10 @@ maturin develop --release
 
 This drops the platform-native `dask_array/_rust.*` extension next to the
 package; an editable install then picks it up. Re-run it after changing anything
-under `crates/dask-array-python/`, and bump `PROTOCOL_REVISION` (kept in sync
-between `dask_array/_frisky/base.py` and the Rust `lib.rs`) when the record
-surface changes. See AGENTS.md → "Frisky task-graph support" for the
-architecture.
+under `crates/dask-array-python/`, and bump `NATIVE_BUILD_GENERATION` (kept in
+sync between `dask_array/_frisky/base.py` and the Rust `lib.rs`) after any Rust
+change — a local build-freshness check, not the Frisky wire protocol. See
+AGENTS.md → "Frisky task-graph support" for the architecture.
 
 ## Testing
 
