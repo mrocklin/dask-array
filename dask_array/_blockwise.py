@@ -844,7 +844,7 @@ class Elemwise(Blockwise):
                 deps = [d for d in deps if d._name != out_name]
         return deps
 
-    @property
+    @cached_property
     def out_ind(self):
         shapes = []
         for arg in self.elemwise_args:
@@ -911,16 +911,16 @@ class Elemwise(Blockwise):
     def dtype(self):
         return self._info[1]
 
-    @property
+    @cached_property
     def kwargs(self):
         # Merge user kwargs with internal kwargs (dtype enforcement, where handling)
         return {**self.user_kwargs, **self._info[2]}
 
-    @property
+    @cached_property
     def token(self):
         return funcname(self.op).strip("_")
 
-    @property
+    @cached_property
     def args(self):
         # for Blockwise rather than Elemwise
         # When where is an array, append [where, out] for _elemwise_handle_where
