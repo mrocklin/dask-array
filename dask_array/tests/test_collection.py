@@ -89,8 +89,43 @@ def test_array_pickle_preserves_lowering_config_for_frisky_records():
         records = y.__frisky_graph__()
 
     produced = {key for key, _func, _args, _kwargs, _deps in records}
+    assert "_lowered_expr" in vars(y)
     assert y.__frisky_output_keys__() == output_keys
     assert set(output_keys) <= produced
+
+
+def test_optimized_array_pickle_keeps_frisky_keys_stable_without_cache():
+    x = ((da.from_array(np.arange(20), chunks=5) + 1)[:12].mean()).optimize()
+    output_keys = x.__frisky_output_keys__()
+    assert "_lowered_expr" in vars(x)
+
+    y = cloudpickle.loads(cloudpickle.dumps(x))
+    assert "_lowered_expr" not in vars(y)
+
+    with dask.config.set({"array.optimize-graph": False}):
+        assert y.__frisky_output_keys__() == output_keys
+        records = y.__frisky_graph__()
+
+    produced = {key for key, _func, _args, _kwargs, _deps in records}
+    assert set(output_keys) <= produced
+
+
+def test_array_optimize_is_idempotent():
+    x = ((da.ones((10, 10), chunks=(5, 5)) + 1) * 2).optimize()
+
+    assert x.optimize() is x
+
+
+def test_array_optimize_matches_expr_optimize_for_common_shapes():
+    arrays = [
+        (da.from_array(np.arange(20), chunks=5) + 1)[2:17],
+        da.ones((6, 4), chunks=(3, 2)).rechunk((2, 4)),
+        (da.ones((6, 4), chunks=(3, 2)) + 1).sum(axis=0),
+        (da.ones((4, 4), chunks=(2, 2)) + 1) * 2,
+    ]
+
+    for x in arrays:
+        assert x.optimize().expr._name == x.expr.optimize()._name
 
 
 def test_lowering_shares_work_across_collections_with_shared_ancestry():
@@ -140,6 +175,50 @@ def test_lowering_shares_work_across_collections_with_shared_ancestry():
 
     # Linear growth is ~2x; quadratic (the unfixed bug) is ~4x. 3x cleanly
     # separates the two regimes with margin for incidental variation.
+    assert n_2d < 3 * n_d
+
+
+def test_optimize_shares_work_across_collections_with_shared_ancestry():
+    """Collection optimization must share lowering work across related outputs.
+
+    Frisky optimizes each records-capable collection on the client before
+    sending the compact expression to the scheduler. A Dataset-shaped call can
+    contain many arrays with shared ancestry, so this needs the same shared
+    lowering cache as ``_lowered_expr``.
+    """
+    import dask.tokenize
+    from dask_array._collection import _LOWER_CACHE
+
+    def build_chain(depth):
+        a = da.ones((100, 100), chunks=(10, 10))
+        cols = []
+        for _ in range(depth):
+            a = a + a.mean(axis=1, keepdims=True)
+            cols.append(a)
+        return cols
+
+    def count_optimize_tokenize(cols):
+        calls = [0]
+        original = dask.tokenize._tokenize
+
+        def counted(*args, **kwargs):
+            calls[0] += 1
+            return original(*args, **kwargs)
+
+        _LOWER_CACHE.clear()
+        optimized = []
+        dask.tokenize._tokenize = counted
+        try:
+            for c in cols:
+                optimized.append(c.optimize())
+        finally:
+            dask.tokenize._tokenize = original
+        assert len(optimized) == len(cols)
+        return calls[0]
+
+    n_d = count_optimize_tokenize(build_chain(16))
+    n_2d = count_optimize_tokenize(build_chain(32))
+
     assert n_2d < 3 * n_d
 
 

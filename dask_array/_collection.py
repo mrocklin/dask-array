@@ -393,7 +393,14 @@ class Array(DaskMethodsMixin):
         return new_collection(self._lowered_expr)
 
     def optimize(self):
-        return new_collection(self.expr.optimize())
+        if self.__dict__.get("_optimized", False):
+            return self
+        expr = _lower(self.expr, optimize_graph=True).fuse()
+        out = new_collection(expr)
+        out.__dict__["_optimized"] = True
+        out.__dict__["_lowered_expr_optimize_graph"] = True
+        out.__dict__["_lowered_expr"] = expr
+        return out
 
     def simplify(self):
         return new_collection(self.expr.simplify())
