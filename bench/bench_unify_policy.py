@@ -1,21 +1,28 @@
 """Chunk-unification policy: merge up to the coarser operand vs refine.
 
 When elemwise operands disagree on chunking, ``unify_chunks_expr`` must pick a
-common layout.  Today's default (``array.unify-chunks-policy: coarse``) merges
+common layout.  The old default (``array.unify-chunks-policy: coarse``) merges
 nested chunkings up to the coarsest operand — fewer tasks, but one coarse
 operand can inflate everything downstream (a 2-chunk time vector once turned
 per-day 46 MB chunks into 3 GB chunks across a whole trading-model DAG).
 Stock dask refines to the finest common boundaries — splits only, no data
 movement, but per-element-chunk operands (xarray groupby patterns) shatter
-their partners into thousands of tasks.  ``array.unify-chunks-limit`` (default
-512 MiB) now caps the merge direction; this benchmark measures the whole
-tradeoff to inform whether the *default direction* should change.
+their partners into thousands of tasks.  The cost-aware default
+(``auto``) picks the direction per dimension: merge as before, unless the
+bytes the merge would actually move exceed a small multiple of the bytes
+already at the coarse layout — then refine that dimension instead.
+``array.unify-chunks-limit`` (default 512 MiB) stays as a hard backstop on
+manufactured chunk size under any merging policy.
 
 Cases:
-  nested_merge   the inflation bug shape: day-chunked 2D × 2-chunk 1D
-  shatter_guard  the case coarse exists for: coarse 3D − per-element indexed
-  macro          the synthetic quantity DAG (bench/synthetic_quantity_expression.py)
-                 with a coarse time vector multiplied in
+  nested_merge      the inflation bug shape: day-chunked 2D × 2-chunk 1D
+                    (merge moves the heavy panel; auto must refine)
+  shatter_guard     the case coarse exists for: coarse 3D − per-element indexed
+                    (refine shatters; auto must merge)
+  comparable_merge  equally heavy operands, nested layouts (the rolling-window
+                    halo regime); auto must keep merging like coarse
+  macro             the synthetic quantity DAG (bench/synthetic_quantity_expression.py)
+                    with a coarse time vector multiplied in
 
 Each (case, policy) runs in a subprocess: expressions are cached singletons,
 so layouts computed under one config must not leak into the next.
@@ -27,25 +34,36 @@ Representative results (2026-07-03, 8-core dev box, threads scheduler, float64):
 
   == nested_merge (90k x 200 day-chunked 2D x nested 2-chunk 1D; .sum()) ==
     policy     build   tasks  max chunk           est transfer    wall
-    coarse     0.01s      99  91.55 MiB 134.28 MiB-276.03 MiB  0.22 s
+    auto       0.01s     306 468.75 kiB   712.0 B-35.71 MiB   0.13 s
+    coarse     0.01s      99  91.55 MiB 134.28 MiB-276.03 MiB  0.20 s
     capped     0.01s     306 468.75 kiB   712.0 B-35.71 MiB   0.13 s
-    refine     0.01s     306 468.75 kiB   712.0 B-35.71 MiB   0.13 s
+    refine     0.01s     306 468.75 kiB   712.0 B-35.71 MiB   0.12 s
   == shatter_guard (12000 x 20 x 30, 10 chunks vs per-element indexed) ==
-    coarse     0.03s   12401   5.49 MiB 106.69 MiB-222.58 MiB  2.39 s
-    capped     0.03s   12401   5.49 MiB 106.69 MiB-222.58 MiB  2.39 s
-    refine     0.07s   60719   5.49 MiB 506.24 kiB-3.93 GiB    9.09 s
+    auto       0.03s   12401   5.49 MiB 106.69 MiB-222.58 MiB  2.55 s
+    coarse     0.03s   12401   5.49 MiB 106.69 MiB-222.58 MiB  2.46 s
+    capped     0.04s   12401   5.49 MiB 106.69 MiB-222.58 MiB  2.48 s
+    refine     0.07s   60719   5.49 MiB 506.24 kiB-3.93 GiB   28.56 s
+  == comparable_merge (90k x 200, 360 fine blocks x 10 coarse nested blocks) ==
+    auto       0.01s     384  13.73 MiB 133.51 MiB-274.66 MiB  0.16 s
+    coarse     0.01s     384  13.73 MiB 133.51 MiB-274.66 MiB  0.17 s
+    capped     0.01s     384  13.73 MiB 133.51 MiB-274.66 MiB  0.26 s
+    refine     0.01s    1212  13.73 MiB  2.80 kiB-4.96 GiB    0.36 s
   == macro (synthetic quantity DAG, complexity=1, x aligned coarse time vector) ==
-    coarse     5.38s   75236  90.00 kiB 62.94 MiB-1.32 GiB   18.24 s
-    capped     5.25s   75236  90.00 kiB 62.94 MiB-1.32 GiB   18.38 s
-    refine     6.46s  695957  90.00 kiB 65.09 MiB-2.30 GiB   97.90 s
+    auto       5.34s   75237  90.00 kiB 62.94 MiB-1.32 GiB   20.16 s
+    coarse     5.08s   75237  90.00 kiB 62.94 MiB-1.32 GiB   18.74 s
+    capped     5.59s   75237  90.00 kiB 62.94 MiB-1.32 GiB   19.80 s
+    refine     6.20s  695958  90.00 kiB 65.09 MiB-2.30 GiB   101.36 s
 
-Reading: the merge direction is a pure loss on the inflation shape (40% slower
-wall, ~8x the transfer, and unboundedly larger chunks) but a pure win against
-shattering (4x) and on the macro DAG (5x, 9x the tasks).  Neither fixed
-direction is right; a byte-capped coarse default keeps both pathologies out.
-The interesting #2 follow-up is a cost-aware rule (rechunk the lighter operand
-toward the heavier operand's layout, still under the cap), which picks the
-winner in all three cases above by construction.
+Reading: neither fixed direction is right -- merging is a pure loss on the
+inflation shape (~50% slower wall, ~8x the transfer, unboundedly larger
+chunks) but a pure win against shattering (11x) and on the macro DAG (5x,
+9x the tasks).  The cost-aware auto policy picks the winner in every case:
+it refines the inflation shape (the 2-chunk vector is ~200x lighter than
+the panel it would inflate), merges the shatter and comparable shapes (the
+moved bytes are backed by an anchor of equal weight), and on the macro DAG
+produces a graph identical to coarse (its internal nested merges are all
+either equal-weight or near-free fragment healing; macro wall differences
+between auto/coarse/capped are same-graph noise, ~±1.5 s across runs).
 """
 
 from __future__ import annotations
@@ -65,13 +83,17 @@ from dask_array._diagnostics import _max_chunk_bytes
 from dask_array._expr import ArrayExpr
 
 POLICIES = {
-    # today's behavior, unguarded
+    # cost-aware default: merge unless the merge moves too many bytes
+    "auto": {"array.unify-chunks-policy": "auto", "array.unify-chunks-limit": "512 MiB"},
+    # the old fixed direction, unguarded
     "coarse": {"array.unify-chunks-policy": "coarse", "array.unify-chunks-limit": 0},
     # coarse with the size guard at a bench-visible threshold
     "capped": {"array.unify-chunks-policy": "coarse", "array.unify-chunks-limit": "16 MiB"},
     # stock-dask refinement
     "refine": {"array.unify-chunks-policy": "refine", "array.unify-chunks-limit": 0},
 }
+
+CASES = ["nested_merge", "shatter_guard", "comparable_merge", "macro"]
 
 
 def build(case):
@@ -88,6 +110,14 @@ def build(case):
         mean_arr = da.random.random((groups, 20, 30), chunks=(1, 20, 30))
         indexed = mean_arr[np.tile(np.arange(groups), n // groups), ...]
         return (arr - indexed).sum()
+    if case == "comparable_merge":
+        # two equally heavy operands, nested layouts (the rolling-window-halo
+        # regime): merging stays worthwhile because the moved bytes are backed
+        # by an operand of the same weight; refining shatters the coarse one
+        n, assets = 90000, 200
+        a = da.random.random((n, assets), chunks=(250, assets))  # 360 blocks
+        b = da.random.random((n, assets), chunks=(9000, assets))  # 10 blocks, nested
+        return (a * b + a).sum()
     if case == "macro":
         import os
 
@@ -137,7 +167,7 @@ def measure(case, compute):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--case", choices=["nested_merge", "shatter_guard", "macro"])
+    p.add_argument("--case", choices=CASES)
     p.add_argument("--policy", choices=list(POLICIES))
     p.add_argument("--no-compute", action="store_true")
     args = p.parse_args()
@@ -147,7 +177,7 @@ def main():
             print(json.dumps(measure(args.case, compute=not args.no_compute)))
         return
 
-    for case in ["nested_merge", "shatter_guard", "macro"]:
+    for case in CASES:
         print(f"\n== {case} ==")
         print(f"  {'policy':8s} {'build':>7s} {'tasks':>7s} {'max chunk':>10s} {'est transfer':>22s} {'wall':>7s}")
         for policy in POLICIES:

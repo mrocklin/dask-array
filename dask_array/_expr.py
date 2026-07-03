@@ -407,10 +407,10 @@ def coarse_blockdim(blockdims):
 
     Examples
     --------
-    >>> coarse_blockdim({(12, 12, 12, 12), (1, 1, 1, 1, 1)})  # prefer fewer chunks
+    >>> coarse_blockdim({(12, 12, 12, 12), (6,) * 8})  # prefer fewer chunks
     (12, 12, 12, 12)
-    >>> coarse_blockdim({(10,), (5, 5)})  # single chunk preferred
-    (10,)
+    >>> coarse_blockdim({(10,), (5, 5)})  # single-chunk dims defer to the chunked operand
+    (5, 5)
     >>> coarse_blockdim({(4, 6), (6, 4)})  # incompatible - use common divisor
     (4, 2, 4)
     """
@@ -462,6 +462,54 @@ def coarse_blockdim(blockdims):
     return coarsest
 
 
+# The cost-aware unify policy lets a coarse operand pull the others up to its
+# layout only while the bytes that merge would move stay within this multiple
+# of the bytes already sitting at that layout.  Comparable-weight operands
+# (mixed dtypes, a few movers) keep merging as before; a clearly lighter
+# operand (the incident was a 6 MB time vector inflating 46 MB chunks into
+# 3 GB ones, a ~200x imbalance) loses the right to inflate everyone else.
+_MERGE_COST_RATIO = 4
+
+
+def merge_moved_fraction(src, dst):
+    """Fraction of an axis's bytes that rechunking ``src`` to ``dst`` moves.
+
+    Uses the same min-model as ``Rechunk.transfer_bytes``: when ``dst`` is a
+    nested coarsening of ``src`` (every ``dst`` boundary is a ``src``
+    boundary), each ``dst`` chunk is a run of ``src`` chunks; the largest
+    chunk of the run stays put and the rest move to join it.  Splits (and
+    the refinement layouts unification falls back to) move nothing.
+
+    >>> merge_moved_fraction((1, 719, 720), (720, 720))  # heal a sliver
+    0.0006944444444444445
+    >>> merge_moved_fraction((10,) * 6, (30, 30))  # true merge moves most bytes
+    0.6666666666666666
+    >>> merge_moved_fraction((30, 30), (10,) * 6)  # splits are free
+    0.0
+    """
+    total = sum(src)
+    if not total or src == dst:
+        return 0.0
+    if sum(dst) != total or not set(np.cumsum(dst[:-1])).issubset(np.cumsum(src[:-1])):
+        # dst refines src (splits only), or isn't a layout of the same axis
+        # at all (unify raises on mismatched totals before we're called)
+        return 0.0
+    moved = 0
+    i = 0
+    for target in dst:
+        run_total = run_max = run_len = 0
+        while run_total < target:
+            s = src[i]
+            i += 1
+            run_total += s
+            run_len += 1
+            if s > run_max:
+                run_max = s
+        if run_len > 1:
+            moved += target - run_max
+    return moved / total
+
+
 def unify_chunks_expr(*args, warn=True):
     # TODO(expr): This should probably be a dedicated expression
     # This is the implementation that expects the inputs to be expressions, the public facing
@@ -492,17 +540,56 @@ def unify_chunks_expr(*args, warn=True):
         else:
             nameinds.append((a, ind))
 
-    # array.unify-chunks-policy: "coarse" (default) merges nested chunkings up to the
-    # coarsest operand to cut task counts; "refine" is stock-dask behavior (finest
-    # common refinement -- splits only, never merges).
-    consolidate = coarse_blockdim
-    if config.get("array.unify-chunks-policy", "coarse") == "refine":
-        consolidate = common_blockdim
+    # array.unify-chunks-policy: "auto" (default) merges nested chunkings up to the
+    # coarsest operand unless the merge would move too many bytes (cost-aware, see
+    # below); "coarse" always merges; "refine" is stock-dask behavior (finest common
+    # refinement -- splits only, never merges).
+    policy = config.get("array.unify-chunks-policy", "auto")
+    consolidate = common_blockdim if policy == "refine" else coarse_blockdim
     chunkss = broadcast_dimensions(nameinds, blockdim_dict, consolidate=consolidate)
+    fine = None  # finest common refinement, computed lazily and shared below
+
+    # Cost-aware direction choice: merging a finer operand up to a coarser layout
+    # concatenates, i.e. moves that operand's bytes, while refining a coarser
+    # operand only splits it (nearly free).  So a coarse operand may pull the
+    # others up to its layout only when the bytes the merge would actually move
+    # stay within _MERGE_COST_RATIO x the bytes already at that layout.
+    # Comparable-weight operands keep merging (fewer tasks downstream), and
+    # fragment-healing merges (re-coalescing a shifted-by-a-sliver layout) move
+    # almost nothing and always pass -- but a lightweight time vector can no
+    # longer inflate a heavyweight panel's chunks.  Refusal refines those dims
+    # instead, with no warning: this is the policy picking the cheap direction,
+    # not a performance hazard.
+    if consolidate is coarse_blockdim and policy != "coarse":
+        moved = {}  # index label -> bytes the merge direction would move
+        anchored = {}  # index label -> bytes of operands already at the coarse layout
+        seen = set()
+        for a, ind in arginds:
+            if ind is None or ind == () or isinstance(a, ArrayBlockwiseDep):
+                continue
+            key = (a._name, tuple(ind))  # ind may be a list (e.g. from concatenate)
+            if key in seen:
+                continue
+            seen.add(key)
+            nbytes = float(a.nbytes)
+            if math.isnan(nbytes):
+                nbytes = 0.0
+            for n, j in enumerate(ind):
+                src, target = a.chunks[n], chunkss[j]
+                if a.shape[n] <= 1 or len(src) <= 1 or np.isnan(sum(target)):
+                    continue  # broadcast/single-chunk dims carry no layout opinion
+                if src == target:
+                    anchored[j] = anchored.get(j, 0.0) + nbytes
+                elif len(target) < len(src):
+                    moved[j] = moved.get(j, 0.0) + nbytes * merge_moved_fraction(src, target)
+        refused = {j for j, cost in moved.items() if cost > _MERGE_COST_RATIO * anchored.get(j, 0.0)}
+        if refused:
+            fine = broadcast_dimensions(nameinds, blockdim_dict, consolidate=common_blockdim)
+            chunkss = {j: fine[j] if j in refused else c for j, c in chunkss.items()}
 
     # Size guard, the twin of the count warning below: nest-coarsening merges chunks
-    # without bound, so one coarsely-chunked operand can inflate every other operand
-    # (and everything downstream) into multi-GB chunks.  If the merged layout would
+    # without bound, so equal-weight operands can still inflate each other (and
+    # everything downstream) into multi-GB chunks.  If the merged layout would
     # exceed array.unify-chunks-limit for any participating array, redo the coarsened
     # dims with common_blockdim instead -- refinement only splits chunks, so the
     # fallback moves no data.
@@ -519,7 +606,8 @@ def unify_chunks_expr(*args, warn=True):
             if target > current:  # only chunks the merge would manufacture count
                 worst = max(worst, target)
         if worst > limit:
-            fine = broadcast_dimensions(nameinds, blockdim_dict, consolidate=common_blockdim)
+            if fine is None:
+                fine = broadcast_dimensions(nameinds, blockdim_dict, consolidate=common_blockdim)
             coarsened = {j for j, c in chunkss.items() if len(fine[j]) > len(c)}
             if coarsened:
                 if warn:

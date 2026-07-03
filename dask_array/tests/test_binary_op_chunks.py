@@ -1,12 +1,17 @@
-"""Tests for coarse_blockdim: preferring larger chunks in binary operations.
+"""Tests for chunk unification in binary operations.
 
 When combining arrays with different chunk granularities, we prefer coarser
-chunks (fewer blocks) when boundaries align. This reduces task overhead.
+chunks (fewer blocks) when boundaries align — merging cuts task overhead.
+The default "auto" policy is cost-aware: merging finer operands up to a
+coarse layout moves their bytes (concatenation), so the merge only happens
+while those bytes stay in proportion to the operands already at that layout;
+otherwise unification refines instead (splits only, no data movement).
 """
 
 from __future__ import annotations
 
 import math
+import warnings
 
 import dask
 import numpy as np
@@ -108,6 +113,84 @@ class TestFallbackToCommonBlockdim:
         assert result.chunks == ((4, 2, 4),)
 
 
+class TestCostAwareDirection:
+    """The default "auto" policy: merge direction is chosen by what it costs.
+
+    Merging a finer operand up to a coarse layout moves that operand's bytes;
+    refining a coarser operand only splits it.  A coarse operand pulls the
+    others up only while the moved bytes stay within a small multiple of the
+    bytes already at its layout.  (Shapes here are unique per test: chunks
+    resolve lazily at first ``.chunks`` access and expressions are cached
+    singletons — see the NOTE in TestUnifyChunksSizeLimit.)
+    """
+
+    def test_light_coarse_operand_does_not_inflate(self):
+        """The inflation-bug shape: a small 2-chunk time vector must not merge
+        a heavy per-day-chunked panel — the panel keeps its layout and the
+        vector splits, with no guard trip and no warning."""
+        x2d = da.ones((840, 30), chunks=(70, 30))  # 197 kB, 12 fine row-chunks
+        t1d = da.ones(840, chunks=((560, 280),))  # 6.6 kB, nests in x2d's grid
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            result = x2d * t1d[:, None]
+            assert result.chunks[0] == (70,) * 12
+
+        assert_eq(result, np.ones((840, 30)))
+
+    def test_light_fine_operand_follows_heavy_coarse(self):
+        """The mirror image: a small finely-chunked vector merges up to a
+        heavy coarse partner's layout (moving the vector is cheap)."""
+        big = da.ones((6400, 40), chunks=(3200, 40))  # 2 MB, 2 coarse chunks
+        idx = da.ones(6400, chunks=800)  # 50 kB, 8 fine chunks
+
+        result = big * idx[:, None]
+
+        assert result.chunks[0] == (3200, 3200)
+
+    def test_fragment_healing_merge(self):
+        """A light operand may still propose a coarse layout when the merge
+        moves almost nothing — re-coalescing a sliver-fragmented panel (the
+        shift/pad pattern) must keep working."""
+        frag = da.ones((1442, 30), chunks=((1, 720, 721), 30))  # heavy panel
+        lite = da.ones((1442, 1), chunks=((721, 721), 1))  # light, coarse
+
+        result = frag + lite
+
+        assert result.chunks[0] == (721, 721)
+
+    def test_comparable_weights_keep_merging(self):
+        """Operands within the cost ratio (here 2x, from mixed dtypes) merge
+        as before; only clearly lighter operands lose the right to inflate."""
+        fine64 = da.ones(5600, chunks=700)
+        coarse32 = da.ones(5600, chunks=1400, dtype="f4")
+
+        result = fine64 + coarse32
+
+        assert result.chunks == ((1400,) * 4,)
+
+    def test_cost_ratio_boundary(self):
+        """Pin _MERGE_COST_RATIO = 4: the same merge (moving 75% of a float64
+        operand's bytes) is accepted against an int16 anchor (3x its weight)
+        and refused against a bool anchor (6x its weight)."""
+        mover = da.ones(800, chunks=100)  # merge to (400, 400) moves 4800 B
+
+        under = mover + da.ones(800, chunks=((400, 400),), dtype="i2")  # 4 x 1600 B
+        assert under.chunks == ((400, 400),)
+
+        over = mover + da.ones(800, chunks=((400, 400),), dtype=bool)  # 4 x 800 B
+        assert over.chunks == ((100,) * 8,)
+
+    def test_coarse_policy_always_merges(self):
+        """policy="coarse" restores the unconditional merge direction."""
+        x2d = da.ones((880, 20), chunks=(88, 20))
+        t1d = da.ones(880, chunks=((616, 264),))
+
+        with dask.config.set({"array.unify-chunks-policy": "coarse"}):
+            result = x2d * t1d[:, None]
+            assert result.chunks[0] == (616, 264)
+
+
 class TestUnifyChunksSizeLimit:
     """The size guard: coarsening must not manufacture chunks past the limit."""
 
@@ -144,12 +227,14 @@ class TestUnifyChunksSizeLimit:
 
         This is the shape of the bug that motivated the guard: a coarsely
         chunked time vector met per-day-chunked (time, asset) quantities and
-        merged them into multi-GB chunks.
+        merged them into multi-GB chunks.  The auto policy now refuses this
+        merge outright (see TestCostAwareDirection), so the guard is pinned
+        under the always-merge "coarse" policy it was built for.
         """
         x2d = da.ones((900, 50), chunks=(100, 50))  # 40 kB chunks
         t1d = da.ones(900, chunks=((600, 300),))  # boundaries nest in x2d's
 
-        with dask.config.set({"array.unify-chunks-limit": "100 kiB"}):
+        with dask.config.set({"array.unify-chunks-policy": "coarse", "array.unify-chunks-limit": "100 kiB"}):
             with pytest.warns(da.PerformanceWarning, match="unify-chunks-limit"):
                 result = x2d * t1d[:, None]
                 assert result.chunks[0] == (100,) * 9  # refined, not merged
@@ -158,7 +243,7 @@ class TestUnifyChunksSizeLimit:
         # refined expression above is a cached singleton)
         y2d = da.ones((960, 50), chunks=(96, 50))
         u1d = da.ones(960, chunks=((672, 288),))
-        with dask.config.set({"array.unify-chunks-limit": "10 MiB"}):
+        with dask.config.set({"array.unify-chunks-policy": "coarse", "array.unify-chunks-limit": "10 MiB"}):
             assert (y2d * u1d[:, None]).chunks[0] == (672, 288)
 
     def test_refine_policy(self):
@@ -199,7 +284,8 @@ class TestChunkReport:
     def test_names_the_offending_layout(self):
         x2d = da.ones((800, 40), chunks=(80, 40))
         t1d = da.ones(800, chunks=((560, 240),))
-        with dask.config.set({"array.unify-chunks-limit": "1 GiB"}):
+        # always-merge policy: the report should name the manufactured layout
+        with dask.config.set({"array.unify-chunks-policy": "coarse", "array.unify-chunks-limit": "1 GiB"}):
             y = x2d * t1d[:, None]
             y.chunks  # unify under the permissive limit -> merged layout
 
