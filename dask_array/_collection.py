@@ -123,6 +123,22 @@ __all__ = [
 _LOWER_CACHE: weakref.WeakValueDictionary[str, ArrayExpr] = weakref.WeakValueDictionary()
 
 
+def _lower(expr, optimize_graph):
+    """Simplify (when optimizing) and lower ``expr`` to a concrete form.
+
+    Equivalent to ``expr.simplify().lower_completely()`` but lowering goes
+    through the shared ``_LOWER_CACHE`` (see above), so subtrees shared by
+    many collections lower once.
+    """
+    if optimize_graph:
+        expr = expr.simplify()
+    while True:
+        new = expr.lower_once(_LOWER_CACHE)
+        if new._name == expr._name:
+            return expr
+        expr = new
+
+
 def _materialize(expr, optimize_graph=None):
     """Optimize an expression fully (simplify → lower → fuse) and pin its
     output keys back to the raw root name.
@@ -151,17 +167,7 @@ def _materialize(expr, optimize_graph=None):
     name = expr._name
     chunks = expr.chunks
 
-    def lower(expr):
-        # Equivalent to ``expr.lower_completely()`` but with a persistent cache.
-        while True:
-            new = expr.lower_once(_LOWER_CACHE)
-            if new._name == expr._name:
-                return expr
-            expr = new
-
-    if optimize_graph:
-        expr = expr.simplify()
-    expr = lower(expr)
+    expr = _lower(expr, optimize_graph)
     if optimize_graph:
         expr = expr.fuse()
     if expr._name != name:
@@ -178,7 +184,7 @@ def _materialize(expr, optimize_graph=None):
                     f"({chunks} -> {expr.chunks}) and the advertised chunks "
                     "are unknown, so they cannot be restored"
                 )
-            expr = lower(expr.rechunk(chunks))
+            expr = _lower(expr.rechunk(chunks), optimize_graph=False)
         if any(node._name == name for node in expr.walk()):
             # The pin's alias keys would collide with that node's own layer.
             # No rewrite embeds its input root today; fail loudly if one ever
