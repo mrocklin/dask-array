@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 
+import dask
 import numpy as np
 import pytest
 
@@ -105,3 +106,115 @@ class TestFallbackToCommonBlockdim:
         result = a + b
 
         assert result.chunks == ((4, 2, 4),)
+
+
+class TestUnifyChunksSizeLimit:
+    """The size guard: coarsening must not manufacture chunks past the limit."""
+
+    def test_refines_instead_of_merging_past_limit(self):
+        """Merging (12,)*4 up to (24,24) would exceed a tiny limit -> refine + warn.
+
+        NOTE (here and below): chunk unification runs lazily on first ``.chunks``
+        access, and expressions are singletons -- so each test touches ``.chunks``
+        inside its config context and uses shapes no other test builds.  Lowering
+        re-runs unification under the config current at optimize/compute time, so
+        a compute outside the context executes that config's layout (values are
+        identical either way; these tests assert layout at metadata level).
+        """
+        coarse = da.ones(48, chunks=24)  # 192 B chunks
+        fine = da.ones(48, chunks=12)
+
+        with dask.config.set({"array.unify-chunks-limit": "100 B"}):
+            with pytest.warns(da.PerformanceWarning, match="unify-chunks-limit"):
+                result = coarse + fine
+                assert result.chunks == ((12, 12, 12, 12),)
+        assert_eq(result, np.full(48, 2.0))
+
+    def test_merges_under_limit(self):
+        """Default limit leaves the coarse preference alone."""
+        coarse = da.ones(40, chunks=20)
+        fine = da.ones(40, chunks=10)
+
+        result = coarse + fine
+
+        assert result.chunks == ((20, 20),)
+
+    def test_guard_scales_with_other_dims(self):
+        """A 1D coarse operand must not inflate a 2D partner past the limit.
+
+        This is the shape of the bug that motivated the guard: a coarsely
+        chunked time vector met per-day-chunked (time, asset) quantities and
+        merged them into multi-GB chunks.
+        """
+        x2d = da.ones((900, 50), chunks=(100, 50))  # 40 kB chunks
+        t1d = da.ones(900, chunks=((600, 300),))  # boundaries nest in x2d's
+
+        with dask.config.set({"array.unify-chunks-limit": "100 kiB"}):
+            with pytest.warns(da.PerformanceWarning, match="unify-chunks-limit"):
+                result = x2d * t1d[:, None]
+                assert result.chunks[0] == (100,) * 9  # refined, not merged
+
+        # under a permissive limit the same shapes merge (fresh arrays: the
+        # refined expression above is a cached singleton)
+        y2d = da.ones((960, 50), chunks=(96, 50))
+        u1d = da.ones(960, chunks=((672, 288),))
+        with dask.config.set({"array.unify-chunks-limit": "10 MiB"}):
+            assert (y2d * u1d[:, None]).chunks[0] == (672, 288)
+
+    def test_refine_policy(self):
+        """array.unify-chunks-policy="refine" restores stock-dask unification."""
+        coarse = da.ones(56, chunks=28)
+        fine = da.ones(56, chunks=14)
+
+        with dask.config.set({"array.unify-chunks-policy": "refine"}):
+            result = coarse + fine
+            assert result.chunks == ((14, 14, 14, 14),)
+        assert_eq(result, np.full(56, 2.0))
+
+    def test_shrinking_operand_does_not_trip(self):
+        """Only chunks the merge would manufacture count against the limit.
+
+        The single-chunk 2D operand's chunks *shrink* under the merged layout,
+        so its (over-limit) size must not force refinement of the others.
+        """
+        a2d = da.ones((2250, 40), chunks=(2250, 20))  # 360 kB now, 240 kB merged
+        b1d = da.ones(2250, chunks=((1500, 750),))
+        c1d = da.ones(2250, chunks=750)  # nests in b1d; merge grows it to 12 kB
+
+        with dask.config.set({"array.unify-chunks-limit": "100 kiB"}):
+            result = a2d * b1d[:, None] * c1d[:, None]
+            assert result.chunks[0] == (1500, 750)  # merged; no false trip
+
+    def test_single_chunk_operand_still_defers(self):
+        """Trivial (single-chunk) axes carry no layout opinion; no guard trip."""
+        x = da.ones(88, chunks=11)
+        whole = da.ones(88, chunks=88)
+
+        with dask.config.set({"array.unify-chunks-limit": "100 B"}):
+            result = x + whole
+            assert result.chunks == ((11,) * 8,)
+
+
+class TestChunkReport:
+    def test_names_the_offending_layout(self):
+        x2d = da.ones((800, 40), chunks=(80, 40))
+        t1d = da.ones(800, chunks=((560, 240),))
+        with dask.config.set({"array.unify-chunks-limit": "1 GiB"}):
+            y = x2d * t1d[:, None]
+            y.chunks  # unify under the permissive limit -> merged layout
+
+        report = da.chunk_report(y)
+
+        assert "2ch(560..240) x 1ch(40)" in report  # the merged product layout
+        assert "largest chunks" in report
+        assert "layouts" in report
+
+    def test_metadata_only(self):
+        """The report never computes; a poisoned graph still reports fine."""
+
+        def boom():
+            raise AssertionError("chunk_report must not compute")
+
+        x = da.from_delayed(dask.delayed(boom)(), shape=(10,), dtype=float)
+        report = da.chunk_report(x + 1)
+        assert "1ch(10)" in report

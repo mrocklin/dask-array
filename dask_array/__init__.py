@@ -12,11 +12,23 @@ import numpy as _np
 # 15-35%). update_defaults respects an explicit user setting (but a
 # dask.config.refresh() would revert it to 4). The separate p2p-vs-tasks choice
 # stays at 4 (see _choose_rechunk_method).
-_dask.config.update_defaults({"array": {"rechunk": {"threshold": 32}}})
+# unify-chunks-limit caps how large a chunk the coarse unify policy may
+# manufacture when merging nested chunkings (above it, unification refines
+# instead); unify-chunks-policy="refine" opts into stock-dask refinement.
+_dask.config.update_defaults(
+    {
+        "array": {
+            "rechunk": {"threshold": 32},
+            "unify-chunks-limit": "512 MiB",
+            "unify-chunks-policy": "coarse",
+        }
+    }
+)
 
 from dask_array import _backends as _backends
 from dask_array import _chunk as chunk
 from dask_array._core_utils import PerformanceWarning
+from dask_array._diagnostics import chunk_report
 from dask.base import compute
 from dask_array._chunk_types import register_chunk_type
 

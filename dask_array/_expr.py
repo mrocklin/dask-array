@@ -21,7 +21,8 @@ from dask_array._core_utils import (
 )
 from dask.blockwise import broadcast_dimensions
 from dask.layers import ArrayBlockwiseDep
-from dask.utils import cached_cumsum, funcname
+from dask import config
+from dask.utils import cached_cumsum, format_bytes, funcname, parse_bytes
 
 _OBJECT_AT_PATTERN = re.compile(r"<.+? at 0x[0-9a-fA-F]+>")
 
@@ -491,7 +492,46 @@ def unify_chunks_expr(*args, warn=True):
         else:
             nameinds.append((a, ind))
 
-    chunkss = broadcast_dimensions(nameinds, blockdim_dict, consolidate=coarse_blockdim)
+    # array.unify-chunks-policy: "coarse" (default) merges nested chunkings up to the
+    # coarsest operand to cut task counts; "refine" is stock-dask behavior (finest
+    # common refinement -- splits only, never merges).
+    consolidate = coarse_blockdim
+    if config.get("array.unify-chunks-policy", "coarse") == "refine":
+        consolidate = common_blockdim
+    chunkss = broadcast_dimensions(nameinds, blockdim_dict, consolidate=consolidate)
+
+    # Size guard, the twin of the count warning below: nest-coarsening merges chunks
+    # without bound, so one coarsely-chunked operand can inflate every other operand
+    # (and everything downstream) into multi-GB chunks.  If the merged layout would
+    # exceed array.unify-chunks-limit for any participating array, redo the coarsened
+    # dims with common_blockdim instead -- refinement only splits chunks, so the
+    # fallback moves no data.
+    limit = config.get("array.unify-chunks-limit", None)
+    if limit and consolidate is coarse_blockdim:
+        limit = parse_bytes(limit) if isinstance(limit, str) else limit
+        worst = 0
+        for a, i in arginds:
+            if i is None or i == () or isinstance(a, ArrayBlockwiseDep):
+                continue
+            itemsize = a.dtype.itemsize
+            target = itemsize * math.prod(max(chunkss[j]) for n, j in enumerate(i) if a.shape[n] > 1)
+            current = itemsize * math.prod(max(c) for n, c in enumerate(a.chunks) if a.shape[n] > 1)
+            if target > current:  # only chunks the merge would manufacture count
+                worst = max(worst, target)
+        if worst > limit:
+            fine = broadcast_dimensions(nameinds, blockdim_dict, consolidate=common_blockdim)
+            coarsened = {j for j, c in chunkss.items() if len(fine[j]) > len(c)}
+            if coarsened:
+                if warn:
+                    warnings.warn(
+                        f"Chunk unification would merge chunks up to {format_bytes(worst)}, "
+                        f"above the 'array.unify-chunks-limit' of {format_bytes(limit)}; "
+                        f"refining to the inputs' finer chunking instead.",
+                        PerformanceWarning,
+                        stacklevel=3,
+                    )
+                chunkss = {j: fine[j] if j in coarsened else c for j, c in chunkss.items()}
+
     nparts = math.prod(map(len, chunkss.values())) if chunkss else 0
 
     if warn and nparts and nparts >= max_parts * 10:
