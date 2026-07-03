@@ -857,6 +857,20 @@ def test_rechunk_pushdown_concatenate_correctness():
 # --- Fusion regression tests ---
 
 
+def _walk_exprs(expr):
+    stack = [expr]
+    seen = set()
+    exprs = []
+    while stack:
+        expr = stack.pop()
+        if expr._name in seen:
+            continue
+        seen.add(expr._name)
+        exprs.append(expr)
+        stack.extend(expr.dependencies())
+    return exprs
+
+
 def test_fusion_broadcast_modulo():
     """Test that fusion handles broadcasting correctly with modulo.
 
@@ -995,6 +1009,55 @@ def test_fusion_chained_transpose():
     # Should fuse the add and transpose
     opt = result.expr.optimize(fuse=True)
     assert_eq(da.Array(opt), expected)
+
+
+def test_fusion_shared_prefix_upstream_of_fused_branches():
+    from dask_array._blockwise import Elemwise, FusedBlockwise
+
+    a = np.arange(12)
+    x = da.from_array(a, chunks=4)
+    prefix = ((x + 1) * 4) - 2
+    left = ((prefix + 2) * 3) - 1
+    right = ((prefix < 7) * 5) + 9
+
+    result = da.stack([left, right], axis=0)
+    prefix_expected = ((a + 1) * 4) - 2
+    expected = np.stack(
+        [
+            ((prefix_expected + 2) * 3) - 1,
+            ((prefix_expected < 7) * 5) + 9,
+        ],
+        axis=0,
+    )
+
+    optimized = result.expr.optimize(fuse=True)
+    exprs = _walk_exprs(optimized)
+
+    assert sum(isinstance(expr, FusedBlockwise) for expr in exprs) == 3
+    assert not any(isinstance(expr, Elemwise) for expr in exprs)
+    assert_eq(da.Array(optimized), expected)
+
+
+def test_fusion_many_branches_shared_prefix():
+    from dask_array._blockwise import Elemwise, FusedBlockwise
+
+    a = np.arange(24)
+    x = da.from_array(a, chunks=6)
+    prefix = ((x + 1) * 4) - 2
+    prefix_expected = ((a + 1) * 4) - 2
+
+    branches = []
+    expected = []
+    for i in range(12):
+        branches.append(((prefix + i) * (i + 2)) - i)
+        expected.append(((prefix_expected + i) * (i + 2)) - i)
+
+    optimized = da.stack(branches, axis=0).expr.optimize(fuse=True)
+    exprs = _walk_exprs(optimized)
+
+    assert sum(isinstance(expr, FusedBlockwise) for expr in exprs) == 13
+    assert not any(isinstance(expr, Elemwise) for expr in exprs)
+    assert_eq(da.Array(optimized), np.stack(expected, axis=0))
 
 
 def test_reduction_scalar_aggregate_meta():

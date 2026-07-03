@@ -1333,6 +1333,73 @@ def optimize_blockwise_fusion_array(expr):
     """
     from collections import defaultdict
 
+    def _substitute_many(expr, replacements):
+        from dask._expr import Expr
+
+        memo = {}
+
+        def rebuild(node, replace=True):
+            if replace and node._name in replacements:
+                result = rebuild(replacements[node._name], replace=False)
+                memo[node._name] = result
+                return result
+            if node._name in memo:
+                return memo[node._name]
+
+            if isinstance(node, FusedBlockwise):
+                result = rebuild_fused(node)
+            else:
+                update = False
+                operands = []
+                for operand in node.operands:
+                    if isinstance(operand, Expr):
+                        val = rebuild(operand)
+                        if operand._name != val._name:
+                            update = True
+                        operands.append(val)
+                    else:
+                        operands.append(operand)
+                result = type(node)(*operands) if update else node
+
+            memo[node._name] = result
+            return result
+
+        def rebuild_fused(node):
+            fused_names = {inner._name for inner in node.exprs}
+            rebuilt_internals = {}
+            update = False
+            exprs = []
+
+            # Inner exprs point at each other, so rebuild leaves first and thread
+            # updated children back into their parents.
+            for inner in reversed(node.exprs):
+                old_name = inner._name
+                inner_update = False
+                operands = []
+                for operand in inner.operands:
+                    if isinstance(operand, Expr):
+                        if operand._name in rebuilt_internals:
+                            val = rebuilt_internals[operand._name]
+                        elif operand._name in fused_names:
+                            val = operand
+                        else:
+                            val = rebuild(operand)
+                        if operand._name != val._name:
+                            inner_update = True
+                        operands.append(val)
+                    else:
+                        operands.append(operand)
+
+                if inner_update:
+                    inner = type(inner)(*operands)
+                    update = True
+                exprs.append(inner)
+                rebuilt_internals[old_name] = inner
+
+            return type(node)(tuple(reversed(exprs))) if update else node
+
+        return rebuild(expr)
+
     def _fusion_pass(expr):
         # Build dependency graph of fusable operations
         seen = set()
@@ -1369,9 +1436,13 @@ def optimize_blockwise_fusion_array(expr):
             for k, v in dependents.items()
             if v == set() or all(not is_fusable_elemwise(expr_mapping.get(_name)) for _name in v)
         ]
+        replacements = {}
+        assigned = set()
 
         while roots:
             root = roots.pop()
+            if root._name in assigned:
+                continue
             seen_in_group = set()
             stack = [root]
             group = []
@@ -1379,7 +1450,7 @@ def optimize_blockwise_fusion_array(expr):
             while stack:
                 node = stack.pop()
 
-                if node._name in seen_in_group:
+                if node._name in seen_in_group or node._name in assigned:
                     continue
                 seen_in_group.add(node._name)
 
@@ -1404,11 +1475,13 @@ def optimize_blockwise_fusion_array(expr):
                 # Check for conflicting block patterns before fusing
                 group = _remove_conflicting_exprs(group)
                 if len(group) > 1:
-                    fused = FusedBlockwise(tuple(group))
-                    new_expr = expr.substitute(group[0], fused)
-                    return new_expr, not roots
+                    replacements[group[0]._name] = FusedBlockwise(tuple(group))
+                    assigned.update(node._name for node in group)
 
-        # No fusable groups found
+        if replacements:
+            # Apply all groups from this pass in one rebuild; one-at-a-time
+            # substitution is quadratic on wide pipeline-shaped graphs.
+            return _substitute_many(expr, replacements), False
         return expr, True
 
     # Iterate until no more fusion is possible
@@ -1463,6 +1536,74 @@ class FusedBlockwise(ArrayExpr):
                     external_deps.append(dep)
                     seen.add(dep._name)
         return external_deps
+
+    def _substitute(self, old, new, _seen):
+        from dask._expr import Expr
+
+        if self._name in _seen:
+            return self
+        if isinstance(old, Expr):
+            substitute_literal = False
+            if self._name == old._name:
+                return new
+        else:
+            substitute_literal = True
+            if isinstance(old, bool):
+                raise TypeError("Arguments to `substitute` cannot be bool.")
+
+        fused_names = {expr._name for expr in self.exprs}
+        cache = {}
+        replacements = {}
+        update = False
+        exprs = []
+
+        for expr in reversed(self.exprs):
+            old_name = expr._name
+            if isinstance(old, Expr) and expr._name == old._name:
+                exprs.append(new)
+                replacements[old_name] = new
+                update = True
+                continue
+
+            expr_update = False
+            operands = []
+            for operand in expr.operands:
+                if isinstance(operand, Expr):
+                    if operand._name in replacements:
+                        val = replacements[operand._name]
+                    elif isinstance(old, Expr) and operand._name == old._name:
+                        val = new
+                    elif operand._name in fused_names:
+                        val = operand
+                    else:
+                        val = cache.get(operand._name)
+                        if val is None:
+                            val = operand._substitute(old, new, _seen)
+                            cache[operand._name] = val
+                    if operand._name != val._name:
+                        expr_update = True
+                    operands.append(val)
+                elif (
+                    substitute_literal
+                    and not isinstance(operand, bool)
+                    and isinstance(operand, type(old))
+                    and operand == old
+                ):
+                    operands.append(new)
+                    expr_update = True
+                else:
+                    operands.append(operand)
+
+            if expr_update:
+                expr = type(expr)(*operands)
+                update = True
+            exprs.append(expr)
+            replacements[old_name] = expr
+
+        if update:
+            return type(self)(tuple(reversed(exprs)))
+        _seen.add(self._name)
+        return self
 
     def _frisky_layer(self):
         from dask_array._frisky.fused_blockwise import FusedBlockwiseLayer
