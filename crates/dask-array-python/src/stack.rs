@@ -2,8 +2,9 @@
 //!
 //! Each output block at coord `c` picks input array `dep_names[c[axis]]`
 //! and source block coord `c` with the new axis position removed. The task
-//! is `getitem(source_block, indexer)` where `indexer` is the same for every
-//! block (shared `ArgSlot::Literal(0)`).
+//! is `np.expand_dims(source_block, axis)`. The axis is an integer scalar, so
+//! stack layers can use binary records instead of falling back for a literal
+//! getitem indexer.
 //!
 //! `dep_names` holds one entry per input array; `name_idx` in each `Dep` slot
 //! is `c[axis]` — so the new-axis coordinate directly selects the input array.
@@ -13,13 +14,13 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use crate::common::{to_dask_graph, to_task_records, ArgSlot, Compute, Expanded, NeutralTask};
+use crate::common::{to_dask_graph, to_task_records, ArgSlot, Compute, Expanded, NeutralTask, Num};
 
 #[pyclass]
 pub struct StackLayer {
     /// Output layer name.
     name: String,
-    /// `getitem` function (shared for every task).
+    /// `np.expand_dims` function (shared for every task).
     func: Py<PyAny>,
     /// Empty kwargs dict (stack tasks take no kwargs).
     kwargs: Py<PyAny>,
@@ -30,9 +31,6 @@ pub struct StackLayer {
     out_numblocks: Vec<usize>,
     /// The position of the new axis in the output coordinate (0-based).
     axis: usize,
-    /// The shared indexer tuple: `(slice(None),)*axis + (None,) + (slice(None),)*(ndim-axis)`.
-    /// Stored as a Python object and passed as `ArgSlot::Literal(0)` to every task.
-    indexer: Py<PyAny>,
 }
 
 #[pymethods]
@@ -45,7 +43,6 @@ impl StackLayer {
         dep_names: Vec<String>,
         out_numblocks: Vec<usize>,
         axis: usize,
-        indexer: Py<PyAny>,
     ) -> Self {
         Self {
             name,
@@ -54,7 +51,6 @@ impl StackLayer {
             dep_names,
             out_numblocks,
             axis,
-            indexer,
         }
     }
 
@@ -77,7 +73,7 @@ impl StackLayer {
     /// Iterates output blocks in C order. For each output coord `c`:
     /// - `c[axis]` selects the input array (`dep_names[c[axis]]`).
     /// - The source block coord is `c` with position `axis` removed.
-    /// - Slots: `[Dep{name_idx: c[axis], coord: source_coord}, Literal(0)]`.
+    /// - Slots: `[Dep{name_idx: c[axis], coord: source_coord}, Scalar(axis)]`.
     fn expand(&self) -> Expanded<'_> {
         let out_ndim = self.out_numblocks.len();
         let total: usize = if out_ndim == 0 {
@@ -110,8 +106,7 @@ impl StackLayer {
                         name_idx,
                         coord: src_coord,
                     },
-                    // literals[0] is the shared indexer (same for every block).
-                    ArgSlot::Literal(0),
+                    ArgSlot::Scalar(Num::Int(self.axis as i64)),
                 ],
             });
 
@@ -129,7 +124,7 @@ impl StackLayer {
             names: vec![&self.name],
             funcs: vec![&self.func],
             kwargs: &self.kwargs,
-            literals: std::slice::from_ref(&self.indexer),
+            literals: &[],
             dep_names: &self.dep_names,
             tasks,
         }

@@ -69,18 +69,15 @@ class Stack(ArrayExpr):
         from dask_array._frisky import StackLayer
 
         axis = self.axis
-        ndim = self._meta.ndim - 1  # input ndim
-        indexer = (slice(None),) * axis + (None,) + (slice(None),) * (ndim - axis)
         out_numblocks = tuple(len(c) for c in self.chunks)
         dep_names = [a._name for a in self.args]
 
         return StackLayer(
             name=self._name,
-            func=getitem,
+            func=np.expand_dims,
             dep_names=dep_names,
             out_numblocks=out_numblocks,
             axis=axis,
-            indexer=indexer,
         )
 
     def _simplify_down(self):

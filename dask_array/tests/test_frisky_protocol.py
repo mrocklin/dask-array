@@ -61,6 +61,41 @@ def test_sliding_window_overlap_uses_binary_records():
     assert records == []
 
 
+@pytest.mark.parametrize("axis", [0, 1, 2])
+def test_stack_uses_binary_records(axis):
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    import json
+
+    x = da.ones((4, 6), chunks=(2, 3))
+    y = new_collection(da.stack([x, x + 1], axis=axis).expr.optimize(fuse=False))
+
+    _chunks, records, chunk_groups = y.__frisky_records_chunks__()
+
+    assert records == []
+    assert "Stack" in {json.loads(meta)["op"] for _, meta, _ in chunk_groups}
+
+
+@pytest.mark.parametrize("axis", [0, 1, 2])
+def test_stack_native_layer_matches_legacy_graph(axis):
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+
+    x = da.from_array(np.arange(4 * 6).reshape(4, 6), chunks=(2, 3))
+    y = da.stack([x, x + 100], axis=axis)
+    expr = y.expr
+    dep_graph = {}
+    for dep in expr.dependencies():
+        dep_graph.update(dict(dep.__dask_graph__()))
+    legacy_graph = expr._layer()
+    native_graph = expr._frisky_layer().to_dask_graph()
+
+    for key in flatten(expr.__dask_keys__()):
+        expected = get_sync({**dep_graph, **legacy_graph}, key)
+        actual = get_sync({**dep_graph, **native_graph}, key)
+        np.testing.assert_array_equal(actual, expected)
+
+
 def test_chunk_groups_carry_name_and_metadata():
     """Each binary chunk ships its producing expr's ``_name`` (the stable layer
     identity, which a key prefix can't always recover), an opaque JSON blob of
