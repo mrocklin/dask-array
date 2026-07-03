@@ -128,6 +128,18 @@ def test_array_optimize_matches_expr_optimize_for_common_shapes():
         assert x.optimize().expr._name == x.expr.optimize()._name
 
 
+def test_array_optimize_computes_correct_values():
+    """optimize() then compute() runs the optimized graph end-to-end.
+
+    Other optimize tests assert structure (``._name``) or frisky keys; none
+    execute an ``Array.optimize()`` result to a value through the collection's
+    own pinned-compute path.
+    """
+    x = da.from_array(np.arange(20), chunks=5)
+    result = ((x + 1)[2:17]).optimize()
+    assert_eq(result, np.arange(20)[2:17] + 1)
+
+
 def test_lowering_shares_work_across_collections_with_shared_ancestry():
     """Lowering many collections that share a deep ancestry must reuse a shared,
     name-keyed lowering cache so the common subtree is lowered (and tokenized)
