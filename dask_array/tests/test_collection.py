@@ -301,6 +301,26 @@ def test_from_array_name_is_exact():
     assert_eq(d, x)
 
 
+@pytest.mark.requires_local_scheduler
+def test_from_array_exact_name_does_not_reuse_metadata():
+    a_data = np.arange(6).reshape(2, 3)
+    b_data = np.arange(20).reshape(4, 5)
+
+    a = da.from_array(a_data, chunks=(1, 3), name="same-name")
+    b = da.from_array(b_data, chunks=(2, 5), name="same-name")
+
+    assert a.name == "same-name"
+    assert b.name == "same-name"
+    assert a.shape == (2, 3)
+    assert a.chunks == ((1, 1), (3,))
+    assert b.shape == (4, 5)
+    assert b.chunks == ((2, 2), (5,))
+    assert_eq(a, a_data)
+    assert_eq(b, b_data)
+    assert_eq(a + 1, a_data + 1)
+    assert_eq(b + 1, b_data + 1)
+
+
 # compute=False hands the store back lazily, so the caller's later .compute()
 # decides the scheduler. Under Frisky that serializes the target and writes to a
 # copy, so the in-place mutation can't be observed (the compute=True path forces a

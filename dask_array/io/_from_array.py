@@ -87,6 +87,25 @@ class FromArray(IO):
     # Slicing can be pushed into FromArray by slicing the source array
     _slice_pushdown = True
 
+    def __new__(cls, *args, _determ_token=None, **kwargs):
+        exact_index = cls._parameters.index("_name_is_exact")
+        if len(args) > exact_index:
+            name_is_exact = args[exact_index]
+        else:
+            name_is_exact = kwargs.get("_name_is_exact", cls._defaults["_name_is_exact"])
+
+        if name_is_exact:
+            from dask._expr import Expr
+
+            return Expr.__new__(cls, *args, _determ_token=_determ_token, **kwargs)
+
+        return super().__new__(cls, *args, _determ_token=_determ_token, **kwargs)
+
+    def lower_once(self, lowered):
+        if self.operand("_name_is_exact"):
+            return self
+        return super().lower_once(lowered)
+
     @functools.cached_property
     def _name(self):
         prefix = self.operand("_name_override") or "fromarray"

@@ -32,8 +32,6 @@ jobs:
   test-frisky-rust:
     name: Test Frisky Rust path
     runs-on: ubuntu-latest
-    env:
-      FRISKY_VERSION: "0.1.1"
     steps:
       - uses: actions/checkout@v6
         with:
@@ -46,8 +44,8 @@ jobs:
       - name: Install test environment
         run: uv sync --extra test --extra complete --extra sparse --group dev
       - name: Install Frisky
-        # Frisky 0.1.1's dask-array gate is validated against this Dask-era stack.
-        run: uv pip install "frisky==$FRISKY_VERSION" "dask==2026.3.0" "numpy==2.4.6" "xarray==2026.4.0"
+        # Exercise the latest published Frisky against this explicit Dask-era stack.
+        run: uv pip install frisky "dask==2026.3.0" "numpy==2.4.6" "xarray==2026.4.0"
       - name: Build dask-array Rust extension
         run: MATURIN_IMPORT_HOOK_ENABLED=0 .venv/bin/python -m maturin develop --release
       - name: Check native Frisky layer

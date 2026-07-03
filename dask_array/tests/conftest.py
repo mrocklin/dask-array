@@ -27,6 +27,14 @@ def pytest_configure(config):
         "requires_local_scheduler: behavior needs a local (in-process, by-reference) "
         "scheduler; skipped under Frisky, which serializes task data.",
     )
+    config.addinivalue_line(
+        "markers",
+        "xfail_frisky: known Frisky scheduler gap; xfailed only on the Frisky scheduler variant.",
+    )
+    config.addinivalue_line(
+        "markers",
+        "skip_frisky: known Frisky scheduler gap; skipped only on the Frisky scheduler variant.",
+    )
     scheduler = config.getoption("--scheduler")
     if scheduler in ("frisky", "both") and importlib.util.find_spec("frisky") is None:
         raise pytest.UsageError(
@@ -68,10 +76,27 @@ def pytest_collection_modifyitems(config, items):
     # Tests that need a local scheduler (e.g. da.store mutating a client-side
     # target in place) can't be observed under Frisky, which serializes task
     # data. Skip them only on the frisky variant.
-    skip_frisky = pytest.mark.skip(reason="requires a local scheduler; Frisky serializes task data")
+    skip_local_scheduler_on_frisky = pytest.mark.skip(reason="requires a local scheduler; Frisky serializes task data")
     for item in items:
         if "requires_local_scheduler" not in item.keywords:
             continue
         callspec = getattr(item, "callspec", None)
         if callspec and callspec.params.get("array_scheduler") == "frisky":
+            item.add_marker(skip_local_scheduler_on_frisky)
+
+    issue = "https://github.com/mrocklin/dask-array/issues/10"
+    skip_frisky = pytest.mark.skip(reason=f"known Frisky scheduler gap; see {issue}")
+    for item in items:
+        if "skip_frisky" not in item.keywords:
+            continue
+        callspec = getattr(item, "callspec", None)
+        if callspec and callspec.params.get("array_scheduler") == "frisky":
             item.add_marker(skip_frisky)
+
+    xfail_frisky = pytest.mark.xfail(reason=f"known Frisky scheduler gap; see {issue}", strict=True)
+    for item in items:
+        if "xfail_frisky" not in item.keywords:
+            continue
+        callspec = getattr(item, "callspec", None)
+        if callspec and callspec.params.get("array_scheduler") == "frisky":
+            item.add_marker(xfail_frisky)

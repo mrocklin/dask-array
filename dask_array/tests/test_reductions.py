@@ -204,7 +204,7 @@ def reduction_1d_test(da_func, darr, np_func, narr, use_dtype=True, split_every=
         assert_eq(da_func(darr, keepdims=True, split_every=2), np_func(narr, keepdims=True))
 
 
-@pytest.mark.parametrize("dtype", ["f4", "i4", "c8"])
+@pytest.mark.parametrize("dtype", ["f4", "i4", pytest.param("c8", marks=pytest.mark.skip_frisky)])
 def test_reductions_1D(dtype):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", ComplexWarning)

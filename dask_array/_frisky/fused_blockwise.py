@@ -147,8 +147,9 @@ class FusedBlockwiseLayer:
             dep_keys = []
             for src_name, src_nb in sources:
                 sk = (src_name, *_broadcast_block_id(src_nb, bid))
-                refs.append(TaskRef(sk))
-                dep_keys.append(str(sk))
+                dep_key = str(sk)
+                refs.append(TaskRef(dep_key))
+                dep_keys.append(dep_key)
             records.append((str((name, *bid)), shared, tuple(refs), _EMPTY_KWARGS, dep_keys))
         return records
 

@@ -14,6 +14,15 @@ from dask_array._new_collection import new_collection
 from dask_array._overlap import overlap_internal
 
 
+def _record_literal_args(records):
+    for _, func, args, _, _ in records:
+        yield from args
+        subgraph = getattr(func, "subgraph", None)
+        if subgraph is not None:
+            for task in subgraph.values():
+                yield from getattr(task, "args", ())
+
+
 def test_dask_graph_does_not_import_frisky_modules():
     for name in list(sys.modules):
         if name == "dask_array._rust" or name.startswith("dask_array._frisky"):
@@ -37,28 +46,35 @@ def test_frisky_graph_imports_frisky_modules():
     assert "dask_array._frisky" in sys.modules
 
 
-def test_numeric_scalar_blockwise_uses_binary_records():
+def test_numeric_scalar_materialized_graph_uses_binary_alias_and_fused_records():
     if importlib.util.find_spec("dask_array._rust") is None:
         pytest.skip("requires Rust extension")
+    import json
 
     x = new_collection((da.ones((4, 4), chunks=(2, 2)) + 1).expr.optimize(fuse=False))
 
-    chunks, records, _chunk_groups = x.__frisky_records_chunks__()
+    chunks, records, chunk_groups = x.__frisky_records_chunks__()
 
-    assert len(chunks) == 2
-    assert records == []
+    assert len(chunks) == 1
+    assert records
+    assert [json.loads(meta)["op"] for _, meta, _ in chunk_groups] == ["RootAlias"]
+    assert all(type(func).__name__ == "_FusedSubgraph" for _, func, _, _, _ in records)
 
 
 def test_sliding_window_overlap_uses_binary_records():
     if importlib.util.find_spec("dask_array._rust") is None:
         pytest.skip("requires Rust extension")
+    import json
 
     x = da.sliding_window_view(da.ones(12, chunks=4), 3).sum()
 
-    chunks, records, _chunk_groups = x.__frisky_records_chunks__()
+    chunks, records, chunk_groups = x.__frisky_records_chunks__()
 
     assert chunks
-    assert records == []
+    assert records
+    ops = {json.loads(meta)["op"] for _, meta, _ in chunk_groups}
+    assert {"RootAlias", "PartialReduce", "OverlapInternal", "Ones"} <= ops
+    assert all(record[0].startswith("('sum-sliding_window_view-") for record in records)
 
 
 @pytest.mark.parametrize("axis", [0, 1, 2])
@@ -108,7 +124,7 @@ def test_chunk_groups_carry_name_and_metadata():
     x = new_collection((da.ones((4, 4), chunks=(2, 2)) + 1).expr.optimize(fuse=False))
     chunks, records, chunk_groups = x.__frisky_records_chunks__()
 
-    assert len(chunk_groups) == len(chunks) == 2
+    assert len(chunk_groups) == len(chunks) == 1
     for name, meta, upstream in chunk_groups:
         assert isinstance(name, str) and name  # the expr `_name`
         assert isinstance(upstream, list)  # upstream group names
@@ -119,22 +135,15 @@ def test_chunk_groups_carry_name_and_metadata():
         assert info["dtype"]  # e.g. "float64"
         assert "op" in info
         assert isinstance(info["params"], dict)  # scalar params, not array inputs
-    # The two layers are distinct exprs => distinct group names.
-    assert len({name for name, _, _ in chunk_groups}) == 2
 
-    # The layer-DAG edge: the `+ 1` (Elemwise) layer's upstream is the ones source
-    # layer, and the source layer has no upstream.
-    by_op = {json.loads(m)["op"]: (name, up) for name, m, up in chunk_groups}
-    ones_name, ones_up = by_op["Ones"]
-    add_name, add_up = by_op["Elemwise"]
-    assert ones_up == [], "the source layer has no upstream"
-    assert add_up == [ones_name], "the add layer depends on the ones layer"
+    # The submitted graph is materialized before record collection, so the binary
+    # group is the stable output-key alias and its upstream is the fused producer.
+    info = json.loads(chunk_groups[0][1])
+    assert info["op"] == "RootAlias"
+    assert chunk_groups[0][2] == [x._lowered_expr.dependencies()[0]._name]
 
-    # The expression's scalar parameters are captured (op/shape/etc.), while its
-    # array inputs (child exprs) are excluded.
-    params = {json.loads(m)["op"]: json.loads(m)["params"] for _, m, _ in chunk_groups}
-    assert params["Elemwise"]["op"] == "add"  # the `+ 1` operator, not an array
-    assert params["Ones"]["shape"] == [4, 4]  # a scalar param on the source
+    params = info["params"]
+    assert params["name"] == x.name
 
 
 def test_summarize_chunks_bounds_finely_chunked_dims():
@@ -347,7 +356,7 @@ def test_numpy_scalar_blockwise_stays_on_python_records():
 
     assert len(chunks) == 1
     assert records
-    assert any(type(arg) is np.float64 for _, _, args, _, _ in records for arg in args)
+    assert any(type(arg) is np.float64 for arg in _record_literal_args(records))
 
 
 def test_large_int_scalar_blockwise_stays_on_python_records():
@@ -361,7 +370,7 @@ def test_large_int_scalar_blockwise_stays_on_python_records():
 
     assert len(chunks) == 1
     assert records
-    assert any(arg == scalar for _, _, args, _, _ in records for arg in args)
+    assert any(arg == scalar for arg in _record_literal_args(records))
 
 
 def _constant_block():

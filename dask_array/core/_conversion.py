@@ -199,6 +199,7 @@ def from_array(
 
     # Determine name for the expression. User-provided string names match
     # dask.array.from_array and are used exactly.
+    determ_token = None
     if name in (None, True):
         # Deterministic: use "array" prefix, token computed from operands
         name_prefix = "array"
@@ -211,6 +212,7 @@ def from_array(
         # Custom: use user-provided name exactly
         name_prefix = name
         name_is_exact = True
+        determ_token = (FromArray, name_prefix, uuid.uuid1())
 
     # Normalize lock=True to SerializableLock() for actual use
     if lock is True:
@@ -229,6 +231,7 @@ def from_array(
             inline_array=inline_array,
             _name_override=name_prefix,
             _name_is_exact=name_is_exact,
+            _determ_token=determ_token,
         )
     )
 

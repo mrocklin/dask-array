@@ -547,6 +547,7 @@ def test_svd_compressed_deterministic():
 @pytest.mark.parametrize("n", [5, 10, 15, 20])
 @pytest.mark.parametrize("k", [5])
 @pytest.mark.parametrize("chunks", [(5, 10), (10, 5)])
+@pytest.mark.xfail_frisky
 def test_svd_compressed_shapes(m, n, k, chunks):
     x = da.random.default_rng().random(size=(m, n), chunks=chunks)
     u, s, v = svd_compressed(x, k, n_power_iter=1, compute=True, seed=1)
