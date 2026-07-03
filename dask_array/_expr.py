@@ -128,13 +128,18 @@ class ArrayExpr(SingletonExpr):
 
     def __dask_graph__(self):
         from dask._expr import Expr
+        from dask_array._collection import _materialize
 
-        return Expr.__dask_graph__(self.optimize())
+        # Materialize (not just optimize): pinning the output keys back to
+        # this node's name means any dask-side consumer that pairs this graph
+        # with our (raw) keys — e.g. ``dask.optimize``'s rebuild — finds them.
+        return Expr.__dask_graph__(_materialize(self))
 
     def _layer(self):
         from dask._expr import Expr
+        from dask_array._collection import _materialize
 
-        expr = self.optimize()
+        expr = _materialize(self)
         if expr is self:
             raise NotImplementedError(f"{type(self).__name__} must implement _layer or lower before materialization")
         return Expr.__dask_graph__(expr)
@@ -586,6 +591,76 @@ class ChunksOverride(ArrayExpr):
         dsk = {}
         chunk_ranges = [range(len(c)) for c in self._chunks]
         for idx in product(*chunk_ranges):
+            out_key = (self._name,) + idx
+            in_key = (self.array._name,) + idx
+            dsk[out_key] = Alias(out_key, in_key)
+        return dsk
+
+
+class RootAlias(ArrayExpr):
+    """Pin an optimized expression's output keys to a stable public name.
+
+    Optimization (simplify/lower/fuse) renames every node it rewrites,
+    including the root — but a collection's advertised keys
+    (``Array.__dask_keys__``, and thus everything the dask collection protocol
+    hands back after ``compute``/``persist``) must not change between "keys
+    were advertised" and "results came back".  So materialization pins the
+    root: the graph ends in one alias task per output block, mapping the
+    stable ``(raw root name, i, ...)`` keys to the optimized root's keys.
+
+    Only constructed *after* optimization has finished (``_materialize`` in
+    ``_collection.py``), and never fed back through simplify/lower/fuse:
+    ``_name`` is pinned rather than content-derived, so the rewrite
+    framework's name-based change detection cannot see through it.  For the
+    same reason this class opts out of the singleton registry — two pins of
+    the same name around different targets must not be conflated.
+    """
+
+    _parameters = ["array", "name"]
+
+    def __init__(self, *args, **kwargs):
+        # A non-trivial __init__ disables SingletonExpr's dedup-by-_name
+        # (it only dedups when cls.__init__ is object.__init__).
+        pass
+
+    def lower_once(self, lowered):
+        # Already materialized — there is nothing left to lower. Crucially,
+        # this must never enter the (name-keyed) lowering cache: our name is
+        # the *raw* root's name, and a later tree containing that raw subtree
+        # would get this pin spliced into its middle on a cache hit.
+        return self
+
+    @functools.cached_property
+    def _name(self):
+        return self.operand("name")
+
+    @functools.cached_property
+    def _meta(self):
+        return self.array._meta
+
+    @functools.cached_property
+    def chunks(self):
+        return self.array.chunks
+
+    @functools.cached_property
+    def transfer_bytes(self):
+        # Pure 1:1 alias layer -- no data moves.
+        return TransferBytes(0.0, 0.0)
+
+    def _frisky_layer(self):
+        from dask_array._frisky.blocks import BlocksLayer
+
+        # 1:1 alias of every block (same coord), like ChunksOverride.
+        index_maps = [list(range(len(c))) for c in self.chunks]
+        return BlocksLayer(self._name, self.array._name, index_maps)
+
+    def _layer(self) -> dict:
+        from itertools import product
+
+        from dask._task_spec import Alias
+
+        dsk = {}
+        for idx in product(*(range(len(c)) for c in self.chunks)):
             out_key = (self._name,) + idx
             in_key = (self.array._name,) + idx
             dsk[out_key] = Alias(out_key, in_key)

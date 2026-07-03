@@ -45,6 +45,12 @@ from dask_array._test_utils import assert_eq, same_keys
 @pytest.mark.parametrize("dtype", ["i4"])
 def test_arr_like(funcname, shape, cast_shape, dtype, cast_chunks, chunks, name, order, backend):
     backend_lib = pytest.importorskip(backend)
+    if name is not None:
+        # A user-pinned name IS the graph key, and the caller owns its
+        # uniqueness: reusing one name for different data on a shared
+        # scheduler (the frisky test cluster caches results by key across
+        # tests) would serve one variant's blocks to another.
+        name = f"my-name-{funcname}-{order}-{dtype}"
     with dask.config.set({"array.backend": backend}):
         np_func = getattr(backend_lib, funcname)
         da_func = getattr(da, funcname)

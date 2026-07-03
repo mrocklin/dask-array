@@ -306,7 +306,7 @@ def _handle_out(out, result):
                 f"Mismatched shapes between result and out parameter. out={out.shape}, result={result.shape}"
             )
         # Modify the out array in-place by replacing its expression
-        out._expr = result._expr
+        out._replace_expr(result._expr)
         return out
     else:
         return result

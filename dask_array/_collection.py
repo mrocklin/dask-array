@@ -11,12 +11,11 @@ import numpy as np
 from dask import config
 from dask_array import _chunk as chunk
 from dask_array._new_collection import new_collection
-from dask_array._expr import ArrayExpr
+from dask_array._expr import ArrayExpr, RootAlias
 from dask_array.manipulation._transpose import Transpose
 from dask_array._chunk_types import is_valid_chunk_type
 from dask.base import DaskMethodsMixin, is_dask_collection, named_schedulers
-from dask.core import flatten
-from dask.utils import format_bytes, has_keyword, key_split, typename
+from dask.utils import format_bytes, has_keyword, typename
 
 from dask_array._templates import get_template
 
@@ -124,39 +123,81 @@ __all__ = [
 _LOWER_CACHE: weakref.WeakValueDictionary[str, ArrayExpr] = weakref.WeakValueDictionary()
 
 
-def _lower(expr, optimize_graph=None):
-    """Lower an expression to its task graph for ``__dask_graph__``/``__dask_keys__``
-    and the Frisky records walk.
+def _materialize(expr, optimize_graph=None):
+    """Optimize an expression fully (simplify → lower → fuse) and pin its
+    output keys back to the raw root name.
 
-    When ``array.optimize-graph`` is True (the default) we ``simplify()`` first,
-    running the expression rewrites the legacy optimizing path always runs (e.g.
-    collapsing ``Rechunk(Rechunk(x))`` and pushing a rechunk into a rechunk-capable
-    IO read). Without simplify, a user ``.chunk()`` over a ``chunks="auto"`` open
-    emits redundant rechunk-split/merge tasks (~2x). Set it False to observe the
-    raw, un-simplified graph (e.g. structural tests asserting on task counts).
+    This is the single place where an expression becomes a task graph — used
+    by ``__dask_graph__``, ``__dask_keys__``'s contract, and the Frisky
+    records walk. Optimization renames every node it rewrites, but a
+    collection's advertised keys are its *raw* root expression's name
+    (``Array._name``), assigned at construction and stable forever. So when
+    optimization renamed the root, the result is wrapped in a ``RootAlias``
+    whose layer aliases ``(raw name, i, ...)`` to the optimized root's keys.
+    Results therefore always come back under the keys that were advertised —
+    ``persist`` round-trips without any name reconciliation.
 
-    All three lowering sites (``__dask_graph__``, ``__dask_keys__``, and the Frisky
-    records walk in ``_frisky/collect.py``) gate on this one flag so they stay
-    mutually consistent: Frisky derives a records collection's output keys from
-    ``__dask_keys__()``, so the records walk and ``__dask_keys__`` must agree on
-    whether they simplified, or the client hangs waiting on keys the graph never
-    produces.
-
-    Lowering runs through the shared ``_LOWER_CACHE`` (see above) so a subtree
-    shared by many collections is lowered once rather than once per collection.
-    This reuses dask's own ``lower_once`` step; the only change from
-    ``lower_completely`` is that the per-step cache persists across calls.
+    When ``array.optimize-graph`` is True (the default) we ``simplify()`` and
+    ``fuse()``; set it False to observe the raw, un-simplified graph (e.g.
+    structural tests asserting on task counts). Lowering always runs (a graph
+    cannot be built from un-lowered nodes) and goes through the shared
+    ``_LOWER_CACHE`` (see above) so a subtree shared by many collections is
+    lowered once rather than once per collection.
     """
     if optimize_graph is None:
         optimize_graph = config.get("array.optimize-graph", True)
+    if isinstance(expr, RootAlias):
+        return expr  # only ever built here, over an already-materialized tree
+    name = expr._name
+    chunks = expr.chunks
+
+    def lower(expr):
+        # Equivalent to ``expr.lower_completely()`` but with a persistent cache.
+        while True:
+            new = expr.lower_once(_LOWER_CACHE)
+            if new._name == expr._name:
+                return expr
+            expr = new
+
     if optimize_graph:
         expr = expr.simplify()
-    # Equivalent to ``expr.lower_completely()`` but with a persistent cache.
-    while True:
-        new = expr.lower_once(_LOWER_CACHE)
-        if new._name == expr._name:
-            return expr
-        expr = new
+    expr = lower(expr)
+    if optimize_graph:
+        expr = expr.fuse()
+    if expr._name != name:
+        if not _chunks_match(expr.chunks, chunks):
+            # A rewrite chose a different output chunking (e.g. the
+            # sliding-window reductions avoid a padding rechunk by emitting
+            # coarser blocks). The collection's advertised chunks are a
+            # promise, so bridge back to them. Cheap when the rewrite's grid
+            # is coarser (pure splits); the real fix is for such rewrites to
+            # advertise their chunking at construction time.
+            if any(math.isnan(s) for dim in chunks for s in dim):
+                raise RuntimeError(
+                    f"optimization changed the block structure of {name} "
+                    f"({chunks} -> {expr.chunks}) and the advertised chunks "
+                    "are unknown, so they cannot be restored"
+                )
+            expr = lower(expr.rechunk(chunks))
+        if any(node._name == name for node in expr.walk()):
+            # The pin's alias keys would collide with that node's own layer.
+            # No rewrite embeds its input root today; fail loudly if one ever
+            # does rather than silently merging two layers under one name.
+            raise RuntimeError(
+                f"optimization embedded the original root {name} inside its rewrite; cannot pin output keys"
+            )
+        expr = RootAlias(expr, name)
+    return expr
+
+
+def _chunks_match(a, b):
+    """Chunk equality, treating unknown (nan) sizes as matching."""
+    if len(a) != len(b):
+        return False
+    return all(
+        len(da) == len(db) and all(sa == sb or (math.isnan(sa) and math.isnan(sb)) for sa, sb in zip(da, db))
+        for da, db in zip(a, b)
+    )
 
 
 class Array(DaskMethodsMixin):
@@ -169,7 +210,10 @@ class Array(DaskMethodsMixin):
 
     def __getstate__(self):
         state = self.__dict__.copy()
+        # Derived caches: _lowered_expr can be huge (a materialized graph) and
+        # _cached_dask_keys holds one tuple per block. Both rebuild cheaply.
         state.pop("_lowered_expr", None)
+        state.pop("_cached_dask_keys", None)
         return state
 
     def __setstate__(self, state):
@@ -179,34 +223,54 @@ class Array(DaskMethodsMixin):
     def expr(self) -> ArrayExpr:
         return self._expr
 
+    def _replace_expr(self, expr):
+        """Swap this collection's expression in place (``out=``, in-place ops,
+        ``compute_chunk_sizes``). Name, keys, and graph all derive from the
+        expression, so cached derivations must go with it."""
+        self._expr = expr
+        for cached in ("_lowered_expr", "_lowered_expr_optimize_graph", "_cached_dask_keys"):
+            self.__dict__.pop(cached, None)
+
     @cached_property
     def _lowered_expr_optimize_graph(self):
         return config.get("array.optimize-graph", True)
 
     @cached_property
     def _lowered_expr(self):
-        return _lower(self.expr, optimize_graph=self._lowered_expr_optimize_graph)
+        return _materialize(self.expr, optimize_graph=self._lowered_expr_optimize_graph)
 
     @property
     def _name(self):
-        return self._lowered_expr._name
+        # The raw root expression's name, assigned at construction. Stable:
+        # optimization renames internal nodes freely, but materialization pins
+        # the graph's output keys back to this name (see ``_materialize``).
+        # Never triggers lowering — keep it that way; a ``.name`` access that
+        # lowers makes construction loops O(tree^2).
+        return self.expr._name
 
     def __dask_postcompute__(self):
         return finalize, ()
 
     def __dask_postpersist__(self):
-        state = self.expr.optimize()
-        # Use original array's meta like legacy implementation
+        # Persist is name-preserving: the rebuilt collection keeps this
+        # collection's name and keys. The rebuild layer's keys per block are
+        # found at rebuild time (see ``FromGraph._layer``): our own keys when
+        # the layer came from a pinned graph (``Array.persist``, frisky,
+        # ``dask.optimize`` via the pinned ``ArrayExpr.__dask_graph__``), or
+        # located by block id when a raw expression went through dask's
+        # generic optimizer (``dask.persist``). No keys are predicted here —
+        # predicting meant lowering, and stale predictions were the old bug
+        # class.
         meta = self._meta
         if meta is None:
             # Fallback to synthetic meta if original is also None
-            meta = np.empty((0,) * state.ndim, dtype=state.dtype)
+            meta = np.empty((0,) * self.ndim, dtype=self.dtype)
         # Use self.chunks to preserve nan chunks for unknown-sized operations
         return from_graph, (
             meta,
             self.chunks,
-            list(flatten(state.__dask_keys__())),
-            key_split(state._name),
+            [],
+            self._name,
         )
 
     @property
@@ -219,9 +283,24 @@ class Array(DaskMethodsMixin):
         out = self._lowered_expr
         return Expr.__dask_graph__(out)
 
+    @cached_property
+    def _cached_dask_keys(self):
+        # Built from the raw name and block structure only — no lowering.
+        # ``_materialize`` guarantees the graph produces these keys.
+        name, chunks, numblocks = self._name, self.chunks, self.numblocks
+
+        def keys(*args):
+            if not chunks:
+                return [(name,)]
+            ind = len(args)
+            if ind + 1 == len(numblocks):
+                return [(name,) + args + (i,) for i in range(numblocks[ind])]
+            return [keys(*(args + (i,))) for i in range(numblocks[ind])]
+
+        return keys()
+
     def __dask_keys__(self):
-        out = self._lowered_expr
-        return out.__dask_keys__()
+        return self._cached_dask_keys
 
     def _check_frisky_supported(self):
         if isinstance(self._meta, np.ma.MaskedArray):
@@ -294,10 +373,24 @@ class Array(DaskMethodsMixin):
         return "Array", self._name
 
     def compute(self, **kwargs):
-        return DaskMethodsMixin.compute(self.optimize(), **kwargs)
+        return DaskMethodsMixin.compute(self._pinned(), **kwargs)
 
     def persist(self, **kwargs):
-        return DaskMethodsMixin.persist(self.optimize(), **kwargs)
+        # The pinned collection's keys are this collection's keys, so the
+        # persisted result keeps our name: x.persist().name == x.name.
+        return DaskMethodsMixin.persist(self._pinned(), **kwargs)
+
+    def _pinned(self):
+        """This collection over its materialized (optimized + key-pinned) expression.
+
+        ``dask.base`` re-derives keys by running its generic optimizer over
+        ``collection.expr`` — handing it the raw expression means unfused
+        graphs and keys that drift from ours. The materialized expression is
+        already fused and pins its output keys to this collection's name, so
+        it passes through dask's optimizer unchanged: what gets scheduled is
+        exactly ``__dask_graph__``/``__dask_keys__``, on every entry point.
+        """
+        return new_collection(self._lowered_expr)
 
     def optimize(self):
         return new_collection(self.expr.optimize())
@@ -370,7 +463,7 @@ class Array(DaskMethodsMixin):
         """
         from dask_array._expr import ChunksOverride
 
-        self._expr = ChunksOverride(self._expr, chunks)
+        self._replace_expr(ChunksOverride(self._expr, chunks))
 
     @property
     def chunksize(self) -> tuple:
@@ -439,7 +532,7 @@ class Array(DaskMethodsMixin):
         # In the expression system, wrap with ChunksOverride to set the new chunks
         from dask_array._expr import ChunksOverride
 
-        self._expr = ChunksOverride(self._expr, new_chunks)
+        self._replace_expr(ChunksOverride(self._expr, new_chunks))
 
         return self
 
@@ -674,7 +767,7 @@ class Array(DaskMethodsMixin):
             from dask_array.routines._where import where
 
             y = where(key, value, self)
-            self._expr = y.expr
+            self._replace_expr(y.expr)
             return
 
         # Check for unknown chunks
@@ -737,7 +830,7 @@ class Array(DaskMethodsMixin):
 
         value_expr = value.expr if isinstance(value, Array) else value
         y = new_collection(SetItem(self.expr, key, value_expr))
-        self._expr = y.expr
+        self._replace_expr(y.expr)
 
     @check_if_handled_given_other
     def __add__(self, other):

@@ -359,7 +359,9 @@ def test_named_from_delayed_output_key_is_preserved():
     assert_eq(a, np.full(5, 7).astype("int64"))
 
     unnamed = da.from_delayed(dask.delayed(_load)(7), (5,), dtype="int64")
-    assert isinstance(unnamed._lowered_expr, FromMap)  # unnamed still normalizes
+    # Unnamed still normalizes to FromMap; materialization pins the renamed
+    # root back to the collection's keys with a RootAlias wrapper.
+    assert isinstance(unnamed._lowered_expr.array, FromMap)
 
 
 def test_multi_task_delayed_body_is_left_untouched():

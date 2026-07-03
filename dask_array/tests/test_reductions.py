@@ -702,9 +702,10 @@ def test_general_reduction_names():
     dtype = int
     a = da.reduction(da.ones(10, dtype, chunks=2), np.sum, np.sum, dtype=dtype, name="foo")
     names, tokens = list(zip_longest(*[key[0].rsplit("-", 1) for key in a.dask]))
-    # array-expr uses "ones" vs traditional "ones_like" and may skip "foo-partial"
+    # array-expr fuses the chunk step with its input ("foo-ones") and pins the
+    # collection's output name ("foo"); traditional keeps separate layers.
     expected_traditional = {"ones_like", "foo", "foo-partial", "foo-aggregate"}
-    expected_expr = {"ones", "foo", "foo-aggregate"}
+    expected_expr = {"foo", "foo-ones", "foo-aggregate"}
     assert set(names) in (expected_traditional, expected_expr)
     assert all(tokens)
 

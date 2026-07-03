@@ -118,7 +118,15 @@ def _records(key, node):
     (one for the node, plus any lifted inline subtasks)."""
     out_key = str(_norm_key(key))
     if isinstance(node, Alias):
-        return [(out_key, toolz.identity, (TaskRef(_norm_key(node.target)),), {}, [str(_norm_key(node.target))])]
+        target = str(_norm_key(node.target))
+        if target == out_key:
+            # Self-alias. A name-preserving persisted block is a live Future
+            # stored under its own key, which ``convert_legacy_graph`` turns
+            # into ``Alias(key -> key)``. The scheduler already holds the
+            # data — emit no record (a self-referential one would deadlock);
+            # the frisky client registers live future keys as external deps.
+            return []
+        return [(out_key, toolz.identity, (TaskRef(_norm_key(node.target)),), {}, [target])]
     if isinstance(node, DataNode):
         # A persisted collection's FromGraph maps each block key to the frisky
         # Future holding its data. Emit a real dependency edge to that future's
@@ -135,6 +143,13 @@ def _records(key, node):
             is_future = False
         if is_future:
             future_key = str(node.value.key)
+            if future_key == out_key:
+                # Name-preserving persist: this block IS the live future for
+                # this very key. It is external data the scheduler already
+                # holds — emit no record (a self-referential record would
+                # deadlock). The frisky client registers live future keys as
+                # external deps, so completeness checks allow references.
+                return []
             return [(out_key, toolz.identity, (TaskRef(future_key),), {}, [future_key])]
         return [(out_key, toolz.identity, (node.value,), {}, [])]
     fl = _Flattener(out_key)

@@ -82,25 +82,14 @@ class BroadcastTrick(ArrayExpr):
         """Accept a shuffle - create new BroadcastTrick with shuffled shape.
 
         Since all values are identical, we don't need to actually shuffle,
-        just create a new constant array with the correct output shape.
+        just create a new constant array. The result replaces the shuffle
+        node, so it must carry the shuffle's exact output shape and chunks —
+        rewrites must never change user-visible metadata.
         """
-        axis = shuffle_expr.axis
-        indexer = shuffle_expr.indexer
-
-        # Compute new shape - output size is total indices in indexer
-        new_size = sum(len(chunk) for chunk in indexer)
-        new_shape = list(self.shape)
-        new_shape[axis] = new_size
-
-        # Compute new chunks - one chunk per indexer group
-        new_axis_chunks = tuple(len(chunk) for chunk in indexer)
-        new_chunks = list(self.chunks)
-        new_chunks[axis] = new_axis_chunks
-
         return self.substitute_parameters(
             {
-                "shape": tuple(new_shape),
-                "chunks": tuple(new_chunks),
+                "shape": shuffle_expr.shape,
+                "chunks": shuffle_expr.chunks,
                 "name": None,
             }
         )

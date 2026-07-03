@@ -886,14 +886,14 @@ def test_slice_construction_does_not_lower(monkeypatch):
     import dask_array._collection as _collection
 
     calls = 0
-    orig_lower = _collection._lower
+    orig_materialize = _collection._materialize
 
-    def counting_lower(*args, **kwargs):
+    def counting_materialize(*args, **kwargs):
         nonlocal calls
         calls += 1
-        return orig_lower(*args, **kwargs)
+        return orig_materialize(*args, **kwargs)
 
-    monkeypatch.setattr(_collection, "_lower", counting_lower)
+    monkeypatch.setattr(_collection, "_materialize", counting_materialize)
 
     def build(depth):
         x = da.from_array(np.zeros((1000, 8)), chunks=(250, 8))

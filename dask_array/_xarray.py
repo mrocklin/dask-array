@@ -95,7 +95,7 @@ class DaskArrayExprManager(ChunkManagerEntrypoint["Array"]):
     ) -> tuple[np.ndarray[Any, Any], ...]:
         from dask import compute
 
-        return compute(*data, **kwargs)
+        return compute(*self._pin(data), **kwargs)
 
     def persist(
         self,
@@ -104,7 +104,18 @@ class DaskArrayExprManager(ChunkManagerEntrypoint["Array"]):
     ) -> tuple[Array | Any, ...]:
         from dask import persist
 
-        return persist(*data, **kwargs)
+        return persist(*self._pin(data), **kwargs)
+
+    def _pin(self, data: tuple[Array | Any, ...]) -> tuple[Array | Any, ...]:
+        """Materialize each array before handing it to ``dask.base``.
+
+        Same reason as ``Array.compute``/``Array.persist`` routing through
+        ``Array._pinned``: dask's generic optimizer over the raw expression
+        would run unfused and derive drifting keys; the materialized
+        expression is fused and keeps the collection's names, so persist
+        round-trips a Dataset's variables under their original names.
+        """
+        return tuple(d._pinned() if isinstance(d, self.array_cls) else d for d in data)
 
     @property
     def array_api(self) -> Any:

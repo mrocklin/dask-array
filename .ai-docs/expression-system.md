@@ -54,15 +54,34 @@ class Array(DaskMethodsMixin):
     def expr(self) -> ArrayExpr:
         return self._expr
 
-    def __dask_graph__(self):
-        return self.expr.lower_completely().__dask_graph__()
-
-    def compute(self, **kwargs):
-        return DaskMethodsMixin.compute(self.optimize(), **kwargs)
-
     def optimize(self):
         return new_collection(self.expr.optimize())
 ```
+
+### Stable collection identity
+
+Expressions are content-addressed: simplify/lower/fuse rename every node they
+rewrite. Collections are not: `Array._name`, `.name`, and `__dask_keys__()`
+are the **raw** root expression's name, assigned at construction, cheap (no
+lowering), and stable forever. Materialization (`_materialize` in
+`_collection.py` — the single choke point behind `__dask_graph__` and the
+Frisky walks) optimizes fully (simplify → lower → **fuse**) and then pins the
+graph's output keys back to the raw name with a `RootAlias` node (one alias
+task per output block; a rechunk bridge if a rewrite changed output chunks).
+
+Consequences:
+
+- Results always come back under the advertised keys, so `persist` is
+  name-preserving: `x.persist().name == x.name`, on every entry point.
+- Never derive names by lowering (`.name` is already right); a `.name` access
+  that lowers makes construction loops O(tree^2).
+- Pinned-name nodes sit outside the rewrite framework's name-based change
+  detection, so their content must be final at construction. `RootAlias` and
+  `FromGraph` opt out of the singleton registry and override `lower_once` to
+  stay out of the shared lowering cache; `MapBlocksOutput` instead freezes by
+  eagerly lowering its inputs when built.
+- `compute`/`persist` hand dask the pinned collection (`Array._pinned`) so
+  dask's generic optimizer runs over an already-fused, name-stable tree.
 
 ## Expression Protocol
 

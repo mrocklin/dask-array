@@ -631,6 +631,10 @@ def map_blocks_multi_output(
     ``dtype``, and optionally ``meta`` and ``name``.
     """
     shared_name = f"{token}-shared"
+    # Load-bearing: MapBlocksOutput._name is caller-pinned (not content-derived),
+    # so its content must be final at construction — a later rewrite of an input
+    # would rebuild it under the same name and the singleton registry would hand
+    # back the stale instance.
     input_exprs = [expr.lower_completely() for expr in input_exprs]
     arrays = []
     for output in outputs:

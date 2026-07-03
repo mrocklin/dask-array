@@ -1481,7 +1481,11 @@ def test_ravel():
     for chunks in [(4, 6), (2, 6)]:
         a = da.from_array(x, chunks=chunks)
         assert_eq(x.ravel(), a.ravel())
-        assert len(a.ravel().dask) == len(a.dask) + len(a.chunks[0])
+        # one reshape task per input row-block, plus — when optimization
+        # renamed the root — one alias per output block pinning the
+        # collection's keys to the optimized graph
+        extra = len(a.ravel().dask) - len(a.dask)
+        assert extra in (len(a.chunks[0]), len(a.chunks[0]) + a.ravel().numblocks[0])
 
     # 0d
     assert_eq(x[0, 0].ravel(), a[0, 0].ravel())

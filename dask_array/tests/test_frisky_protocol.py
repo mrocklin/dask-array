@@ -385,3 +385,37 @@ def test_persisted_collection_arithmetic_roundtrips(array_scheduler):
     np.testing.assert_array_equal((xp * 2).compute(), np.full((4, 4), 4.0))
     # A reduction over the persisted collection also resolves its blocks.
     np.testing.assert_array_equal((xp + 5).sum().compute(), np.full((4, 4), 7.0).sum())
+
+
+def test_persist_name_preserving_lifecycle(array_scheduler):
+    """Name-preserving persist under frisky, exercised repeatedly.
+
+    A persisted collection's futures are borrowed for later computes of the
+    same keys, so a) gathering the same handle more than once must work
+    (regression: ``Client.gather`` dropped a key's notify after delivery, so a
+    second gather of that handle hung forever), and b) a transient compute of
+    the original collection must not drop the persisted lease (regression:
+    the scheduler's per-client desire is boolean, so the client counts its
+    handles per key and only releases on the last one)."""
+    if array_scheduler != "frisky":
+        pytest.skip("requires --scheduler=frisky")
+
+    x = da.ones((4, 4), chunks=(2, 2)) + 1
+    xp = x.persist()
+    assert xp.name == x.name
+
+    # Repeated computes of the persisted collection gather the same borrowed
+    # handles each time.
+    np.testing.assert_array_equal(xp.compute(), np.full((4, 4), 2.0))
+    np.testing.assert_array_equal(xp.compute(), np.full((4, 4), 2.0))
+
+    # A transient compute of the ORIGINAL collection resubmits the same keys;
+    # its release must not invalidate the persisted lease.
+    np.testing.assert_array_equal(x.compute(), np.full((4, 4), 2.0))
+    np.testing.assert_array_equal(xp.compute(), np.full((4, 4), 2.0))
+
+    # Persisting again keeps the same identity and stays computable.
+    xp2 = xp.persist()
+    assert xp2.name == x.name
+    np.testing.assert_array_equal(xp2.compute(), np.full((4, 4), 2.0))
+    np.testing.assert_array_equal((xp2 + 1).compute(), np.full((4, 4), 3.0))

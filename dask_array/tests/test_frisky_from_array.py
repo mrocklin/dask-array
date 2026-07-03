@@ -130,7 +130,9 @@ def test_from_array_key_cache_is_not_pickled_after_key_enumeration(enumerate_key
 
     keys = enumerate_keys(arr)
     assert len(list(flatten(keys))) == 195 * 389
-    assert "_cached_keys" in arr.expr.__dict__
+    # Collection keys derive from the raw name and block structure; they
+    # never populate the expression-level key cache.
+    assert "_cached_keys" not in arr.expr.__dict__
 
     blob = cloudpickle.dumps(arr)
     assert len(blob) < 50_000

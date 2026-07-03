@@ -53,12 +53,15 @@ def test_array_pickle_drops_lowered_expr_cache():
     x = da.from_array(np.arange(12).reshape(3, 4), chunks=(1, 2)) + 1
 
     expected_keys = x.__dask_keys__()
+    # Keys derive from the raw expression name; they never trigger lowering.
+    assert "_lowered_expr" not in vars(x)
+
+    x.__dask_graph__()
     assert "_lowered_expr" in vars(x)
 
     y = cloudpickle.loads(cloudpickle.dumps(x))
     assert "_lowered_expr" not in vars(y)
     assert y.__dask_keys__() == expected_keys
-    assert "_lowered_expr" in vars(y)
     assert_eq(y, np.arange(12).reshape(3, 4) + 1)
 
 
@@ -349,7 +352,8 @@ def test_from_graph_accepts_rename_keyword():
     rebuild, args = x.__dask_postpersist__()
     renamed = rebuild(x.__dask_graph__(), *args, rename={x.name: "renamed"})
 
-    assert renamed.name.startswith("renamed-")
+    # The rename is adopted verbatim: the caller owns key uniqueness.
+    assert renamed.name == "renamed"
     assert_eq(renamed, np.array([1]))
 
 

@@ -86,22 +86,6 @@ class Reduction(ArrayExpr):
         return f"{prefix}-{self.deterministic_token}"
 
     @cached_property
-    def name(self):
-        """Return the name of the final lowered expression.
-
-        This ensures that Array.name matches the task keys in the graph.
-
-        WARNING: this forces a full ``lower_completely()`` of the entire operand
-        subtree (O(subtree) per call, and the lowered name genuinely depends on
-        the lowered input, so it cannot be made cheaper). Never touch ``.name``
-        on a Reduction in a per-node / per-layer construction path -- doing so
-        makes graph construction O(tree^2). Use the cheap ``_name`` (the unique
-        node identifier) for grouping or identity instead. See
-        ``test_deep_reduction_stack_construction_does_not_lower``.
-        """
-        return self.lower_completely().name
-
-    @cached_property
     def chunks(self):
         """Output chunks after reduction."""
         axis = self.axis
@@ -430,7 +414,7 @@ def reduction(
             axis,
             keepdims,
             dtype,
-            split_every,
+            _normalize_split_every(split_every, axis),
             combine,
             name,
             concatenate,
@@ -733,6 +717,19 @@ class NanVar(Reduction):
         return np.asarray(out, dtype=out_dtype)
 
 
+def _normalize_split_every(split_every, axis):
+    """Canonical ``{axis: n}`` form. Applied at expression construction so
+    equivalent spellings (``2`` vs ``{0: 2}``) tokenize — and so share keys —
+    identically; the lowering re-applies it idempotently for direct callers."""
+    split_every = split_every or config.get("split_every", 16)
+    if isinstance(split_every, dict):
+        return {k: split_every.get(k, 2) for k in axis}
+    if isinstance(split_every, Integral):
+        n = builtins.max(int(split_every ** (1 / (len(axis) or 1))), 2)
+        return dict.fromkeys(axis, n)
+    raise ValueError("split_every must be a int or a dict")
+
+
 def _tree_reduce(
     x,
     aggregate,
@@ -772,15 +769,7 @@ def _build_tree_reduce_expr(
 
     Shared implementation used by both Reduction._build_tree_reduce and _tree_reduce.
     """
-    # Normalize split_every
-    split_every = split_every or config.get("split_every", 16)
-    if isinstance(split_every, dict):
-        split_every = {k: split_every.get(k, 2) for k in axis}
-    elif isinstance(split_every, Integral):
-        n = builtins.max(int(split_every ** (1 / (len(axis) or 1))), 2)
-        split_every = dict.fromkeys(axis, n)
-    else:
-        raise ValueError("split_every must be a int or a dict")
+    split_every = _normalize_split_every(split_every, axis)
 
     # Compute tree depth
     depth = 1
