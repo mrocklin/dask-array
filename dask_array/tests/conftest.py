@@ -29,10 +29,6 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers",
-        "xfail_frisky: known Frisky scheduler gap; xfailed only on the Frisky scheduler variant.",
-    )
-    config.addinivalue_line(
-        "markers",
         "skip_frisky: known Frisky scheduler gap; skipped only on the Frisky scheduler variant.",
     )
     scheduler = config.getoption("--scheduler")
@@ -92,11 +88,3 @@ def pytest_collection_modifyitems(config, items):
         callspec = getattr(item, "callspec", None)
         if callspec and callspec.params.get("array_scheduler") == "frisky":
             item.add_marker(skip_frisky)
-
-    xfail_frisky = pytest.mark.xfail(reason=f"known Frisky scheduler gap; see {issue}", strict=True)
-    for item in items:
-        if "xfail_frisky" not in item.keywords:
-            continue
-        callspec = getattr(item, "callspec", None)
-        if callspec and callspec.params.get("array_scheduler") == "frisky":
-            item.add_marker(xfail_frisky)

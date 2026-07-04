@@ -419,7 +419,6 @@ def test_nested_overlap_lowers_in_linear_work():
     assert len(graph) > 0
 
 
-@pytest.mark.xfail_frisky
 def test_slice_pushdown_into_nested_overlap_is_correct():
     """Slicing through a nested overlap+rechunk chain must give correct values.
 
