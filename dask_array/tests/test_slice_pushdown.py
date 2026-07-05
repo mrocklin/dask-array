@@ -996,3 +996,85 @@ def test_none_slice_through_transpose():
 
     # Verify correctness
     assert_eq(result, expected)
+
+
+def test_slice_on_keepdims_reduced_axis_values():
+    """Indexing the kept reduced axis must not push into the input.
+
+    Found by the optimizer fuzz: the pushdown forwarded the output index to
+    the input's reduced axis, so ``sum[0, :]`` returned the first block's
+    partial sum instead of the total.
+    """
+    x = np.arange(6.0).reshape(3, 2)
+    d = da.from_array(x, chunks=(1, 1))
+
+    expected = x.sum(axis=0, keepdims=True)
+    assert_eq(d.sum(axis=0, keepdims=True)[0, :], expected[0, :])
+    assert_eq(d.sum(axis=0, keepdims=True)[0:1, 1], expected[0:1, 1])
+    assert_eq(d.mean(axis=1, keepdims=True)[:, 0], x.mean(axis=1, keepdims=True)[:, 0])
+
+
+def test_empty_slice_on_keepdims_reduced_axis_shape():
+    """An empty slice of the kept reduced axis keeps its (empty) shape."""
+    x = np.arange(4.0)
+    d = da.from_array(x, chunks=2)
+
+    result = d.sum(axis=0, keepdims=True)[0:0]
+    expected = x.sum(axis=0, keepdims=True)[0:0]
+    assert result.optimize().shape == expected.shape
+    assert_eq(result, expected)
+
+
+def test_slice_on_keepdims_still_pushes_non_reduced_axes():
+    """The reduced-axis guard must not disable pushdown on other axes."""
+    x = da.from_array(np.arange(10000.0).reshape(100, 100), chunks=(10, 10))
+    x_np = np.arange(10000.0).reshape(100, 100)
+
+    sliced = x.sum(axis=0, keepdims=True)[:, 5:20]
+    assert_eq(sliced, x_np.sum(axis=0, keepdims=True)[:, 5:20])
+
+    full_tasks = len(x.sum(axis=0, keepdims=True).optimize().__dask_graph__())
+    sliced_tasks = len(sliced.optimize().__dask_graph__())
+    assert sliced_tasks < full_tasks
+
+
+def test_empty_source_region_not_dropped():
+    """Region pushdown on an already-empty numpy source keeps the region.
+
+    Found by the optimizer fuzz: "region covers the whole source" was tested
+    by comparing nbytes, and every region of an empty source has 0 bytes, so
+    a region shrinking a different dimension was silently dropped, leaving
+    chunks inconsistent with shape.
+    """
+    x = np.ones((1, 1, 1))
+    d = da.from_array(x, chunks=(1, 1, 1))
+    leaf = da.from_array(np.ones((1, 0, 1)), chunks=((1,), (0,), (1,)))
+
+    result = (d[:, 0:0, :] + leaf)[:, :, 0:0]
+    expected = (x[:, 0:0, :] + np.ones((1, 0, 1)))[:, :, 0:0]
+
+    assert result.optimize().shape == expected.shape
+    assert_eq(result, expected)
+
+
+def test_integer_index_before_expanded_axis():
+    """Integer indices on real axes shift expansion axes when pushed through.
+
+    Found by the optimizer fuzz: ExpandDims pushdown only discounted
+    integer-removed *expansion* axes when recomputing axis positions, so
+    ``expand_dims(x, 1)[0]`` re-expanded at the wrong position (transposed
+    shape), and the 1-d variant crashed with AxisError.
+    """
+    x2 = np.arange(2.0).reshape(1, 2)
+    d2 = da.from_array(x2, chunks=(1, 1))
+    result = da.expand_dims(d2, 1)[0, :, :]
+    expected = np.expand_dims(x2, 1)[0, :, :]
+    assert result.optimize().shape == expected.shape
+    assert_eq(result, expected)
+
+    x1 = np.arange(1.0)
+    d1 = da.from_array(x1, chunks=1)
+    result = da.expand_dims(d1, 1)[0, :]
+    expected = np.expand_dims(x1, 1)[0, :]
+    assert result.optimize().shape == expected.shape
+    assert_eq(result, expected)

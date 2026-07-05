@@ -163,17 +163,16 @@ class ExpandDims(ArrayExpr):
         else:
             sliced_input = new_collection(self.array)[tuple(input_index)].expr
 
-        # Compute new axes positions after slicing
-        # Axes that had integer indexing are removed
+        # Compute new axes positions after slicing.  Every integer index —
+        # on expanded and real axes alike — removes one output dimension,
+        # shifting the expansion axes after it left.
         new_axes = []
         removed_count = 0
         for i, idx in enumerate(full_index):
-            if i in axes:
-                if isinstance(idx, Integral):
-                    removed_count += 1
-                else:
-                    # Adjust for removed dimensions before this position
-                    new_axes.append(i - removed_count)
+            if isinstance(idx, Integral):
+                removed_count += 1
+            elif i in axes:
+                new_axes.append(i - removed_count)
 
         if not new_axes:
             # All expansion axes were removed by integer indexing

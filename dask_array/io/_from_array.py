@@ -477,7 +477,10 @@ class FromArray(IO):
         region_shape = tuple(len(range(*slc.indices(dim_size))) for slc, dim_size in zip(new_region, source.shape))
         region_nbytes = int(np.prod(region_shape, dtype=object)) * source.dtype.itemsize
         if is_ndarray:
-            if region_nbytes == source.nbytes:
+            if region_shape == source.shape:
+                # Region covers the whole source — drop it.  Compare shapes,
+                # not nbytes: an empty source has 0 bytes like every region
+                # of it, including regions that shrink other dimensions.
                 new_region = None
             elif region_nbytes <= _NUMPY_SLICE_PUSHDOWN_NBYTES_LIMIT:
                 source = source[new_region].copy()

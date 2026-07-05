@@ -853,11 +853,14 @@ def _accept_slice_impl(slice_expr, input_array, reduced_axes, keepdims, make_res
 
     # Convert integers to size-1 slices to preserve dimensions
     slice_index = tuple(slice(idx, idx + 1) if isinstance(idx, Integral) else idx for idx in full_index)
-    has_integers = any(isinstance(idx, Integral) for idx in full_index)
 
-    # Build input index mapping output axes to input axes
+    # Build input index mapping output axes to input axes.  Indices on
+    # reduced axes must never reach the input: the reduction folds the whole
+    # input axis into a size-``output_size`` output axis, so selecting within
+    # that axis only makes sense on the *output* (forwarding it would reduce
+    # a subset of the data — wrong values, not just wrong shape).
     if keepdims:
-        input_index = slice_index
+        input_index = tuple(slice(None) if ax in reduced_axes else idx for ax, idx in enumerate(slice_index))
     else:
         input_index = []
         out_pos = 0
@@ -869,6 +872,11 @@ def _accept_slice_impl(slice_expr, input_array, reduced_axes, keepdims, make_res
                 out_pos += 1
         input_index = tuple(input_index)
 
+    if all(idx == slice(None) for idx in input_index):
+        # Nothing pushes into the input (e.g. only reduced axes are sliced);
+        # leave the slice above the reduction.
+        return None
+
     # Apply the slice to the input
     sliced_input = new_collection(input_array)[input_index]
 
@@ -879,10 +887,17 @@ def _accept_slice_impl(slice_expr, input_array, reduced_axes, keepdims, make_res
 
     result = make_result(sliced_input, input_index)
 
-    # If we converted integers to slices, extract with [0] to restore dimensions
-    if has_integers:
-        extract_index = tuple(0 if isinstance(idx, Integral) else slice(None) for idx in full_index)
-        return SliceSlicesIntegers(result, extract_index, slice_expr.allow_getitem_optimization)
+    # Re-apply what stayed on the output: the original index on kept reduced
+    # axes, plus [0] extraction where integers became size-1 slices.
+    if keepdims:
+        final_index = tuple(
+            idx if ax in reduced_axes else (0 if isinstance(idx, Integral) else slice(None))
+            for ax, idx in enumerate(full_index)
+        )
+    else:
+        final_index = tuple(0 if isinstance(idx, Integral) else slice(None) for idx in full_index)
+    if any(idx != slice(None) for idx in final_index):
+        return SliceSlicesIntegers(result, final_index, slice_expr.allow_getitem_optimization)
 
     return result
 

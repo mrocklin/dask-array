@@ -12,10 +12,22 @@ from __future__ import annotations
 
 import numpy as np
 
+from dask.tokenize import normalize_token
 from dask.utils import Dispatch
 
 # Re-export from _core_utils for convenience
 from dask_array._core_utils import concatenate_lookup, tensordot_lookup
+
+
+# dask itself only registers a masked-array tokenize handler when legacy
+# dask.array is imported; without it, the generic ndarray normalizer calls
+# .view("i1"), which numpy.ma rejects, so tokenizing (e.g. from_array on) a
+# masked source crashes. Register the same handler here so this package
+# never depends on the legacy import.
+@normalize_token.register(np.ma.masked_array)
+def _normalize_masked_array(x):
+    return (normalize_token(x.data), normalize_token(x.mask), normalize_token(x.fill_value))
+
 
 # Dispatch registries for array operations
 take_lookup = Dispatch("take")
