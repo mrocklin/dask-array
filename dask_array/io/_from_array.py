@@ -294,13 +294,18 @@ class FromArray(IO):
         return self._determ_token
 
     def _simplify_up(self, parent, dependents):
-        """Allow slice operations to push into FromArray."""
+        """Allow slice and rechunk operations to push into FromArray."""
+        from dask_array._rechunk import Rechunk
         from dask_array.slicing import SliceSlicesIntegers
 
         if isinstance(parent, SliceSlicesIntegers):
             if not parent.allow_getitem_optimization:
                 return None
             return self._slice_pushdown(parent, dependents)
+        if type(parent) is Rechunk:
+            # A pushed rechunk becomes part of the read itself, so a shared
+            # FromArray would be read twice; the gate declines that.
+            return self._rechunk_pushdown(parent, dependents)
         return None
 
     def _accept_rechunk(self, chunks, threshold=None, block_size_limit=None, method=None):

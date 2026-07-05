@@ -53,7 +53,7 @@ def _simplify_down(self):
 Combine consecutive operations of the same type:
 
 ```python
-# Rechunk._simplify_down() in _rechunk.py:603
+# Rechunk._pushdown() in _rechunk.py, reached via the Pattern-3 gate
 if type(self.array) is Rechunk and self.array.method != "p2p":
     return Rechunk(
         self.array.array,  # Skip middle
@@ -67,35 +67,48 @@ if type(self.array) is Rechunk and self.array.method != "p2p":
 - `Slice(Slice(x, i1), i2)` → `Slice(x, fused_index)`
 - `Transpose(Transpose(x, a1), a2)` → `Transpose(x, composed)`
 
+Rechunk-Rechunk fusion runs through the sharing gate (Pattern 3), not
+`_simplify_down`: bypassing a shared inner rechunk reaches through it to
+its input, sidestepping the per-pass rewrite cache that keeps siblings
+converging onto one replacement node (e.g. an inner rechunk being absorbed
+into a shared read would get duplicated).
+
 ### Pattern 3: Pushdown via `_simplify_up`
 
-Children rewrite a slice parent through their `_simplify_up` hook, routed
-through a sharing-aware gate:
+Children rewrite a slice/rechunk/shuffle parent through their
+`_simplify_up` hook, routed through a sharing-aware gate:
 
 ```python
 # Blockwise._simplify_up() in _blockwise.py
 def _simplify_up(self, parent, dependents):
     if isinstance(parent, SliceSlicesIntegers):
         return self._slice_pushdown(parent, dependents)
+    if isinstance(parent, Shuffle):
+        return self._shuffle_pushdown(parent, dependents)
 ```
 
-`ArrayExpr._slice_pushdown` (in `_expr.py`) declines the push when any
-*other* dependent of the child is not a slice — a full consumer
-materializes the child anyway, so pushing would duplicate its work. When
-every dependent is a slice (multi-window selection), all of them push.
-The child implements the actual rewrite in `_accept_slice`:
+The gates live on `ArrayExpr` (in `_expr.py`) and decline when another
+dependent of the child needs it in full — a full consumer materializes the
+child anyway, so pushing would duplicate its work:
 
-```python
-# Blockwise._accept_slice() in _blockwise.py
-def _accept_slice(self, slice_expr):
-    # Map slice to inputs, return new expression
-    ...
-```
+- `_slice_pushdown` declines when any *other* dependent is not a slice.
+  When every dependent is a slice (multi-window selection), all of them
+  push and the child is never computed in full anywhere.
+- `_rechunk_pushdown` / `_shuffle_pushdown` decline when there is *any*
+  other dependent. A pushed rechunk/shuffle re-derives the child in full
+  (same elements, different layout), so there is no multi-window sharing
+  among pushed copies — even two rechunks pushing would each duplicate the
+  whole chain (and, at an IO leaf, the read).
 
-Pushdown deliberately does NOT dispatch from the slice's own
+The child implements the actual rewrite in `_accept_slice` /
+`_accept_shuffle`; for rechunks the gate calls back into
+`Rechunk._pushdown`, which dispatches on the child type
+(Transpose/Elemwise/Concatenate/IO).
+
+Pushdown deliberately does NOT dispatch from the pushed node's own
 `_simplify_down` — that side cannot see `dependents`, so it would be
-sharing-blind. (Rechunk and Shuffle pushdown do not yet consult
-`dependents`; they can still de-share a subtree.)
+sharing-blind (and would defeat the other guards indirectly: a rechunk
+splitting a shared node empties the sibling set a slice's gate checks).
 
 ## Slice Pushdown
 
@@ -157,10 +170,14 @@ Reorders slice indices through the permutation.
 
 ## Rechunk Pushdown (`_rechunk.py`)
 
-Push rechunk toward leaves to apply at lowest level:
+Push rechunk toward leaves to apply at lowest level. Dispatched from the
+child's `_simplify_up` through the `_rechunk_pushdown` gate (Pattern 3),
+which then calls:
 
 ```python
-def _simplify_down(self):
+def _pushdown(self):  # on Rechunk; sharing already checked by the gate
+    # Rechunk(Rechunk(x)) → single Rechunk to final chunks
+
     # Rechunk(Transpose) → Transpose(rechunked input)
     if isinstance(self.array, Transpose):
         return self._pushdown_through_transpose()
@@ -172,7 +189,13 @@ def _simplify_down(self):
     # Rechunk(Concatenate) → Concatenate(rechunked inputs)
     if isinstance(self.array, Concatenate):
         return self._pushdown_through_concatenate()
+
+    # Rechunk(IO) → IO with new chunks (via _accept_rechunk)
+    ...
 ```
+
+Only no-op removal stays in `Rechunk._simplify_down`: it substitutes the
+existing child node, so sharing can only increase.
 
 ## Blockwise Fusion (`_blockwise.py`)
 
@@ -278,9 +301,9 @@ def _simplify_down(self):
     return None
 ```
 
-Slice pushdown specifically must go through `_simplify_up` +
-`_slice_pushdown` (see Pattern 3) so the sharing guard applies; other
-rewrites can live wherever clearest.
+Slice, rechunk, and shuffle pushdown specifically must go through
+`_simplify_up` + their `ArrayExpr` gates (see Pattern 3) so the sharing
+guards apply; other rewrites can live wherever clearest.
 
 ### 3. Write Tests (TDD)
 

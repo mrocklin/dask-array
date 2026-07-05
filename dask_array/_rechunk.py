@@ -727,7 +727,28 @@ class Rechunk(ArrayExpr):
         if not self.balance and self.chunks == self.array.chunks:
             return self.array
 
+    def _simplify_up(self, parent, dependents):
+        """Allow an outer rechunk to fuse with this one (via ``_pushdown``)."""
+        if type(parent) is Rechunk:
+            return self._rechunk_pushdown(parent, dependents)
+        return None
+
+    def _pushdown(self):
+        """Push this rechunk into ``self.array``.
+
+        Dispatched from the child's ``_simplify_up`` through
+        ``ArrayExpr._rechunk_pushdown``, which sees ``dependents`` and has
+        already declined if anything else needs the child — pushing into a
+        shared node would re-derive it (a second read, for IO leaves).
+        Even the Rechunk(Rechunk) fusion needs that gate: bypassing a shared
+        inner rechunk reaches through it to its input, sidestepping the
+        rewrite cache that keeps siblings converging onto one replacement
+        node (e.g. the inner rechunk being absorbed into a shared read).
+        Dispatch sites match ``type(parent) is Rechunk`` so the
+        already-lowered ``TasksRechunk`` never pushes.
+        """
         from dask_array._blockwise import Elemwise
+        from dask_array._concatenate import Concatenate
         from dask_array.manipulation._transpose import Transpose
 
         # Rechunk(Rechunk(x)) -> single Rechunk to final chunks
@@ -753,8 +774,6 @@ class Rechunk(ArrayExpr):
 
         # Rechunk(Concatenate) -> Concatenate(rechunked inputs)
         # Only for non-concat axes
-        from dask_array._concatenate import Concatenate
-
         if isinstance(self.array, Concatenate):
             return self._pushdown_through_concatenate()
 

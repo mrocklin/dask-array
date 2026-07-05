@@ -86,7 +86,7 @@ class BroadcastTo(ArrayExpr):
         if isinstance(parent, SliceSlicesIntegers):
             return self._slice_pushdown(parent, dependents)
         if isinstance(parent, Shuffle):
-            return self._accept_shuffle(parent)
+            return self._shuffle_pushdown(parent, dependents)
         return None
 
     def _accept_shuffle(self, shuffle_expr):
@@ -109,9 +109,14 @@ class BroadcastTo(ArrayExpr):
         input_axis = axis - ndim_new
         input_size = self.array.shape[input_axis]
 
-        # If input dimension is size 1 (broadcasted), shuffle is a no-op
+        # If input dimension is size 1 (broadcasted), every row along the
+        # axis is identical, so a metadata-preserving shuffle is a no-op. A
+        # take-style indexer (repeated or subset indices) changes the axis
+        # extent or chunking and must be kept.
         if input_size == 1:
-            return self
+            if shuffle_expr.shape == self.shape and shuffle_expr.chunks == self.chunks:
+                return self
+            return None
 
         # Push shuffle through to input
         shuffled_input = Shuffle(

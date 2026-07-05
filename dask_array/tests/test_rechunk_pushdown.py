@@ -597,3 +597,80 @@ def test_rechunk_split_and_merge_correctness():
     y = x.rechunk((3, 10))
 
     assert_eq(y, np_arr)
+
+
+def test_rechunk_not_pushed_into_shared_node():
+    """A pushed rechunk re-derives the node in full (same elements, new
+    chunking), so pushing into a node another parent consumes duplicates the
+    node's work — and, by de-sharing it, would defeat the slice guard too:
+    once the rechunk splits y, the slice's sibling set looks empty and the
+    slice pushes as well, duplicating the whole elemwise chain."""
+    from dask_array._blockwise import Elemwise
+
+    x = da.from_array(np.arange(10000.0).reshape(100, 100), chunks=(10, 10))
+    y = (x + 1) * 2
+    z = y[:5].sum() + y.rechunk((50, 50)).sum()
+
+    simplified = z.expr.simplify()
+    elemwise_nodes = [n for n in simplified.walk() if isinstance(n, Elemwise)]
+    # add + mul of the shared chain, plus the top-level add of the two sums;
+    # a duplicated chain would show five
+    assert len(elemwise_nodes) == 3
+
+    xn = np.arange(10000.0).reshape(100, 100)
+    yn = (xn + 1) * 2
+    assert_eq(z, yn[:5].sum() + yn.sum())
+
+
+def test_rechunk_not_pushed_into_shared_leaf():
+    """Pushing a rechunk into a shared FromArray makes the rechunk part of
+    the read itself — a second read of the source. The rechunk must stay
+    above the shared read instead."""
+    x = da.from_array(np.arange(10000.0).reshape(100, 100), chunks=(10, 10))
+    z = x.sum() + x.rechunk((50, 50)).sum()
+
+    simplified = z.expr.simplify()
+    from_arrays = {n._name for n in simplified.walk() if isinstance(n, FromArray)}
+    assert len(from_arrays) == 1
+    assert any(isinstance(n, Rechunk) for n in simplified.walk())
+
+    xn = np.arange(10000.0).reshape(100, 100)
+    assert_eq(z, xn.sum() + xn.sum())
+
+
+def test_rechunks_not_pushed_into_node_shared_by_rechunks():
+    """Unlike multi-window slices, two rechunks pushing together share
+    nothing: each pushed copy re-derives the chain in full. Neither pushes;
+    the chain stays shared with both rechunks above it."""
+    from dask_array._blockwise import Elemwise
+
+    x = da.from_array(np.arange(10000.0).reshape(100, 100), chunks=(10, 10))
+    y = (x + 1) * 2
+    z = y.rechunk((50, 50)).sum() + y.rechunk((25, 25)).sum()
+
+    simplified = z.expr.simplify()
+    elemwise_nodes = [n for n in simplified.walk() if isinstance(n, Elemwise)]
+    assert len(elemwise_nodes) == 3
+
+    xn = np.arange(10000.0).reshape(100, 100)
+    yn = (xn + 1) * 2
+    assert_eq(z, yn.sum() + yn.sum())
+
+
+def test_rechunk_fusion_not_through_shared_inner_rechunk():
+    """Rechunk(Rechunk) fusion reaches through the inner rechunk to its
+    input. When the inner rechunk is shared, that bypasses the rewrite that
+    the sibling branch converges onto (here: the inner rechunk absorbing
+    into the read), leaving two distinct reads of the source. The fusion
+    must decline; the shared inner rechunk becomes one re-chunked read that
+    both branches consume."""
+    x = da.from_array(np.arange(10000.0).reshape(100, 100), chunks=(10, 10))
+    y = x.rechunk((20, 20))
+    z = y[:5].sum() + y.rechunk((50, 50)).sum()
+
+    simplified = z.expr.simplify()
+    from_arrays = {n._name for n in simplified.walk() if isinstance(n, FromArray)}
+    assert len(from_arrays) == 1
+
+    xn = np.arange(10000.0).reshape(100, 100)
+    assert_eq(z, xn[:5].sum() + xn.sum())

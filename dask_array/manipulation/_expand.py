@@ -117,7 +117,7 @@ class ExpandDims(ArrayExpr):
         if isinstance(parent, SliceSlicesIntegers):
             return self._slice_pushdown(parent, dependents)
         if isinstance(parent, Shuffle):
-            return self._accept_shuffle(parent)
+            return self._shuffle_pushdown(parent, dependents)
         return None
 
     def _accept_slice(self, slice_expr):

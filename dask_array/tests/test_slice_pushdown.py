@@ -928,6 +928,48 @@ def test_shuffle_does_not_push_through_blockwise_adjust_chunks():
     assert_eq(result, mapped.compute()[indices, :])
 
 
+def test_shuffle_not_pushed_into_shared_node():
+    """A pushed shuffle re-derives the node in full (same elements,
+    reordered), so pushing into a node another parent consumes duplicates
+    the node's work. The shuffle stays above the shared chain."""
+    from dask_array._blockwise import Elemwise
+
+    x = da.from_array(np.arange(10000.0).reshape(100, 100), chunks=(10, 10))
+    y = (x + 1) * 2
+    z = y[[5, 3, 1]].sum() + y.sum()
+
+    simplified = z.expr.simplify()
+    elemwise_nodes = [n for n in simplified.walk() if isinstance(n, Elemwise)]
+    # add + mul of the shared chain, plus the top-level add of the two sums;
+    # a duplicated chain would show five
+    assert len(elemwise_nodes) == 3
+
+    xn = np.arange(10000.0).reshape(100, 100)
+    yn = (xn + 1) * 2
+    assert_eq(z, yn[[5, 3, 1]].sum() + yn.sum())
+
+
+def test_take_not_dropped_when_all_elemwise_inputs_broadcast():
+    """(-x)[[0, 0]] on a length-1 axis: every elemwise input broadcasts on
+    the shuffle axis, so no input gets shuffled and the pushdown used to
+    drop the take entirely, shrinking the result from (2,) back to (1,)."""
+    x = da.from_array(np.array([7.0]), chunks=(1,))
+    y = (-x)[[0, 0]]
+
+    assert y.expr.optimize().shape == (2,)
+    assert_eq(y, np.array([-7.0, -7.0]))
+
+
+def test_take_not_dropped_on_broadcast_dim():
+    """A take on a dimension broadcast from size 1 changes the axis extent,
+    so it is not the no-op that a permutation of identical rows would be."""
+    b = da.broadcast_to(da.from_array(np.array([5.0]), chunks=(1,)), (100,))
+    y = b[[0, 0, 1]]
+
+    assert y.expr.optimize().shape == (3,)
+    assert_eq(y, np.array([5.0, 5.0, 5.0]))
+
+
 # --- ExpandDims (None indexing) Pushdown Tests ---
 
 

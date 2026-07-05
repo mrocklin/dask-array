@@ -69,6 +69,8 @@ def _apply_op(draw, np_arr, da_arr):
     ops = ["neg", "add_scalar", "mul_scalar", "add_leaf", "mul_broadcast_leaf"]
     if ndim >= 1:
         ops += ["transpose", "getitem", "rechunk", "sum", "mean", "expand_dims", "concatenate"]
+    if ndim >= 1 and shape[0] > 0:
+        ops += ["take"]  # fancy indexing lowers to Shuffle
 
     op = draw(st.sampled_from(ops))
 
@@ -94,6 +96,10 @@ def _apply_op(draw, np_arr, da_arr):
     if op == "getitem":
         index = draw(_index(shape))
         return np_arr[index], da_arr[index], f"getitem {index}"
+    if op == "take":
+        n = draw(st.integers(1, 4))
+        idx = [draw(st.integers(0, shape[0] - 1)) for _ in range(n)]
+        return np_arr[idx], da_arr[idx], f"take {idx}"
     if op == "rechunk":
         chunks = tuple(draw(st.integers(1, max(1, s))) for s in shape)
         return np_arr, da_arr.rechunk(chunks), f"rechunk {chunks}"
@@ -146,4 +152,50 @@ def test_optimized_matches_numpy(pair):
     assert opt.dtype == np_arr.dtype, steps
 
     # Value correctness through the fully optimized graph
+    assert_eq(da_arr, np_arr)
+
+
+@st.composite
+def _shared_pipelines(draw):
+    """Several consumers over one shared chain, combined by adding their sums.
+
+    ``_pipelines`` is strictly linear (every node has one consumer), so the
+    sharing-aware pushdown gates (slice/rechunk/shuffle declining when
+    another parent needs a node in full) never fire there. Here 2-4
+    consumers — windows, integer indices, transposed slices, rechunks,
+    reductions — hang off the same chain and exercise them.
+    """
+    np_arr, da_arr = draw(_leaf())
+    steps = [f"leaf shape={np_arr.shape} chunks={da_arr.chunks}"]
+    for _ in range(draw(st.integers(0, 3))):
+        if np_arr.ndim > 4 or np_arr.size > 20_000:
+            break
+        np_arr, da_arr, step = draw(_apply_op(np_arr, da_arr))
+        steps.append(step)
+
+    np_total, da_total = None, None
+    for i in range(draw(st.integers(2, 4))):
+        np_c, da_c = np_arr, da_arr
+        branch = []
+        for _ in range(draw(st.integers(0, 2))):
+            if np_c.ndim > 4 or np_c.size > 20_000:
+                break
+            np_c, da_c, step = draw(_apply_op(np_c, da_c))
+            branch.append(step)
+        steps.append(f"consumer[{i}]: {' | '.join(branch) or 'identity'} | sum")
+        np_r, da_r = np_c.sum(), da_c.sum()
+        np_total = np_r if np_total is None else np_total + np_r
+        da_total = da_r if da_total is None else da_total + da_r
+    return np_total, da_total, "  ;  ".join(steps)
+
+
+@given(_shared_pipelines())
+@settings(max_examples=200, deadline=None)
+def test_optimized_shared_matches_numpy(pair):
+    np_arr, da_arr, steps = pair
+
+    opt = da_arr.expr.optimize()
+    assert opt.shape == np_arr.shape, steps
+    assert opt.dtype == np_arr.dtype, steps
+
     assert_eq(da_arr, np_arr)

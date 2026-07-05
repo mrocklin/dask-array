@@ -133,14 +133,17 @@ class Transpose(Blockwise):
         )
 
     def _simplify_up(self, parent, dependents):
-        """Allow slice and shuffle operations to push through Transpose."""
+        """Allow slice, shuffle, and rechunk operations to push through Transpose."""
+        from dask_array._rechunk import Rechunk
         from dask_array._shuffle import Shuffle
         from dask_array.slicing import SliceSlicesIntegers
 
         if isinstance(parent, SliceSlicesIntegers):
             return self._slice_pushdown(parent, dependents)
         if isinstance(parent, Shuffle):
-            return self._accept_shuffle(parent)
+            return self._shuffle_pushdown(parent, dependents)
+        if type(parent) is Rechunk:
+            return self._rechunk_pushdown(parent, dependents)
         return None
 
     def _accept_shuffle(self, shuffle_expr):

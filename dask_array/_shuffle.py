@@ -267,11 +267,11 @@ class Shuffle(ArrayExpr):
                 merges += len(idx)
         return TransferBytes(lo * row_bytes, (splits + merges) * row_bytes)
 
-    def _simplify_down(self):
-        """Push shuffle through various operations using _accept_shuffle pattern."""
-        # Check if child can accept this shuffle
-        if hasattr(self.array, "_accept_shuffle"):
-            return self.array._accept_shuffle(self)
+    # Pushdown into the child (Elemwise, Transpose, Concatenate, ...) is NOT
+    # dispatched from a ``_simplify_down`` here: it runs through the child's
+    # ``_simplify_up`` and ``ArrayExpr._shuffle_pushdown``, which sees
+    # ``dependents`` and declines when another parent needs the child in
+    # full. A dispatch from this side would be sharing-blind.
 
     def _simplify_up(self, parent, dependents):
         """Allow slice operations to push through Shuffle."""

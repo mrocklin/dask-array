@@ -471,7 +471,7 @@ class Blockwise(ArrayExpr):
         if isinstance(parent, SliceSlicesIntegers):
             return self._slice_pushdown(parent, dependents)
         if isinstance(parent, Shuffle):
-            return self._accept_shuffle(parent)
+            return self._shuffle_pushdown(parent, dependents)
         return None
 
     def _accept_shuffle(self, shuffle_expr):
@@ -1023,6 +1023,14 @@ class Elemwise(Blockwise):
         """
         return self._broadcast_block_id(dep, block_id)
 
+    def _simplify_up(self, parent, dependents):
+        """Additionally allow rechunks to push through Elemwise."""
+        from dask_array._rechunk import Rechunk
+
+        if type(parent) is Rechunk:
+            return self._rechunk_pushdown(parent, dependents)
+        return super()._simplify_up(parent, dependents)
+
     def _accept_slice(self, slice_expr):
         """Accept a slice being pushed through this Elemwise.
 
@@ -1130,10 +1138,12 @@ class Elemwise(Blockwise):
 
         # Shuffle each array input on its corresponding axis
         new_args = []
+        any_shuffled = False
         for arg in self.elemwise_args:
             input_axis = get_input_axis(arg)
             if input_axis is not None:
                 new_args.append(Shuffle(arg, indexer, input_axis, name))
+                any_shuffled = True
             else:
                 new_args.append(arg)
 
@@ -1142,11 +1152,20 @@ class Elemwise(Blockwise):
         input_axis = get_input_axis(new_where) if hasattr(new_where, "ndim") else None
         if input_axis is not None:
             new_where = Shuffle(new_where, indexer, input_axis, name)
+            any_shuffled = True
 
         new_out = self.out
         input_axis = get_input_axis(new_out) if hasattr(new_out, "ndim") else None
         if input_axis is not None:
             new_out = Shuffle(new_out, indexer, input_axis, name)
+            any_shuffled = True
+
+        if not any_shuffled and (shuffle_expr.shape != self.shape or shuffle_expr.chunks != self.chunks):
+            # Every input broadcasts on the shuffle axis, so the rewrite
+            # would drop the shuffle entirely. A take-style indexer (repeated
+            # or subset indices) changes the axis extent, so only a
+            # metadata-preserving shuffle can be dropped as a no-op.
+            return None
 
         return Elemwise(
             self.op,

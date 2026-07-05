@@ -325,6 +325,20 @@ class ArrayExpr(SingletonExpr):
     def __hash__(self):
         return hash(self._name)
 
+    def _other_dependents(self, parent, dependents):
+        """Dependents of ``self`` other than ``parent``, one per distinct name.
+
+        ``dependents`` reflects the tree as of this simplify pass, so this is
+        best-effort for parents created mid-pass; the pushdowns gated on it
+        are monotone, so the fixpoint still converges.
+        """
+        others = {}
+        for ref in dependents.get(self._name, ()):
+            node = ref()
+            if node is not None and node._name != parent._name:
+                others[node._name] = node
+        return others
+
     def _slice_pushdown(self, slice_expr, dependents):
         """Push ``slice_expr`` into ``self`` unless another parent needs
         ``self`` in full.
@@ -334,21 +348,37 @@ class ArrayExpr(SingletonExpr):
         and slicing its output costs nothing extra. When every dependent is
         itself a slice, pushing them all means the node is never computed in
         full anywhere (multi-window selection), so those still push.
-
-        ``dependents`` reflects the tree as of this simplify pass, so the
-        guard is best-effort for parents created mid-pass; pushes are
-        monotone, so the fixpoint still converges.
         """
         from dask_array.slicing._basic import SliceSlicesIntegers
 
-        others = {}
-        for ref in dependents.get(self._name, ()):
-            node = ref()
-            if node is not None and node._name != slice_expr._name:
-                others[node._name] = node
+        others = self._other_dependents(slice_expr, dependents)
         if any(not isinstance(node, SliceSlicesIntegers) for node in others.values()):
             return None
         return self._accept_slice(slice_expr)
+
+    def _rechunk_pushdown(self, rechunk_expr, dependents):
+        """Push ``rechunk_expr`` into ``self`` unless anything else depends
+        on ``self``.
+
+        Unlike a slice, a pushed rechunk re-derives all of ``self`` (same
+        elements, different chunking), so there is no multi-window sharing
+        among pushed copies: any other dependent — even another rechunk —
+        means ``self`` is materialized anyway and pushing only duplicates
+        its work.
+        """
+        if self._other_dependents(rechunk_expr, dependents):
+            return None
+        return rechunk_expr._pushdown()
+
+    def _shuffle_pushdown(self, shuffle_expr, dependents):
+        """Push ``shuffle_expr`` into ``self`` unless anything else depends
+        on ``self``; like a rechunk (see ``_rechunk_pushdown``), a pushed
+        shuffle re-derives all of ``self``, so any other dependent means
+        pushing only duplicates work.
+        """
+        if self._other_dependents(shuffle_expr, dependents):
+            return None
+        return self._accept_shuffle(shuffle_expr)
 
     def optimize(self, fuse: bool = True):
         expr = self.simplify().lower_completely()
