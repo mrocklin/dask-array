@@ -96,7 +96,7 @@ class Stack(ArrayExpr):
         from dask_array.slicing import SliceSlicesIntegers
 
         if isinstance(parent, SliceSlicesIntegers):
-            return self._accept_slice(parent)
+            return self._slice_pushdown(parent, dependents)
         if isinstance(parent, Shuffle):
             return self._accept_shuffle(parent)
         return None

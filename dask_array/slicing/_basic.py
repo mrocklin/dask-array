@@ -447,12 +447,11 @@ class SliceSlicesIntegers(Slice):
                 # Skip fusion for unsupported slicing patterns (e.g., negative step)
                 pass
 
-        # Check if the array implements _accept_slice (for operations like Elemwise,
-        # Transpose, Blockwise, PartialReduce, ExpandDims that use the simplify_up pattern).
-        if self.allow_getitem_optimization and hasattr(self.array, "_accept_slice"):
-            result = self.array._accept_slice(self)
-            if result is not None:
-                return result
+        # Pushdown into the child (Elemwise, Blockwise, FromArray, ...) is NOT
+        # dispatched here: it runs through the child's ``_simplify_up`` and
+        # ``ArrayExpr._slice_pushdown``, which sees ``dependents`` and declines
+        # when another parent needs the child in full. A dispatch from this
+        # side would be sharing-blind.
 
     def _slice_chunks(self, chunks, start, length):
         """Compute new chunks after slicing."""

@@ -314,7 +314,7 @@ class Reshape(ArrayExpr):
         from dask_array.slicing import SliceSlicesIntegers
 
         if isinstance(parent, SliceSlicesIntegers):
-            return self._accept_slice(parent)
+            return self._slice_pushdown(parent, dependents)
         return None
 
     def _accept_slice(self, slice_expr):

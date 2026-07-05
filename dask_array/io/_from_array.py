@@ -84,8 +84,6 @@ class FromArray(IO):
     }
     # FromArray reads static data, so rechunk can be pushed in safely
     _can_rechunk_pushdown = True
-    # Slicing can be pushed into FromArray by slicing the source array
-    _slice_pushdown = True
 
     def __new__(cls, *args, _determ_token=None, **kwargs):
         exact_index = cls._parameters.index("_name_is_exact")
@@ -302,7 +300,7 @@ class FromArray(IO):
         if isinstance(parent, SliceSlicesIntegers):
             if not parent.allow_getitem_optimization:
                 return None
-            return self._accept_slice(parent)
+            return self._slice_pushdown(parent, dependents)
         return None
 
     def _accept_rechunk(self, chunks, threshold=None, block_size_limit=None, method=None):

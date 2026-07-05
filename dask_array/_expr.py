@@ -325,6 +325,31 @@ class ArrayExpr(SingletonExpr):
     def __hash__(self):
         return hash(self._name)
 
+    def _slice_pushdown(self, slice_expr, dependents):
+        """Push ``slice_expr`` into ``self`` unless another parent needs
+        ``self`` in full.
+
+        Pushing a slice into a node that something else consumes whole
+        duplicates the node's work: the full result is materialized anyway,
+        and slicing its output costs nothing extra. When every dependent is
+        itself a slice, pushing them all means the node is never computed in
+        full anywhere (multi-window selection), so those still push.
+
+        ``dependents`` reflects the tree as of this simplify pass, so the
+        guard is best-effort for parents created mid-pass; pushes are
+        monotone, so the fixpoint still converges.
+        """
+        from dask_array.slicing._basic import SliceSlicesIntegers
+
+        others = {}
+        for ref in dependents.get(self._name, ()):
+            node = ref()
+            if node is not None and node._name != slice_expr._name:
+                others[node._name] = node
+        if any(not isinstance(node, SliceSlicesIntegers) for node in others.values()):
+            return None
+        return self._accept_slice(slice_expr)
+
     def optimize(self, fuse: bool = True):
         expr = self.simplify().lower_completely()
         if fuse:

@@ -216,6 +216,13 @@ class MapOverlap(ArrayExpr):
         return f"map-overlap-{super()._name}"
 
     def _simplify_up(self, parent, dependents):
+        from dask_array.slicing import SliceSlicesIntegers
+
+        if not isinstance(parent, SliceSlicesIntegers):
+            return None
+        return self._slice_pushdown(parent, dependents)
+
+    def _accept_slice(self, slice_expr):
         """Push slice through MapOverlap.
 
         For a slice on MapOverlap:
@@ -224,10 +231,7 @@ class MapOverlap(ArrayExpr):
         """
         from dask_array.slicing import SliceSlicesIntegers
 
-        if not isinstance(parent, SliceSlicesIntegers):
-            return None
-
-        index = parent.index
+        index = slice_expr.index
         ndim = self.arrays[0].ndim
 
         # Don't handle None (newaxis) or integers (dimension reduction)
@@ -309,7 +313,7 @@ class MapOverlap(ArrayExpr):
 
         if needs_trim:
             # Apply trim slice to output
-            return SliceSlicesIntegers(new_expr, tuple(output_trim_index), parent.allow_getitem_optimization)
+            return SliceSlicesIntegers(new_expr, tuple(output_trim_index), slice_expr.allow_getitem_optimization)
         else:
             return new_expr
 

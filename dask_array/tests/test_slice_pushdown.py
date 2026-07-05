@@ -1078,3 +1078,53 @@ def test_integer_index_before_expanded_axis():
     expected = np.expand_dims(x1, 1)[0, :]
     assert result.optimize().shape == expected.shape
     assert_eq(result, expected)
+
+
+def test_slice_not_pushed_into_shared_node():
+    """Pushing a slice into a node another parent consumes whole duplicates
+    the node's work: the full result is materialized anyway, and slicing its
+    output is free. y must stay shared here, not split into a sliced copy."""
+    from dask_array._blockwise import Elemwise
+
+    x = da.from_array(np.arange(10000.0).reshape(100, 100), chunks=(10, 10))
+    y = (x + 1) * 2
+    z = y[:99].sum() + y.sum()
+
+    simplified = z.expr.simplify()
+    elemwise_nodes = [n for n in simplified.walk() if isinstance(n, Elemwise)]
+    # add + mul of the shared chain, plus the top-level add of the two sums;
+    # a duplicated chain would show five
+    assert len(elemwise_nodes) == 3
+
+    xn = np.arange(10000.0).reshape(100, 100)
+    yn = (xn + 1) * 2
+    assert_eq(z, yn[:99].sum() + yn.sum())
+
+
+def test_slice_not_pushed_into_shared_leaf():
+    """Same rule at the IO leaf: a region-read duplicates I/O the full
+    consumer performs anyway."""
+    x = da.from_array(np.arange(10000.0).reshape(100, 100), chunks=(10, 10))
+    z = x[:5].sum() + x.sum()
+
+    simplified = z.expr.simplify()
+    from_arrays = {n._name for n in simplified.walk() if isinstance(n, FromArray)}
+    assert len(from_arrays) == 1
+
+    xn = np.arange(10000.0).reshape(100, 100)
+    assert_eq(z, xn[:5].sum() + xn.sum())
+
+
+def test_multi_window_slices_still_push():
+    """When every dependent is a slice, pushing them all means the shared
+    node is never computed in full anywhere - keep that win."""
+    x = da.from_array(np.arange(10000.0).reshape(100, 100), chunks=(10, 10))
+    y = (x + 1) * 2
+    z = y[:5] + y[10:15]
+    expected = ((x[:5] + 1) * 2) + ((x[10:15] + 1) * 2)
+
+    assert z.expr.simplify()._name == expected.expr.simplify()._name
+
+    xn = np.arange(10000.0).reshape(100, 100)
+    yn = (xn + 1) * 2
+    assert_eq(z, yn[:5] + yn[10:15])

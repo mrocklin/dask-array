@@ -67,27 +67,35 @@ if type(self.array) is Rechunk and self.array.method != "p2p":
 - `Slice(Slice(x, i1), i2)` → `Slice(x, fused_index)`
 - `Transpose(Transpose(x, a1), a2)` → `Transpose(x, composed)`
 
-### Pattern 3: Pushdown via Visitor
+### Pattern 3: Pushdown via `_simplify_up`
 
-Operations ask children if they can accept transformations:
+Children rewrite a slice parent through their `_simplify_up` hook, routed
+through a sharing-aware gate:
 
 ```python
-# SliceSlicesIntegers._simplify_down()
-def _simplify_down(self):
-    if hasattr(self.array, "_accept_slice"):
-        result = self.array._accept_slice(self)
-        if result is not None:
-            return result
+# Blockwise._simplify_up() in _blockwise.py
+def _simplify_up(self, parent, dependents):
+    if isinstance(parent, SliceSlicesIntegers):
+        return self._slice_pushdown(parent, dependents)
 ```
 
-The child implements the acceptance:
+`ArrayExpr._slice_pushdown` (in `_expr.py`) declines the push when any
+*other* dependent of the child is not a slice — a full consumer
+materializes the child anyway, so pushing would duplicate its work. When
+every dependent is a slice (multi-window selection), all of them push.
+The child implements the actual rewrite in `_accept_slice`:
 
 ```python
-# Blockwise._accept_slice() in _blockwise.py:404
+# Blockwise._accept_slice() in _blockwise.py
 def _accept_slice(self, slice_expr):
     # Map slice to inputs, return new expression
     ...
 ```
+
+Pushdown deliberately does NOT dispatch from the slice's own
+`_simplify_down` — that side cannot see `dependents`, so it would be
+sharing-blind. (Rechunk and Shuffle pushdown do not yet consult
+`dependents`; they can still de-share a subtree.)
 
 ## Slice Pushdown
 
@@ -270,7 +278,9 @@ def _simplify_down(self):
     return None
 ```
 
-Some existing code uses a visitor pattern with `_accept_slice()` methods, but this isn't required. Put the logic wherever it's clearest.
+Slice pushdown specifically must go through `_simplify_up` +
+`_slice_pushdown` (see Pattern 3) so the sharing guard applies; other
+rewrites can live wherever clearest.
 
 ### 3. Write Tests (TDD)
 
