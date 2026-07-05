@@ -747,8 +747,23 @@ def test_array_reduction_out(func):
 
 @pytest.mark.parametrize("func", ["cumsum", "cumprod", "nancumsum", "nancumprod"])
 @pytest.mark.parametrize("use_nan", [False, True])
-@pytest.mark.parametrize("axis", [None, 0, 1, -1])
-@pytest.mark.parametrize("method", ["sequential", "blelloch"])
+@pytest.mark.parametrize(
+    "axis,method",
+    [
+        # axis=None flattens; its optimized graph (reads pushed into
+        # FromArray at reshape granularity) panics frisky's Rust dask-order
+        # bookkeeping.  Reproducer + fix notes: dask_order_panic_repro in
+        # the frisky repo; drop this mark once that lands.
+        pytest.param(None, "sequential", marks=pytest.mark.skip_frisky),
+        (None, "blelloch"),
+        (0, "sequential"),
+        (0, "blelloch"),
+        (1, "sequential"),
+        (1, "blelloch"),
+        (-1, "sequential"),
+        (-1, "blelloch"),
+    ],
+)
 def test_array_cumreduction_axis(func, use_nan, axis, method):
     np_func = getattr(np, func)
     da_func = getattr(da, func)

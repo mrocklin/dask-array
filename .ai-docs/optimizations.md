@@ -197,6 +197,34 @@ def _pushdown(self):  # on Rechunk; sharing already checked by the gate
 Only no-op removal stays in `Rechunk._simplify_down`: it substitutes the
 existing child node, so sharing can only increase.
 
+The IO pushdown (`Rechunk(FromArray)` → read at the target chunks, via
+`_pushdown_into_io`) also runs from `Rechunk._lower()`: rechunks inserted
+*during* lowering — chunk unification, reshape, overlap — arrive after
+simplify has finished, and would otherwise lower to a `TasksRechunk` that
+moves every block when reading at the target layout is free.  (The lowering
+path has no `dependents` context, so it cannot consult the sharing gate —
+lower-born rechunks have a single consumer by construction, but their IO
+child could in principle be shared, in which case the push re-reads it.)
+
+## Rechunk Insertion (chunk unification, `_expr.py`)
+
+`unify_chunks_expr` is where the optimizer *inserts* rechunks nobody asked
+for, and the `auto` policy decides their direction per dimension by cost
+(`moved_fraction`, the min-model of `Rechunk.transfer_bytes`):
+
+- **nested layouts** merge up to the coarsest operand, unless the moved
+  bytes exceed `_MERGE_COST_RATIO` × the bytes already at that layout
+  (then refine — splits only);
+- **interleaved layouts** (boundaries that don't nest — the `x + roll(x, s)`
+  pattern) realign the misaligned operands to an operand's existing grid
+  (fewest blocks first) under the same ratio, instead of manufacturing the
+  finest common refinement, which would double the block count with sliver
+  chunks that every downstream op inherits.
+
+`bench/bench_rechunk_insertion.py` measures these choices against
+hand-inserted alternatives; `bench/bench_unify_policy.py` covers the
+merge-vs-refine direction.
+
 ## Blockwise Fusion (`_blockwise.py`)
 
 Combines adjacent blockwise operations into single fused tasks.

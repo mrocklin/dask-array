@@ -778,17 +778,24 @@ class Rechunk(ArrayExpr):
             return self._pushdown_through_concatenate()
 
         # Rechunk(IO) -> IO with new chunks (if IO supports it)
-        # Skip if method='p2p' is explicitly requested - user wants distributed shuffle
+        return self._pushdown_into_io()
+
+    def _pushdown_into_io(self):
+        """Rechunk(IO) -> IO reading at the target chunks, when the source
+        supports it (_can_rechunk_pushdown classes implement _accept_rechunk);
+        None when it doesn't.
+
+        Skipped if method='p2p' is explicitly requested - user wants
+        distributed shuffle.
+        """
         if getattr(self.array, "_can_rechunk_pushdown", False) and self.method != "p2p":
-            if hasattr(self.array, "_accept_rechunk"):
-                return self.array._accept_rechunk(
-                    self.chunks,
-                    threshold=self.threshold,
-                    block_size_limit=self.block_size_limit,
-                    method=self.method,
-                )
-            # Keep the same name prefix - the token will change with the new chunks
-            return self.array.substitute_parameters({"_chunks": self.chunks})
+            return self.array._accept_rechunk(
+                self.chunks,
+                threshold=self.threshold,
+                block_size_limit=self.block_size_limit,
+                method=self.method,
+            )
+        return None
 
     def _pushdown_through_transpose(self):
         """Push rechunk through transpose by reordering chunk spec."""
@@ -929,6 +936,15 @@ class Rechunk(ArrayExpr):
     def _lower(self):
         if not self.balance and (self.chunks == self.array.chunks):
             return self.array
+
+        # Rechunks inserted during lowering (chunk unification, reshape,
+        # overlap) never see _simplify_down, so retry the IO pushdown here:
+        # reading at the target chunking is free, a TasksRechunk is not.
+        # (_accept_rechunk returns None rather than self-equivalents, so the
+        # lowering fixpoint terminates.)
+        pushed = self._pushdown_into_io()
+        if pushed is not None:
+            return pushed
 
         method = self.method or _choose_rechunk_method(self.array.chunks, self.chunks, threshold=self.threshold)
         if method == "p2p":

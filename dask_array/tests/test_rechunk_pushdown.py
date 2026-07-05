@@ -541,7 +541,8 @@ def test_rechunk_pushdown_through_transpose_dict():
     assert result.expr.simplify()._name == expected.expr.simplify()._name
 
 
-# =============================================================================
+# ======================================================================
+
 # Regression tests
 # =============================================================================
 
@@ -674,3 +675,43 @@ def test_rechunk_fusion_not_through_shared_inner_rechunk():
 
     xn = np.arange(10000.0).reshape(100, 100)
     assert_eq(z, xn[:5].sum() + xn.sum())
+
+
+def test_lower_inserted_rechunk_pushes_into_from_array():
+    """Chunk unification inserts rechunks during lowering (Blockwise._lower),
+    after simplify has finished — they must still take the free pushdown into
+    FromArray reads instead of lowering to a TasksRechunk that moves blocks.
+    """
+    data = np.arange(22 * 22).reshape(22, 22)
+    a = da.from_array(data, chunks=(11, 4))
+    b = da.from_array(data, chunks=(4, 11))
+
+    result = a + b
+    opt = result.expr.optimize()
+
+    names = [type(node).__name__ for node in opt.walk()]
+    assert not any("Rechunk" in name for name in names), names
+    assert_eq(result, data + data)
+
+
+def test_lower_inserted_rechunk_respects_storage_chunks():
+    """The lower-time pushdown must keep reads storage-aligned.  Unification
+    realigns the storage-chunked operand to its partner's fewer-block grid,
+    which would split storage chunks — so the pushdown reads at storage
+    multiples and keeps a residual in-memory rechunk above the reads.  This
+    exercises both _accept_rechunk return shapes at lower time: the wrapped
+    Rechunk(FromArray(read_chunks), target) first, then the None that lets
+    the wrapper lower to TasksRechunk (no fixpoint loop).
+    """
+    store = _RecordingChunkedStore(shape=(20, 22), chunks=(3, 22))
+    a = da.from_array(store, chunks=(3, 22), asarray=False)
+    b = da.from_array(np.arange(20 * 22).reshape(20, 22), chunks=(4, 22))
+
+    result = a + b
+    assert result.chunks == b.chunks  # a realigns to b's fewer-block grid
+
+    opt = result.expr.optimize()
+    names = [type(node).__name__ for node in opt.walk()]
+    assert sum("Rechunk" in name for name in names) == 1, names
+    _assert_from_array_reads_respect_storage_chunks(opt)
+    assert_eq(result, store.data + b.compute(), scheduler="synchronous")

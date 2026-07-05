@@ -80,37 +80,45 @@ class TestCoarseChunkPreference:
 
 
 class TestFallbackToCommonBlockdim:
-    """Tests for falling back when boundaries don't align."""
+    """Interleaved boundaries: the auto policy realigns to an operand's own
+    layout (see TestRealignInterleaved) instead of manufacturing the finest
+    common refinement; the refinement remains the fallback when realigning
+    would move too many bytes, and under policy="refine"."""
 
     def test_misaligned_boundaries(self):
-        """(15,15) vs (10,20): boundary 15 not in {10}, must subdivide."""
+        """(15,15) vs (10,20): boundaries interleave; equal weights realign
+        to one input's layout (a sliver moves either way) rather than
+        splitting both to (10,5,5,10).  A full tie on (blocks, cost, anchored
+        bytes) resolves by the lexicographic layout tie-break -- (10,20) is
+        the *second* operand, so first-operand-wins would fail here."""
         a = da.ones(30, chunks=(15, 15))
         b = da.ones(30, chunks=(10, 20))
 
         result = a + b
 
-        # Neither input's chunks work; uses finest common divisor
-        assert result.chunks != ((15, 15),)
-        assert result.chunks != ((10, 20),)
+        assert result.chunks == ((10, 20),)
+        assert_eq(result, np.full(30, 2.0))
 
     def test_non_divisible(self):
-        """(12,12) vs (8,8,8): boundary 12 not in {8,16}, must subdivide."""
+        """(12,12) vs (8,8,8): realigns to the fewest-block layout."""
         a = da.ones(24, chunks=12)
         b = da.ones(24, chunks=8)
 
         result = a + b
 
-        # More chunks than either input
-        assert len(result.chunks[0]) > 2
+        assert result.chunks == ((12, 12),)
 
     def test_classic_uneven(self):
-        """(4,6) vs (6,4): different boundaries, uses (4,2,4)."""
+        """(4,6) vs (6,4): a full tie -- both directions move 2 of 10
+        elements -- resolved by the deterministic lexicographic tie-break,
+        rather than splitting both to (4,2,4)."""
         a = da.arange(10, chunks=((4, 6),))
         b = da.ones(10, chunks=((6, 4),))
 
         result = a + b
 
-        assert result.chunks == ((4, 2, 4),)
+        assert result.chunks == ((4, 6),)
+        assert_eq(result, np.arange(10) + 1.0)
 
 
 class TestCostAwareDirection:
@@ -304,3 +312,68 @@ class TestChunkReport:
         x = da.from_delayed(dask.delayed(boom)(), shape=(10,), dtype=float)
         report = da.chunk_report(x + 1)
         assert "1ch(10)" in report
+
+
+class TestRealignInterleaved:
+    """Interleaved (non-nested) layouts — the roll/shift pattern.
+
+    When boundaries interleave, neither operand's layout nests in the
+    other's, so merging is off the table.  Refining moves no bytes but
+    multiplies blocks and manufactures slivers that every downstream op
+    inherits; realigning the misaligned operands to an anchor layout that
+    already holds enough bytes moves only what crosses boundaries (one
+    sliver per block, for a small shift).  The auto policy realigns to the
+    fewest-block feasible anchor (then least movement) under the same cost
+    ratio as merging.
+    (Shapes here are unique per test: chunks resolve lazily at first
+    ``.chunks`` access and expressions are cached singletons.)
+    """
+
+    def test_roll_sliver_realigns_to_source_layout(self):
+        """x + roll(x, 1): the rolled operand is offset by one row; realign
+        moves one sliver per boundary instead of splitting every block of
+        both operands."""
+        x = da.random.random((1200, 6), chunks=(150, 6))
+        result = x + da.roll(x, 1, axis=0)
+
+        assert result.chunks == x.chunks
+        xx = x.compute()
+        assert_eq(result, xx + np.roll(xx, 1, axis=0))
+
+    def test_half_chunk_shift_still_realigns(self):
+        """Even a half-chunk shift (moves half the rolled operand's bytes)
+        stays within the cost ratio for equal-weight operands."""
+        x = da.ones((1440, 4), chunks=(160, 4))
+        result = x + da.roll(x, 80, axis=0)
+
+        assert result.chunks == x.chunks
+
+    def test_light_interleaved_operand_follows_heavy(self):
+        """The lighter operand moves to the heavier operand's grid, never
+        the reverse (bool anchor vs complex mover, offset boundaries)."""
+        heavy = da.ones(1760, chunks=((110,) + (220,) * 7 + (110,),), dtype="c16")
+        light = da.ones(1760, chunks=220, dtype=bool)
+
+        result = heavy + light
+
+        assert result.chunks == heavy.chunks
+
+    def test_refine_policy_still_refines(self):
+        """policy="refine" keeps the stock-dask escape hatch: interleaved
+        layouts split to the finest common boundaries, no realign."""
+        a = da.ones(1520, chunks=190)
+        b = da.ones(1520, chunks=((95,) + (190,) * 7 + (95,),))
+
+        with dask.config.set({"array.unify-chunks-policy": "refine"}):
+            result = a + b
+            assert result.chunks == ((95,) * 16,)
+
+    def test_roll_into_reduction_stays_untouched(self):
+        """Negative control: roll feeding straight into a reduction meets no
+        alignment demand, so no rechunk may be inserted anywhere."""
+        x = da.random.random((1360, 4), chunks=(170, 4))
+        result = da.roll(x, 1, axis=0).sum()
+
+        opt = result.expr.optimize()
+        names = [type(node).__name__ for node in opt.walk()]
+        assert not any("Rechunk" in name for name in names), names

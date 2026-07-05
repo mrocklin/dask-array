@@ -64,6 +64,11 @@ moved bytes are backed by an anchor of equal weight), and on the macro DAG
 produces a graph identical to coarse (its internal nested merges are all
 either equal-weight or near-free fragment healing; macro wall differences
 between auto/coarse/capped are same-graph noise, ~±1.5 s across runs).
+
+Update (2026-07-05, realign unification + lower-time IO pushdown, see
+bench_rechunk_insertion.py): auto still wins or ties every case, and its
+macro graph dropped to ~48k tasks (was 75k, now below coarse's 50k) --
+interleaved dims realign to an operand's grid instead of refining.
 """
 
 from __future__ import annotations
