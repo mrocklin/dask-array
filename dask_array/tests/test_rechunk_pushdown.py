@@ -755,21 +755,43 @@ def test_roll_rechunk_on_io_reads_shifted_regions():
 
 
 def test_realign_roll_on_io_reads_shifted_regions():
-    """y + roll(y, s) on an IO source end to end: unification realigns the
-    roll output with a rechunk born at lower time, the concat-axis pushdown
-    redistributes it, and the reads absorb everything but the seam merge."""
-    data = np.arange(2000.0)
-    y = da.from_array(data, chunks=200)
+    """z + roll(y, s) across two IO sources end to end: unification realigns
+    the roll output with a rechunk born at lower time, the concat-axis
+    pushdown redistributes it, and y's reads absorb everything but the seam
+    merge (y's only consumers are the roll's slices, so they push)."""
+    zdata = np.arange(2000.0)
+    ydata = np.arange(2000.0, 4000.0)
+    z = da.from_array(zdata, chunks=200)
+    y = da.from_array(ydata, chunks=200)
 
-    r = y + da.roll(y, 60)
-    assert r.chunks == y.chunks
+    r = z + da.roll(y, 60)
+    assert r.chunks == z.chunks
 
     opt = r.expr.optimize()
     froms = _from_array_exprs(opt)
     assert {f.chunks[0] for f in froms} == {(200,) * 10, (60,), (140,) + (200,) * 9}
     names = [type(node).__name__ for node in opt.walk()]
     assert sum("Rechunk" in name for name in names) == 1, names
-    assert_eq(r, data + np.roll(data, 60))
+    assert_eq(r, zdata + np.roll(ydata, 60))
+
+
+def test_realign_roll_on_shared_io_keeps_single_reads():
+    """y + roll(y, s): y also feeds the elemwise whole, so the sharing-aware
+    slice gate declines pushing the roll's slices into y — pushing would
+    read the source twice.  The realign rechunk then stays above the
+    concatenate as one in-memory merge and y is read exactly once."""
+    data = np.arange(1600.0)
+    y = da.from_array(data, chunks=160)
+
+    r = y + da.roll(y, 48)
+    assert r.chunks == y.chunks
+
+    opt = r.expr.optimize()
+    froms = _from_array_exprs(opt)
+    assert [f.chunks[0] for f in froms] == [(160,) * 10]
+    names = [type(node).__name__ for node in opt.walk()]
+    assert sum("Rechunk" in name for name in names) == 1, names
+    assert_eq(r, data + np.roll(data, 48))
 
 
 def test_rechunk_through_concatenate_concat_axis_opaque_parts():

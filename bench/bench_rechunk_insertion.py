@@ -16,10 +16,13 @@ rechunk inserted by hand — the plans an insertion policy should discover:
                     refinement makes 1-row sliver chunks.  Realign should win.
   roll_half_chunk   x + roll(x, c/2):   realign moves half the array; refine
                     splits every block in two.  The genuinely contested case.
-  roll_io           same as half_chunk but IO-backed: the roll's slices push
-                    into the reads and the realign redistributes through the
-                    concatenate, so the reads happen at the target grid and
-                    only the seam band still moves (16 MB, was 244 MiB).
+  roll_io           same as half_chunk but IO-backed.  y feeds the elemwise
+                    whole, so the sharing-aware slice gate declines pushing
+                    the roll's slices into y (that would read the source
+                    twice) and the realign stays one in-memory merge.  With
+                    an unshared source the concat-axis pushdown absorbs the
+                    realign into shifted reads, seam band only (16 MB — see
+                    test_realign_roll_on_io_reads_shifted_regions).
   cross_io          IO a(1000x100) + IO b(100x1000): unify merges both and
                     pays real movement; any pre-inserted rechunk pushes into
                     the reads for free.  Oracle is strictly better everywhere.
