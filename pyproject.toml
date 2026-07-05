@@ -36,6 +36,7 @@ sparse = [
     "sparse; python_version < '3.13'",
 ]
 test = [
+    "hypothesis",
     "pytest",
     "pytest-cov",
     "pytest-xdist",

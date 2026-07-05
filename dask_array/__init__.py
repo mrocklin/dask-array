@@ -32,7 +32,7 @@ _dask.config.update_defaults(
 from dask_array import _backends as _backends
 from dask_array import _chunk as chunk
 from dask_array._core_utils import PerformanceWarning
-from dask_array._diagnostics import chunk_report
+from dask_array._diagnostics import chunk_report, explain, trace_rewrites
 from dask.base import compute
 from dask_array._chunk_types import register_chunk_type
 
