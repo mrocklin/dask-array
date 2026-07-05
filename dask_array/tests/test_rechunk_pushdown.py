@@ -715,3 +715,130 @@ def test_lower_inserted_rechunk_respects_storage_chunks():
     assert sum("Rechunk" in name for name in names) == 1, names
     _assert_from_array_reads_respect_storage_chunks(opt)
     assert_eq(result, store.data + b.compute(), scheduler="synchronous")
+
+
+def test_rechunk_through_concatenate_concat_axis():
+    """A concat-axis-changing rechunk redistributes across the parts: each
+    part reads at (target ∩ its extent) and only the seam-straddling target
+    chunk needs a residual merge above the concatenate."""
+    left = np.arange(21.0)
+    right = np.arange(21.0, 42.0)
+    x = da.concatenate([da.from_array(left, chunks=7), da.from_array(right, chunks=7)])
+
+    y = x.rechunk(6)
+    assert y.chunks == ((6,) * 7,)
+
+    opt = y.expr.optimize()
+    froms = _from_array_exprs(opt)
+    assert sorted(f.chunks[0] for f in froms) == [(3, 6, 6, 6), (6, 6, 6, 3)]
+    names = [type(node).__name__ for node in opt.walk()]
+    assert sum("Rechunk" in name for name in names) == 1, names
+    assert_eq(y, np.arange(42.0))
+
+
+def test_roll_rechunk_on_io_reads_shifted_regions():
+    """roll(io, s).rechunk(y.chunks): the slices push into the reads, the
+    realign redistributes across the concatenate, and the reads happen at
+    the target grid directly — only the seam chunk still merges."""
+    data = np.arange(1000.0)
+    y = da.from_array(data, chunks=100)
+
+    r = da.roll(y, 30).rechunk(y.chunks)
+    assert r.chunks == y.chunks
+
+    opt = r.expr.optimize()
+    froms = _from_array_exprs(opt)
+    assert {f.chunks[0] for f in froms} == {(30,), (70,) + (100,) * 9}
+    names = [type(node).__name__ for node in opt.walk()]
+    assert sum("Rechunk" in name for name in names) == 1, names
+    assert_eq(r, np.roll(data, 30))
+
+
+def test_realign_roll_on_io_reads_shifted_regions():
+    """y + roll(y, s) on an IO source end to end: unification realigns the
+    roll output with a rechunk born at lower time, the concat-axis pushdown
+    redistributes it, and the reads absorb everything but the seam merge."""
+    data = np.arange(2000.0)
+    y = da.from_array(data, chunks=200)
+
+    r = y + da.roll(y, 60)
+    assert r.chunks == y.chunks
+
+    opt = r.expr.optimize()
+    froms = _from_array_exprs(opt)
+    assert {f.chunks[0] for f in froms} == {(200,) * 10, (60,), (140,) + (200,) * 9}
+    names = [type(node).__name__ for node in opt.walk()]
+    assert sum("Rechunk" in name for name in names) == 1, names
+    assert_eq(r, data + np.roll(data, 60))
+
+
+def test_rechunk_through_concatenate_concat_axis_opaque_parts():
+    """When no part can absorb its rechunk into reads (no IO underneath),
+    redistribution would trade one rechunk for one per part plus a seam
+    merge -- same bytes, more tasks -- so the pushdown declines and a single
+    rechunk stays above the concatenate."""
+    a = da.random.random((26,), chunks=13)
+    b = da.random.random((26,), chunks=13)
+    x = da.concatenate([a, b])
+
+    y = x.rechunk(8)
+    assert y.chunks == ((8,) * 6 + (4,),)
+
+    opt = y.expr.optimize()
+    names = [type(node).__name__ for node in opt.walk()]
+    assert sum("Rechunk" in name for name in names) == 1, names
+    assert_eq(y, x)
+
+
+def test_rechunk_through_concatenate_seam_only_declines():
+    """When each part already holds its slice of the target (the rechunk
+    only merges across the seam), the pushdown declines even for IO parts —
+    the fixpoint that keeps the residual rechunk from rewriting forever."""
+    left = np.arange(30.0)
+    right = np.arange(30.0, 60.0)
+    x = da.concatenate([da.from_array(left, chunks=10), da.from_array(right, chunks=10)])
+
+    y = x.rechunk(((10, 10, 20, 10, 10),))
+    assert y.chunks == ((10, 10, 20, 10, 10),)
+
+    opt = y.expr.optimize()
+    froms = _from_array_exprs(opt)
+    assert all(f.chunks[0] == (10, 10, 10) for f in froms)  # reads untouched
+    names = [type(node).__name__ for node in opt.walk()]
+    assert sum("Rechunk" in name for name in names) == 1, names
+    assert_eq(y, np.arange(60.0))
+
+
+def test_rechunk_through_concatenate_declines_without_absorption():
+    """Storage-chunked parts gain nothing from redistribution — their reads
+    would stay storage-aligned regardless (_accept_rechunk wraps instead of
+    absorbing) — so the concat-axis pushdown declines and one rechunk stays
+    above the concatenate instead of one per part plus a seam merge."""
+    store = _RecordingChunkedStore(shape=(24, 3), chunks=(6, 3))
+    part = da.from_array(store, chunks=(6, 3), asarray=False)
+    x = da.concatenate([part, part], axis=0)
+
+    y = x.rechunk((9, 3))
+    opt = y.expr.optimize()
+    names = [type(node).__name__ for node in opt.walk()]
+    assert sum("Rechunk" in name for name in names) == 1, names
+    _assert_from_array_reads_respect_storage_chunks(opt)
+    assert_eq(y, np.concatenate([store.data, store.data]), scheduler="synchronous")
+
+
+def test_rechunk_through_concatenate_multi_part_axis1():
+    """Three uneven-origin parts on axis=1 with a target chunk spanning all
+    of them: each part reads at its slice of the target and the residual
+    merges across both seams."""
+    parts_np = [np.arange(i * 12.0, (i + 1) * 12.0).reshape(3, 4) for i in range(3)]
+    x = da.concatenate([da.from_array(p, chunks=(3, 2)) for p in parts_np], axis=1)
+
+    y = x.rechunk((3, 12))
+    assert y.chunks == ((3,), (12,))
+
+    opt = y.expr.optimize()
+    froms = _from_array_exprs(opt)
+    assert all(f.chunks == ((3,), (4,)) for f in froms)
+    names = [type(node).__name__ for node in opt.walk()]
+    assert sum("Rechunk" in name for name in names) == 1, names
+    assert_eq(y, np.concatenate(parts_np, axis=1))

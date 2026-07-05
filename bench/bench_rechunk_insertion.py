@@ -17,8 +17,9 @@ rechunk inserted by hand — the plans an insertion policy should discover:
   roll_half_chunk   x + roll(x, c/2):   realign moves half the array; refine
                     splits every block in two.  The genuinely contested case.
   roll_io           same as half_chunk but IO-backed: the roll's slices push
-                    into the reads; the realign rechunk currently survives on
-                    the concat axis (concat-axis pushdown would zero it).
+                    into the reads and the realign redistributes through the
+                    concatenate, so the reads happen at the target grid and
+                    only the seam band still moves (16 MB, was 244 MiB).
   cross_io          IO a(1000x100) + IO b(100x1000): unify merges both and
                     pays real movement; any pre-inserted rechunk pushes into
                     the reads for free.  Oracle is strictly better everywhere.

@@ -891,58 +891,105 @@ class Rechunk(ArrayExpr):
         )
 
     def _pushdown_through_concatenate(self):
-        """Push rechunk through concatenate for non-concat axes."""
+        """Push rechunk through concatenate; None when it doesn't apply.
+
+        Off-axis changes rechunk each part directly.  A concat-axis change
+        redistributes the target across the parts -- each part rechunks to
+        (target ∩ its extent), so the pieces land where reads can absorb
+        them -- and only target chunks straddling a part seam still need a
+        residual merge above the concatenate.
+
+        Skipped if method='p2p' is explicitly requested - user wants
+        distributed shuffle.
+        """
+        from dask_array._concatenate import Concatenate
         from dask_array._new_collection import new_collection
+
+        if not isinstance(self.array, Concatenate) or self.method == "p2p":
+            return None
 
         concat = self.array
         axis = concat.axis
         arrays = concat.args
-        chunks = self._chunks
+        target = self.chunks
 
-        # Only handle tuple chunks for now
-        if not isinstance(chunks, tuple):
-            # For dict chunks, check if we're only rechunking non-concat axes
-            if isinstance(chunks, dict) and axis not in chunks:
-                # Build chunks for each input (same rechunk spec)
-                rechunked_arrays = [new_collection(a).rechunk(chunks) for a in arrays]
-                return type(concat)(
-                    rechunked_arrays[0].expr,
-                    axis,
-                    concat._meta,
-                    *[a.expr for a in rechunked_arrays[1:]],
-                )
+        if any(math.isnan(s) for dim in target for s in dim):
             return None
 
-        # Only push through if we're not changing the concat axis chunking
-        # (redistributing across concat boundaries is too complex)
-        if chunks[axis] != concat.chunks[axis]:
+        redistributed = target[axis] != concat.chunks[axis]
+        if not redistributed:
+            # Concat axis untouched: each part keeps its own axis chunks
+            per_part = [arr.chunks[axis] for arr in arrays]
+        else:
+            part_dims = [arr.chunks[axis] for arr in arrays]
+            if any(math.isnan(s) or s == 0 for dim in (target[axis], *part_dims) for s in dim):
+                return None
+            # Split each target chunk at the part boundaries it crosses
+            per_part = [[] for _ in arrays]
+            i = 0
+            room = sum(part_dims[0])
+            for c in target[axis]:
+                while c:
+                    take = min(c, room)
+                    if not take:
+                        return None  # part extents disagree with the target
+                    per_part[i].append(take)
+                    room -= take
+                    c -= take
+                    if not room and i + 1 < len(arrays):
+                        i += 1
+                        room = sum(part_dims[i])
+            per_part = [tuple(p) for p in per_part]
+
+        specs = [target[:axis] + (p,) + target[axis + 1 :] for p in per_part]
+        if all(spec == arr.chunks for spec, arr in zip(specs, arrays)):
+            # Every part already holds its slice of the target: only
+            # seam-straddling merges remain, and those must stay above the
+            # concatenate.  (Also the fixpoint that stops re-rewriting the
+            # residual rechunk built below.)
             return None
 
-        # Build rechunk spec for each input (excluding concat axis)
-        # For the concat axis, each input keeps its original chunks
-        rechunked_arrays = []
-        for arr in arrays:
-            arr_chunks = list(chunks)
-            arr_chunks[axis] = arr.chunks[axis]
-            rechunked_arrays.append(new_collection(arr).rechunk(tuple(arr_chunks)))
+        if redistributed:
+            # Redistribution replaces one rechunk above the concatenate with
+            # one per part plus a seam merge -- same bytes moved, more
+            # tasks.  Only worth it when some part fully absorbs its rechunk
+            # into its reads: probe _accept_rechunk, which returns a plain
+            # IO node on absorption but None or a wrapped Rechunk when
+            # storage chunks keep the reads unchanged.
+            for arr, spec in zip(arrays, specs):
+                if getattr(arr, "_can_rechunk_pushdown", False) and spec != arr.chunks:
+                    absorbed = arr._accept_rechunk(
+                        spec,
+                        threshold=self.threshold,
+                        block_size_limit=self.block_size_limit,
+                        method=self.method,
+                    )
+                    if absorbed is not None and not isinstance(absorbed, Rechunk):
+                        break
+            else:
+                return None
 
-        return type(concat)(
-            rechunked_arrays[0].expr,
-            axis,
-            concat._meta,
-            *[a.expr for a in rechunked_arrays[1:]],
-        )
+        rechunked = [new_collection(arr).rechunk(spec).expr for arr, spec in zip(arrays, specs)]
+        new_concat = type(concat)(rechunked[0], axis, concat._meta, *rechunked[1:])
+        if new_concat.chunks == target:
+            return new_concat
+        return Rechunk(new_concat, target, self.threshold, self.block_size_limit, False, self.method)
 
     def _lower(self):
         if not self.balance and (self.chunks == self.array.chunks):
             return self.array
 
         # Rechunks inserted during lowering (chunk unification, reshape,
-        # overlap) never see _simplify_down, so retry the IO pushdown here:
-        # reading at the target chunking is free, a TasksRechunk is not.
-        # (_accept_rechunk returns None rather than self-equivalents, so the
-        # lowering fixpoint terminates.)
+        # overlap) never see _simplify_down, so retry the toward-the-leaves
+        # pushdowns here: reading at the target chunking is free, a
+        # TasksRechunk is not.  (_accept_rechunk and the concatenate
+        # redistribution both return None rather than self-equivalents, so
+        # the lowering fixpoint terminates.)
         pushed = self._pushdown_into_io()
+        if pushed is not None:
+            return pushed
+
+        pushed = self._pushdown_through_concatenate()
         if pushed is not None:
             return pushed
 

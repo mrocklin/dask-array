@@ -382,7 +382,7 @@ This is especially useful when pushing operations through expression hierarchies
 | Rechunk | Done | `_rechunk.py` |
 | Transpose | Done | `_rechunk.py` |
 | Elemwise | Done | `_rechunk.py` |
-| Concatenate | Done | Non-concat axes only |
+| Concatenate | Done | Concat axis redistributes to (target ∩ part), residual seam merge |
 
 ## Key Files
 
