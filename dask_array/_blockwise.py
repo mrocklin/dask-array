@@ -133,6 +133,14 @@ class Blockwise(ArrayExpr):
         return tuple(map(tuple, chunks))
 
     @cached_property
+    def ndim(self):
+        # Output rank is just the number of output index labels. Deriving it
+        # this way avoids computing chunk sizes (which runs chunk alignment /
+        # broadcasting) merely to learn how many dimensions there are -- the
+        # coupling that made ``dtype`` -> ``_meta`` -> ``ndim`` pull ``chunks``.
+        return len(self.out_ind)
+
+    @cached_property
     def dtype(self):
         return super().dtype
 
@@ -813,6 +821,30 @@ class Elemwise(Blockwise):
     @property
     def user_kwargs(self):
         return self.operand("_user_kwargs") or {}
+
+    def __dask_tokenize__(self):
+        # Token from raw operands (op, dtype, name, where, out, user_kwargs,
+        # *arrays) only. Blockwise's override tokenizes derived properties
+        # (self.func, self.dtype, self.out_ind, self.kwargs), which for an
+        # Elemwise route through ``_info`` -- running numpy dtype inference --
+        # and ``out_ind`` -- running broadcasting -- just to name the node.
+        # The inferred dtype/func/out_ind are pure functions of the operands,
+        # so including them is redundant; naming stays purely structural.
+        if not self._determ_token:
+            try:
+                self._determ_token = _tokenize_deterministic(type(self), *self.operands)
+            except TokenizationError:
+                # Rare: an operand (e.g. a non-serializable value in kwargs)
+                # isn't deterministically tokenizable. Fall back to id() for
+                # just those, matching Blockwise.__dask_tokenize__.
+                def token_or_identity(value):
+                    try:
+                        return _tokenize_deterministic(value)
+                    except TokenizationError:
+                        return (type(value), id(value))
+
+                self._determ_token = _tokenize_deterministic(type(self), *(token_or_identity(o) for o in self.operands))
+        return self._determ_token
 
     @cached_property
     def _meta(self):
