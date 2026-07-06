@@ -372,6 +372,61 @@ def test_slice_on_overlap_axis_value_correctness():
     assert_eq(sliced, full_result[:50, :50])
 
 
+def test_tail_slice_with_asymmetric_positive_overlap_lowers():
+    day = 8_640
+    depth = 25_919
+    arr = np.arange(13 * day, dtype="float64")
+    x = da.from_array(arr, chunks=(day,))
+
+    def lead1(block):
+        result = np.full_like(block, np.nan)
+        result[:-1] = block[1:]
+        return result
+
+    full = da.map_overlap(lead1, x, depth={0: (0, depth)}, boundary="none", trim=True)
+    result = full[-day:]
+
+    assert result.__dask_graph__()
+    assert_eq(result, full.compute()[-day:])
+
+
+def test_tail_slice_with_second_input_asymmetric_overlap_lowers():
+    arr = np.arange(50, dtype="float64")
+    x = da.from_array(arr, chunks=(10,))
+    y = da.from_array(arr * 2, chunks=(10,))
+
+    full = da.map_overlap(
+        lambda a, b: a + b,
+        x,
+        y,
+        depth=[{0: 0}, {0: (0, 25)}],
+        boundary=["none", "none"],
+        trim=True,
+    )
+    result = full[-10:]
+
+    assert result.__dask_graph__()
+
+
+def test_periodic_edge_slice_keeps_global_boundary_context():
+    arr = np.arange(10, dtype="float64")
+    x = da.from_array(arr, chunks=(5,))
+
+    full = da.map_overlap(lag1, x, depth={0: 1}, boundary="periodic", trim=True)
+
+    assert_eq(full[:3], full.compute()[:3])
+
+
+def test_overlap_axis_slice_with_no_rechunk_lowers():
+    arr = np.arange(40, dtype="float64")
+    x = da.from_array(arr, chunks=(20,))
+
+    full = da.map_overlap(lambda block: block, x, depth={0: 10}, boundary="none", trim=True, allow_rechunk=False)
+    result = full[5:15]
+
+    assert result.__dask_graph__()
+
+
 def test_nested_overlap_tail_slice_after_rechunk():
     arr = np.arange(30, dtype="float64").reshape(15, 2)
     x = da.from_array(arr, chunks=(3, 2))

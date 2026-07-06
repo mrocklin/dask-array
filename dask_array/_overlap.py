@@ -239,6 +239,9 @@ class MapOverlap(ArrayExpr):
             return None
         if any(isinstance(idx, Integral) for idx in index):
             return None
+        # This rewrite currently tracks one depth spec while slicing every input.
+        if len(self.arrays) != 1:
+            return None
 
         # Pad index to full length
         full_index = list(index) + [slice(None)] * (ndim - len(index))
@@ -279,11 +282,21 @@ class MapOverlap(ArrayExpr):
                 # No overlap on this axis - push directly
                 output_trim_index.append(slice(None))
             else:
+                if not self.allow_rechunk:
+                    return None
+
                 # Expand slice by overlap depth for input
                 # But respect array boundaries
                 input_size = self.arrays[0].shape[axis]
                 expanded_start = max(0, start - left_depth)
                 expanded_stop = min(input_size, stop + right_depth)
+                # Periodic edge context must wrap around the original full array.
+                if self.boundary[0].get(axis, "none") == "periodic" and (
+                    expanded_start == 0 or expanded_stop == input_size
+                ):
+                    return None
+                if max_depth > expanded_stop - expanded_start:
+                    return None
 
                 # Replace this axis in full_index with expanded slice
                 full_index[axis] = slice(expanded_start, expanded_stop)
