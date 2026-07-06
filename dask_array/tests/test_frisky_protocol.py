@@ -225,6 +225,40 @@ def test_contracted_einsum_fused_blockwise_binary_chunk_tracks_remapped_deps():
         assert slots == tuple(expected_by_source[source_name] for source_name in slot_source_order)
 
 
+def test_xarray_rolling_sum_where_literal_uses_binary_records():
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    import json
+
+    xr = pytest.importorskip("xarray")
+
+    x = da.from_array(np.ones((100, 5)), chunks=(20, 5))
+    xda = xr.DataArray(x, dims=("time", "asset"))
+    y = xda.rolling({"time": 10}, min_periods=1).sum().data
+
+    chunks, records, chunk_groups = y.__frisky_records_chunks__()
+
+    assert chunks
+    ops = [json.loads(meta)["op"] for _, meta, _ in chunk_groups]
+    assert "Elemwise" in ops
+    assert "FusedBlockwise" in ops
+
+    elemwise = [e for e in y._lowered_expr.walk() if type(e).__name__ == "Elemwise"]
+    assert len(elemwise) == 1
+    expr = elemwise[0]
+    assert expr._frisky_layer().to_records_chunk()
+    assert not any(record[0].startswith(f"('{expr._name}',") for record in records)
+    dep_graph = {}
+    for dep in expr.dependencies():
+        dep_graph.update(dict(dep.__dask_graph__()))
+    legacy_graph = expr._layer()
+    native_graph = expr._frisky_layer().to_dask_graph()
+    for key in flatten(expr.__dask_keys__()):
+        expected = get_sync({**dep_graph, **legacy_graph}, key)
+        actual = get_sync({**dep_graph, **native_graph}, key)
+        np.testing.assert_array_equal(actual, expected)
+
+
 @pytest.mark.parametrize(
     "axis, shape, chunk_spec, expected_identity_shapes",
     [
