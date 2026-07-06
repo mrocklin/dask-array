@@ -3,10 +3,10 @@
 ``CumReduction._frisky_layer`` builds the shared per-block chunk function — the
 ``partial(func, axis=…[, dtype=…])`` the legacy ``_layer`` uses, replicating its
 ``inspect.signature`` dtype decision exactly — and hands the Rust
-``CumReductionLayer`` the remaining funcs (``np.full_like``, ``operator.getitem``,
-the ``binop``), the ``meta``/``ident``/``dtype`` literals, and the block grid.
-Rust emits the four task kinds (chunk / identity / tail-getitem / binop) with the
-sequential carry along the reduction axis.
+``CumReductionLayer`` the remaining funcs (an identity-block wrapper,
+``operator.getitem``, the ``binop``), and the block grid. Rust emits the four
+task kinds (chunk / identity / tail-getitem / binop) with the sequential carry
+along the reduction axis.
 """
 
 from __future__ import annotations
@@ -36,18 +36,21 @@ class CumReductionLayer(Layer):
                 pass
         chunk_func = partial(func, axis=axis, dtype=dtype) if use_dtype else partial(func, axis=axis)
 
+        identity_func = partial(_full_like_shape, meta, ident, dtype)
+
         self._rust = _rust.CumReductionLayer(
             name,
             chunk_func,
-            np.full_like,
+            identity_func,
             operator.getitem,
             binop,
             {},
-            meta,
-            ident,
-            dtype,
             x_name,
             int(axis),
             [int(n) for n in numblocks],
             [[int(c) for c in dim] for dim in chunks],
         )
+
+
+def _full_like_shape(meta, ident, dtype, shape):
+    return np.full_like(meta, ident, dtype=dtype, shape=shape)

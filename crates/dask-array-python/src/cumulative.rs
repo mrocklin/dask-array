@@ -7,8 +7,8 @@
 //!   - **chunk** (`name-chunk`): per block, `chunk_func(x_block)` (a Python
 //!     `partial(func, axis=…[, dtype=…])`, built in the wrapper).
 //!   - **extra** (`name-extra`): the running carry. The first block along the
-//!     axis is `full_like(meta, ident, dtype, shape=…)` (the identity, with size
-//!     1 along the axis) — a per-block `shape` keyword, so `Compute::CallKw`.
+//!     axis is `full_like_shape_bound(shape)` (the identity, with size 1 along
+//!     the axis).
 //!     Subsequent blocks are `binop(extra[prev], tail[prev])`.
 //!   - **tail** (`name-tail`): `getitem(chunk[blk], last-along-axis)`. The legacy
 //!     nests this `getitem` inline inside the `binop` task; the neutral form has
@@ -44,12 +44,10 @@ pub struct CumReductionLayer {
     /// `[output, chunk, extra, tail, x]` names — produced names use the first
     /// four; `Dep`s reference chunk/extra/tail/x.
     names: Vec<String>,
-    /// `[chunk_func, np.full_like, operator.getitem, binop]`.
+    /// `[chunk_func, identity_func, operator.getitem, binop]`.
     funcs: Vec<Py<PyAny>>,
-    /// Shared kwargs (empty — the per-block `shape` rides in `CallKw`).
+    /// Shared kwargs (empty).
     kwargs: Py<PyAny>,
-    /// `[meta, ident, dtype]` for the `full_like` identity blocks.
-    literals: Vec<Py<PyAny>>,
     axis: usize,
     numblocks: Vec<usize>,
     /// Per-dimension chunk sizes (for the identity block shapes).
@@ -67,9 +65,6 @@ impl CumReductionLayer {
         getitem: Py<PyAny>,
         binop: Py<PyAny>,
         kwargs: Py<PyAny>,
-        meta: Py<PyAny>,
-        ident: Py<PyAny>,
-        dtype: Py<PyAny>,
         x_name: String,
         axis: usize,
         numblocks: Vec<usize>,
@@ -86,7 +81,6 @@ impl CumReductionLayer {
             names,
             funcs: vec![chunk_func, full_like, getitem, binop],
             kwargs,
-            literals: vec![meta, ident, dtype],
             axis,
             numblocks,
             chunks,
@@ -173,7 +167,7 @@ impl CumReductionLayer {
         for _ in 0..na_total {
             let c0 = full_coord(&na_coord, 0);
 
-            // extra[pos, 0] = full_like(meta, ident, dtype, shape=<1 along axis>)
+            // extra[pos, 0] = full_like_shape_bound(shape=<1 along axis>)
             let shape: Vec<i64> = (0..ndim)
                 .map(|d| {
                     if d == self.axis {
@@ -186,15 +180,10 @@ impl CumReductionLayer {
             tasks.push(NeutralTask {
                 name_idx: N_EXTRA,
                 coord: c0.clone(),
-                compute: Compute::CallKw {
+                compute: Compute::Call {
                     func_idx: F_FULL_LIKE,
-                    kwargs: vec![("shape".to_string(), ArgSlot::IntTuple(shape))],
                 },
-                slots: vec![
-                    ArgSlot::Literal(0),
-                    ArgSlot::Literal(1),
-                    ArgSlot::Literal(2),
-                ],
+                slots: vec![ArgSlot::IntTuple(shape)],
             });
             // output[pos, 0] = chunk[pos, 0]  (alias)
             tasks.push(NeutralTask {
@@ -273,7 +262,7 @@ impl CumReductionLayer {
             names: self.names.iter().map(|s| s.as_str()).collect(),
             funcs: self.funcs.iter().collect(),
             kwargs: &self.kwargs,
-            literals: &self.literals,
+            literals: &[],
             dep_names: &self.names,
             tasks,
         }

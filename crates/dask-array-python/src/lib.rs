@@ -34,6 +34,7 @@ mod expand_dims;
 mod eye;
 mod from_array;
 mod from_map;
+mod fused_blockwise;
 mod linspace;
 mod overlap;
 mod rechunk;
@@ -51,7 +52,7 @@ mod stack;
 /// coordinate on is the binary records grammar (`common::RECORDS_PROTOCOL_VERSION`
 /// ↔ Frisky's `records_proto::CHUNK_GRAMMAR_VERSION`), which only moves when the
 /// chunk byte-grammar changes — not when a layer is added.
-const NATIVE_BUILD_GENERATION: usize = 27;
+const NATIVE_BUILD_GENERATION: usize = 28;
 
 #[pyfunction]
 fn native_build_generation() -> usize {
@@ -77,6 +78,7 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<eye::EyeLayer>()?;
     m.add_class::<from_array::FromArrayGetterLayer>()?;
     m.add_class::<from_map::FromMapLayer>()?;
+    m.add_class::<fused_blockwise::FusedBlockwiseLayer>()?;
     m.add_class::<linspace::LinspaceLayer>()?;
     m.add_class::<overlap::OverlapLayer>()?;
     m.add_class::<reduction::PartialReduceLayer>()?;

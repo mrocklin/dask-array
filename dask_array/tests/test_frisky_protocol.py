@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import struct
 import sys
 
 import dask
@@ -14,13 +15,74 @@ from dask_array._new_collection import new_collection
 from dask_array._overlap import overlap_internal
 
 
-def _record_literal_args(records):
-    for _, func, args, _, _ in records:
-        yield from args
-        subgraph = getattr(func, "subgraph", None)
-        if subgraph is not None:
-            for task in subgraph.values():
-                yield from getattr(task, "args", ())
+def _decode_layer_chunk(chunk):
+    pos = 0
+
+    def take(n):
+        nonlocal pos
+        out = chunk[pos : pos + n]
+        pos += n
+        return out
+
+    def u8():
+        return take(1)[0]
+
+    def u32():
+        return struct.unpack("<I", take(4))[0]
+
+    def i64():
+        return struct.unpack("<q", take(8))[0]
+
+    def coord():
+        return tuple(u32() for _ in range(u8()))
+
+    def string():
+        return take(u32()).decode()
+
+    def opt_i64():
+        return i64() if u8() else None
+
+    def slot(dep_names):
+        tag = u8()
+        if tag == 0:
+            return ("dep", dep_names[u32()], coord())
+        if tag == 1:
+            items = []
+            for _ in range(u8()):
+                elem_tag = u8()
+                if elem_tag == 0:
+                    items.append(("slice", opt_i64(), opt_i64(), opt_i64()))
+                else:
+                    items.append(("int", i64()))
+            return ("index", tuple(items))
+        if tag == 2:
+            return ("inttuple", tuple(i64() for _ in range(u8())))
+        if tag == 3:
+            return ("list", tuple(slot(dep_names) for _ in range(u32())))
+        if tag == 4:
+            num_tag = u8()
+            return ("scalar", i64() if num_tag == 0 else struct.unpack("<d", take(8))[0])
+        raise AssertionError(f"unknown slot tag {tag}")
+
+    assert u8() == 1
+    names = [string() for _ in range(u32())]
+    dep_names = [string() for _ in range(u32())]
+    for _ in range(u32()):
+        take(u32())
+    tasks = []
+    for _ in range(u32()):
+        name = names[u32()]
+        task_coord = coord()
+        compute_tag = u8()
+        if compute_tag == 0:
+            compute = ("call", u32())
+        elif compute_tag == 2:
+            compute = ("alias",)
+        else:
+            raise AssertionError(f"unknown compute tag {compute_tag}")
+        tasks.append((name, task_coord, compute, tuple(slot(dep_names) for _ in range(u8()))))
+    assert pos == len(chunk)
+    return names, dep_names, tasks
 
 
 def test_dask_graph_does_not_import_frisky_modules():
@@ -46,7 +108,7 @@ def test_frisky_graph_imports_frisky_modules():
     assert "dask_array._frisky" in sys.modules
 
 
-def test_numeric_scalar_materialized_graph_uses_binary_alias_and_fused_records():
+def test_numeric_scalar_materialized_graph_uses_binary_alias_and_fused_chunk():
     if importlib.util.find_spec("dask_array._rust") is None:
         pytest.skip("requires Rust extension")
     import json
@@ -55,10 +117,79 @@ def test_numeric_scalar_materialized_graph_uses_binary_alias_and_fused_records()
 
     chunks, records, chunk_groups = x.__frisky_records_chunks__()
 
-    assert len(chunks) == 1
+    assert records == []
+    assert len(chunks) == 2
+    assert [json.loads(meta)["op"] for _, meta, _ in chunk_groups] == ["RootAlias", "FusedBlockwise"]
+
+
+def test_fused_blockwise_uses_binary_records_chunk():
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    import json
+
+    x = da.ones((40, 40), chunks=(10, 10))
+    y = (x + 1) * 2 - x / 3
+
+    chunks, records, chunk_groups = y.__frisky_records_chunks__()
+
+    assert records == []
+    assert len(chunks) == 2
+    assert [json.loads(meta)["op"] for _, meta, _ in chunk_groups] == ["RootAlias", "FusedBlockwise"]
+
+
+def test_source_backed_fused_blockwise_binary_chunk_tracks_deps():
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    import json
+
+    x = da.from_array(np.arange(40 * 40).reshape(40, 40), chunks=(10, 10))
+    y = (x + 1) * 2 - x / 3
+
+    chunks, records, chunk_groups = y.__frisky_records_chunks__()
+
     assert records
-    assert [json.loads(meta)["op"] for _, meta, _ in chunk_groups] == ["RootAlias"]
-    assert all(type(func).__name__ == "_FusedSubgraph" for _, func, _, _, _ in records)
+    assert len(chunks) == 2
+    assert [json.loads(meta)["op"] for _, meta, _ in chunk_groups] == ["RootAlias", "FusedBlockwise"]
+
+    _names, dep_names, tasks = _decode_layer_chunk(chunks[1])
+    fused = y._lowered_expr.dependencies()[0]
+    source = fused.dependencies()[0]
+    assert dep_names == [source._name]
+    assert len(tasks) == 16
+    for name, coord, compute, slots in tasks:
+        assert name == fused._name
+        assert compute[0] == "call"
+        assert slots == (("dep", source._name, coord),)
+
+
+@pytest.mark.parametrize(
+    "axis, shape, chunk_spec, expected_identity_shapes",
+    [
+        (0, (40, 4), (10, 4), [(1, 4)]),
+        (1, (12, 10), ((5, 7), (2, 3, 5)), [(5, 1), (7, 1)]),
+    ],
+)
+def test_cumreduction_uses_binary_records_chunk(axis, shape, chunk_spec, expected_identity_shapes):
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    import json
+
+    x = da.ones(shape, chunks=chunk_spec)
+    y = x.cumsum(axis=axis)
+
+    chunks, records, chunk_groups = y.__frisky_records_chunks__()
+
+    assert records == []
+    assert len(chunks) == 2
+    assert [json.loads(meta)["op"] for _, meta, _ in chunk_groups] == ["CumReduction", "Ones"]
+
+    _names, _dep_names, tasks = _decode_layer_chunk(chunks[0])
+    identity_shapes = sorted(
+        slots[0][1]
+        for name, _coord, compute, slots in tasks
+        if name.endswith("-extra") and compute[0] == "call" and slots and slots[0][0] == "inttuple"
+    )
+    assert identity_shapes == sorted(expected_identity_shapes)
 
 
 def test_sliding_window_overlap_uses_binary_records():
@@ -124,7 +255,7 @@ def test_chunk_groups_carry_name_and_metadata():
     x = new_collection((da.ones((4, 4), chunks=(2, 2)) + 1).expr.optimize(fuse=False))
     chunks, records, chunk_groups = x.__frisky_records_chunks__()
 
-    assert len(chunk_groups) == len(chunks) == 1
+    assert len(chunk_groups) == len(chunks) == 2
     for name, meta, upstream in chunk_groups:
         assert isinstance(name, str) and name  # the expr `_name`
         assert isinstance(upstream, list)  # upstream group names
@@ -136,11 +267,12 @@ def test_chunk_groups_carry_name_and_metadata():
         assert "op" in info
         assert isinstance(info["params"], dict)  # scalar params, not array inputs
 
-    # The submitted graph is materialized before record collection, so the binary
+    # The submitted graph is materialized before record collection, so the root
     # group is the stable output-key alias and its upstream is the fused producer.
     info = json.loads(chunk_groups[0][1])
     assert info["op"] == "RootAlias"
     assert chunk_groups[0][2] == [x._lowered_expr.dependencies()[0]._name]
+    assert json.loads(chunk_groups[1][1])["op"] == "FusedBlockwise"
 
     params = info["params"]
     assert params["name"] == x.name
@@ -333,44 +465,48 @@ def test_shuffle_single_source_data_records_are_referenced():
     assert data_keys <= deps
 
 
-def test_bool_scalar_blockwise_stays_on_python_records():
+def test_bool_scalar_fused_blockwise_uses_binary_records():
     if importlib.util.find_spec("dask_array._rust") is None:
         pytest.skip("requires Rust extension")
+    import json
 
     x = new_collection((da.ones((4, 4), chunks=(2, 2)) == True).expr.optimize(fuse=False))  # noqa: E712
 
-    chunks, records, _chunk_groups = x.__frisky_records_chunks__()
+    chunks, records, chunk_groups = x.__frisky_records_chunks__()
 
-    assert len(chunks) == 1
-    assert records
+    assert records == []
+    assert len(chunks) == 2
+    assert [json.loads(meta)["op"] for _, meta, _ in chunk_groups] == ["RootAlias", "FusedBlockwise"]
 
 
-def test_numpy_scalar_blockwise_stays_on_python_records():
+def test_numpy_scalar_fused_blockwise_uses_binary_records():
     if importlib.util.find_spec("dask_array._rust") is None:
         pytest.skip("requires Rust extension")
+    import json
 
     scalar = np.float64(1)
     x = new_collection((da.ones((4, 4), chunks=(2, 2), dtype="float32") + scalar).expr.optimize(fuse=False))
 
-    chunks, records, _chunk_groups = x.__frisky_records_chunks__()
+    chunks, records, chunk_groups = x.__frisky_records_chunks__()
 
-    assert len(chunks) == 1
-    assert records
-    assert any(type(arg) is np.float64 for arg in _record_literal_args(records))
+    assert records == []
+    assert len(chunks) == 2
+    assert [json.loads(meta)["op"] for _, meta, _ in chunk_groups] == ["RootAlias", "FusedBlockwise"]
 
 
-def test_large_int_scalar_blockwise_stays_on_python_records():
+def test_large_int_scalar_fused_blockwise_uses_binary_records():
     if importlib.util.find_spec("dask_array._rust") is None:
         pytest.skip("requires Rust extension")
+    import json
 
     scalar = 10**20
     x = new_collection((da.ones((4, 4), chunks=(2, 2)) + scalar).expr.optimize(fuse=False))
 
-    chunks, records, _chunk_groups = x.__frisky_records_chunks__()
+    chunks, records, chunk_groups = x.__frisky_records_chunks__()
 
-    assert len(chunks) == 1
-    assert records
-    assert any(arg == scalar for arg in _record_literal_args(records))
+    assert records == []
+    assert len(chunks) == 2
+    assert [json.loads(meta)["op"] for _, meta, _ in chunk_groups] == ["RootAlias", "FusedBlockwise"]
 
 
 def _constant_block():

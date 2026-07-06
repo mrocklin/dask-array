@@ -98,6 +98,22 @@ class FusedBlockwiseLayer:
             return fast
         return self._slow_records()
 
+    def to_records_chunk(self):
+        fast = self._fast_spec()
+        if fast is None:
+            raise NotImplementedError
+        shared, sources = fast
+        try:
+            from dask_array._frisky.base import _rust
+        except ImportError as exc:
+            raise NotImplementedError from exc
+        return _rust.FusedBlockwiseLayer(
+            self.expr._name,
+            shared,
+            [int(n) for n in self.expr.numblocks],
+            [(name, [int(n) for n in numblocks]) for name, numblocks in sources],
+        ).to_records_chunk()
+
     def _slow_records(self):
         # ``task.dependencies`` is a frozenset, so ``deps`` order is not stable
         # across processes — that's fine: Frisky matches deps by string, and the
@@ -110,9 +126,28 @@ class FusedBlockwiseLayer:
         ]
 
     def _fast_records(self):
-        """Per-block records reusing one shared subgraph, or ``None`` to fall back.
+        fast = self._fast_spec()
+        if fast is None:
+            return None
+        shared, sources = fast
+        name = self.expr._name
+        numblocks = self.expr.numblocks
+        records = []
+        for bid in product(*(range(n) for n in numblocks)):
+            refs = []
+            dep_keys = []
+            for src_name, src_nb in sources:
+                sk = (src_name, *_broadcast_block_id(src_nb, bid))
+                dep_key = str(sk)
+                refs.append(TaskRef(dep_key))
+                dep_keys.append(dep_key)
+            records.append((str((name, *bid)), shared, tuple(refs), _EMPTY_KWARGS, dep_keys))
+        return records
 
-        Returns ``None`` (slow path) unless the block-0 task is the expected
+    def _fast_spec(self):
+        """Shared fused callable + source mapping, or ``None`` to fall back.
+
+        Returns ``None`` unless the block-0 task is the expected
         ``_execute_subgraph`` shape, every external input is a direct dependency,
         and the block-independence + input-mapping checks pass on probe blocks."""
         e = self.expr
@@ -140,18 +175,7 @@ class FusedBlockwiseLayer:
             return None
 
         shared = _FusedSubgraph(subgraph0, outkey0, inkeys0)
-        name = e._name
-        records = []
-        for bid in product(*(range(n) for n in numblocks)):
-            refs = []
-            dep_keys = []
-            for src_name, src_nb in sources:
-                sk = (src_name, *_broadcast_block_id(src_nb, bid))
-                dep_key = str(sk)
-                refs.append(TaskRef(dep_key))
-                dep_keys.append(dep_key)
-            records.append((str((name, *bid)), shared, tuple(refs), _EMPTY_KWARGS, dep_keys))
-        return records
+        return shared, sources
 
     # --- validation -------------------------------------------------------
 
