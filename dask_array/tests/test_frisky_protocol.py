@@ -162,6 +162,69 @@ def test_source_backed_fused_blockwise_binary_chunk_tracks_deps():
         assert slots == (("dep", source._name, coord),)
 
 
+def test_transposed_fused_blockwise_binary_chunk_tracks_remapped_deps():
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    import json
+
+    base = da.from_array(np.ones((20, 4)), chunks=(5, 2))
+    x = base.rechunk((4, 2))
+    y = x.T + 1
+
+    chunks, records, chunk_groups = y.__frisky_records_chunks__()
+
+    assert len(chunks) == 2
+    assert [json.loads(meta)["op"] for _, meta, _ in chunk_groups] == ["RootAlias", "FusedBlockwise"]
+
+    _names, dep_names, tasks = _decode_layer_chunk(chunks[1])
+    fused = y._lowered_expr.dependencies()[0]
+    source = fused.dependencies()[0]
+    assert not any(record[0].startswith(f"('{fused._name}',") for record in records)
+    assert dep_names == [source._name]
+    assert len(tasks) == 10
+    for name, coord, compute, slots in tasks:
+        assert name == fused._name
+        assert compute[0] == "call"
+        assert slots == (("dep", source._name, (coord[1], coord[0])),)
+
+
+def test_contracted_einsum_fused_blockwise_binary_chunk_tracks_remapped_deps():
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    import json
+
+    a = da.from_array(np.arange(3 * 4 * 5).reshape(3, 4, 5), chunks=(1, 2, 5)).rechunk((1, 1, 5))
+    b = da.from_array(np.arange(3 * 5 * 6).reshape(3, 5, 6), chunks=(1, 5, 3)).rechunk((1, 5, 2))
+    y = da.einsum("iab,ibc->iac", a, b)
+
+    chunks, records, chunk_groups = y.__frisky_records_chunks__()
+
+    assert len(chunks) == 3
+    assert [json.loads(meta)["op"] for _, meta, _ in chunk_groups] == [
+        "RootAlias",
+        "PartialReduce",
+        "FusedBlockwise",
+    ]
+
+    _names, dep_names, tasks = _decode_layer_chunk(chunks[2])
+    fused = y._lowered_expr.dependencies()[0].dependencies()[0]
+    a_dep, b_dep = fused.dependencies()
+    a_source, b_source = a_dep._name, b_dep._name
+    block0_task = fused._task((fused._name, 0, 0, 0, 0), (0, 0, 0, 0))
+    slot_source_order = [key[0] for key in block0_task.args[2]]
+    assert not any(record[0].startswith(f"('{fused._name}',") for record in records)
+    assert set(dep_names) == {a_source, b_source}
+    assert len(tasks) == 36
+    for name, coord, compute, slots in tasks:
+        assert name == fused._name
+        assert compute[0] == "call"
+        expected_by_source = {
+            a_source: ("dep", a_source, (coord[0], coord[1], coord[3])),
+            b_source: ("dep", b_source, (coord[0], coord[3], coord[2])),
+        }
+        assert slots == tuple(expected_by_source[source_name] for source_name in slot_source_order)
+
+
 @pytest.mark.parametrize(
     "axis, shape, chunk_spec, expected_identity_shapes",
     [
@@ -202,10 +265,9 @@ def test_sliding_window_overlap_uses_binary_records():
     chunks, records, chunk_groups = x.__frisky_records_chunks__()
 
     assert chunks
-    assert records
+    assert records == []
     ops = {json.loads(meta)["op"] for _, meta, _ in chunk_groups}
-    assert {"RootAlias", "PartialReduce", "OverlapInternal", "Ones"} <= ops
-    assert all(record[0].startswith("('sum-sliding_window_view-") for record in records)
+    assert {"RootAlias", "PartialReduce", "FusedBlockwise", "OverlapInternal", "Ones"} <= ops
 
 
 @pytest.mark.parametrize("axis", [0, 1, 2])

@@ -30,17 +30,15 @@ the (block-0) input labels with whatever data the per-block refs resolve to and
 runs the subgraph, so the result is identical to the per-block task.
 
 Two things must hold for this to be correct, and both are *verified* (not assumed)
-on a spread of probe blocks before the fast path is taken — otherwise we fall back
-to the per-block path:
+before the fast path is taken — otherwise we fall back to the per-block path:
 
   * **Block-independence:** the subgraph differs across blocks only in its keys.
-    Checked by canonicalizing each probe block's subgraph (renaming internal keys
+    Checked by canonicalizing each block's subgraph (renaming internal keys
     to their expr name and external inputs to their source name) and comparing it
     to block 0's — a block-dependent func/literal/wiring makes them differ.
-  * **Input mapping:** each output block's external source blocks are
-    ``_broadcast_block_id(source.numblocks, block_id)``. Checked against the real
-    ``_task``'s dependencies (a transpose/contraction, or a source referenced at
-    several blocks per output, makes them differ).
+  * **Input mapping:** each output block's external source blocks come directly
+    from that block's real fused ``_task`` input labels, then are aligned back to
+    block 0's input-label order before building the shared callable args.
 """
 
 from __future__ import annotations
@@ -102,7 +100,7 @@ class FusedBlockwiseLayer:
         fast = self._fast_spec()
         if fast is None:
             raise NotImplementedError
-        shared, sources = fast
+        shared, dep_names, dep_slots = fast
         try:
             from dask_array._frisky.base import _rust
         except ImportError as exc:
@@ -111,7 +109,8 @@ class FusedBlockwiseLayer:
             self.expr._name,
             shared,
             [int(n) for n in self.expr.numblocks],
-            [(name, [int(n) for n in numblocks]) for name, numblocks in sources],
+            dep_names,
+            dep_slots,
         ).to_records_chunk()
 
     def _slow_records(self):
@@ -129,18 +128,13 @@ class FusedBlockwiseLayer:
         fast = self._fast_spec()
         if fast is None:
             return None
-        shared, sources = fast
+        shared, dep_names, dep_slots = fast
         name = self.expr._name
         numblocks = self.expr.numblocks
         records = []
-        for bid in product(*(range(n) for n in numblocks)):
-            refs = []
-            dep_keys = []
-            for src_name, src_nb in sources:
-                sk = (src_name, *_broadcast_block_id(src_nb, bid))
-                dep_key = str(sk)
-                refs.append(TaskRef(dep_key))
-                dep_keys.append(dep_key)
+        for bid, slots in zip(product(*(range(n) for n in numblocks)), dep_slots):
+            dep_keys = [self._dep_key(dep_names, slot) for slot in slots]
+            refs = [TaskRef(dep_key) for dep_key in dep_keys]
             records.append((str((name, *bid)), shared, tuple(refs), _EMPTY_KWARGS, dep_keys))
         return records
 
@@ -149,7 +143,7 @@ class FusedBlockwiseLayer:
 
         Returns ``None`` unless the block-0 task is the expected
         ``_execute_subgraph`` shape, every external input is a direct dependency,
-        and the block-independence + input-mapping checks pass on probe blocks."""
+        and the block-independence + input-mapping checks pass for every block."""
         e = self.expr
         numblocks = e.numblocks
         if not numblocks:
@@ -161,36 +155,80 @@ class FusedBlockwiseLayer:
             return None
         subgraph0, outkey0, inkeys0 = task0.args[0], task0.args[1], task0.args[2]
 
-        deps_by_name = {d._name: d for d in e.dependencies()}
-        # Each input label -> (source name, source numblocks) for broadcast mapping.
-        sources = []
-        for ik in inkeys0:
-            name = ik[0] if isinstance(ik, tuple) else ik
-            dep = deps_by_name.get(name)
-            if dep is None:
-                return None
-            sources.append((dep._name, dep.numblocks))
-
-        if not self._validate(task0, sources, numblocks):
+        try:
+            inkeys0 = tuple(inkeys0)
+        except TypeError:
             return None
+        labels0 = tuple(self._input_label(ik) for ik in inkeys0)
+        if any(label is None for label in labels0) or len(set(labels0)) != len(labels0):
+            return None
+        dep_names = [d._name for d in e.dependencies()]
+        dep_idx_by_name = {name: i for i, name in enumerate(dep_names)}
 
+        canon0 = self._canonical(task0)
         shared = _FusedSubgraph(subgraph0, outkey0, inkeys0)
-        return shared, sources
+
+        broadcast = self._broadcast_spec(inkeys0, dep_idx_by_name)
+        if broadcast is not None and self._validate_broadcast(canon0, broadcast, numblocks):
+            dep_slots = [
+                [
+                    (dep_idx, tuple(int(c) for c in _broadcast_block_id(source_numblocks, bid)))
+                    for dep_idx, _source_name, source_numblocks in broadcast
+                ]
+                for bid in product(*(range(n) for n in numblocks))
+            ]
+            return shared, dep_names, dep_slots
+
+        dep_slots = []
+        for bid in product(*(range(n) for n in numblocks)):
+            task = e._task((e._name, *bid), bid)
+            if task.func is not _execute_subgraph or len(task.args) < 3:
+                return None
+            try:
+                inkeys = tuple(task.args[2])
+            except TypeError:
+                return None
+            labels = tuple(self._input_label(ik) for ik in inkeys)
+            if any(label is None for label in labels) or len(set(labels)) != len(labels):
+                return None
+            if set(labels) != set(labels0):
+                return None
+            if set(inkeys) != set(task.dependencies):
+                return None
+            if self._canonical(task) != canon0:
+                return None
+            slots_by_label = {}
+            for ik, label in zip(inkeys, labels):
+                slot = self._dep_slot(ik, dep_idx_by_name)
+                if slot is None:
+                    return None
+                slots_by_label[label] = slot
+            dep_slots.append([slots_by_label[label] for label in labels0])
+
+        return shared, dep_names, dep_slots
 
     # --- validation -------------------------------------------------------
 
-    def _validate(self, task0, sources, numblocks):
-        """Both fast-path assumptions must hold on a spread of probe blocks:
-        the subgraph is block-independent (same up to key renaming) and the
-        external source blocks are the broadcast-mapped ones."""
+    def _broadcast_spec(self, inkeys0, dep_idx_by_name):
+        deps_by_name = {d._name: d for d in self.expr.dependencies()}
+        sources = []
+        for ik in inkeys0:
+            if not isinstance(ik, tuple) or not ik:
+                return None
+            dep = deps_by_name.get(ik[0])
+            if dep is None:
+                return None
+            sources.append((dep_idx_by_name[dep._name], dep._name, dep.numblocks))
+        return sources
+
+    def _validate_broadcast(self, canon0, sources, numblocks):
         e = self.expr
-        canon0 = self._canonical(task0)
         for bid in self._probe_blocks(numblocks):
             task = e._task((e._name, *bid), bid)
             if task.func is not _execute_subgraph:
                 return False
-            mine = {(n, *_broadcast_block_id(nb, bid)) for n, nb in sources}
-            if mine != set(task.dependencies):
+            expected = {(name, *_broadcast_block_id(source_numblocks, bid)) for _, name, source_numblocks in sources}
+            if expected != set(task.dependencies):
                 return False
             if self._canonical(task) != canon0:
                 return False
@@ -207,15 +245,37 @@ class FusedBlockwiseLayer:
         for k in subgraph:
             rename[k] = (k[0],) if isinstance(k, tuple) else (k,)
         for ik in inkeys:
-            rename[ik] = ("__in__", ik[0] if isinstance(ik, tuple) else ik)
+            rename[ik] = FusedBlockwiseLayer._input_label(ik)
         canon = {rename[k]: t.substitute(rename, key=rename[k]) for k, t in subgraph.items()}
         canon_out = rename.get(outkey, outkey)
         return canon, canon_out
 
     @staticmethod
+    def _input_label(key):
+        if not isinstance(key, tuple) or not key:
+            return None
+        return ("__in__", key[0])
+
+    @staticmethod
+    def _dep_slot(key, dep_idx_by_name):
+        if not isinstance(key, tuple) or not key:
+            return None
+        dep_idx = dep_idx_by_name.get(key[0])
+        if dep_idx is None:
+            return None
+        try:
+            coord = tuple(int(c) for c in key[1:])
+        except (TypeError, ValueError):
+            return None
+        return dep_idx, coord
+
+    @staticmethod
+    def _dep_key(dep_names, slot):
+        dep_idx, coord = slot
+        return str((dep_names[dep_idx], *coord))
+
+    @staticmethod
     def _probe_blocks(numblocks):
-        """A small spread of blocks that varies each axis independently (plus the
-        corners and a diagonal), to catch axis-dependent mappings/subgraphs."""
         zero = tuple(0 for _ in numblocks)
         probes = {zero, tuple(n - 1 for n in numblocks)}
         for i, n in enumerate(numblocks):

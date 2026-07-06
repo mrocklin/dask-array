@@ -2,7 +2,8 @@
 //!
 //! Python builds and validates the block-independent `_FusedSubgraph` callable.
 //! Rust only expands the output grid into ordinary call tasks whose arguments
-//! are broadcast-mapped source block dependencies.
+//! are the per-output source block dependencies Python already resolved from
+//! each fused `_execute_subgraph` task.
 
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
@@ -15,7 +16,7 @@ pub struct FusedBlockwiseLayer {
     func: Py<PyAny>,
     empty_kwargs: Py<PyAny>,
     dep_names: Vec<String>,
-    dep_numblocks: Vec<Vec<usize>>,
+    dep_slots: Vec<Vec<(usize, Vec<u32>)>>,
     numblocks: Vec<usize>,
 }
 
@@ -27,22 +28,35 @@ impl FusedBlockwiseLayer {
         name: String,
         func: Py<PyAny>,
         numblocks: Vec<usize>,
-        sources: Vec<(String, Vec<usize>)>,
+        dep_names: Vec<String>,
+        dep_slots: Vec<Vec<(usize, Vec<u32>)>>,
     ) -> PyResult<Self> {
-        for (_, source_numblocks) in &sources {
-            if source_numblocks.len() > numblocks.len() {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "source has more dimensions than output",
-                ));
+        let expected: usize = if numblocks.is_empty() {
+            1
+        } else {
+            numblocks.iter().product()
+        };
+        if dep_slots.len() != expected {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "dep slots length does not match output blocks",
+            ));
+        }
+        for slots in &dep_slots {
+            for (dep_idx, _) in slots {
+                if *dep_idx >= dep_names.len() {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "dep slot index out of range",
+                    ));
+                }
             }
         }
-        let (dep_names, dep_numblocks): (Vec<_>, Vec<_>) = sources.into_iter().unzip();
+
         Ok(Self {
             name,
             func,
             empty_kwargs: PyDict::new(py).unbind().into_any(),
             dep_names,
-            dep_numblocks,
+            dep_slots,
             numblocks,
         })
     }
@@ -61,15 +75,6 @@ impl FusedBlockwiseLayer {
 }
 
 impl FusedBlockwiseLayer {
-    fn broadcast_block_id(source_numblocks: &[usize], out_coord: &[u32]) -> Vec<u32> {
-        let offset = out_coord.len() - source_numblocks.len();
-        source_numblocks
-            .iter()
-            .enumerate()
-            .map(|(i, &n)| if n == 1 { 0 } else { out_coord[offset + i] })
-            .collect()
-    }
-
     fn expand(&self) -> Expanded<'_> {
         let ndim = self.numblocks.len();
         let total: usize = if ndim == 0 {
@@ -80,14 +85,12 @@ impl FusedBlockwiseLayer {
         let mut tasks = Vec::with_capacity(total);
         let mut coord = vec![0u32; ndim];
 
-        for _ in 0..total {
-            let slots = self
-                .dep_numblocks
+        for task_idx in 0..total {
+            let slots = self.dep_slots[task_idx]
                 .iter()
-                .enumerate()
-                .map(|(dep_idx, source_numblocks)| ArgSlot::Dep {
-                    name_idx: dep_idx,
-                    coord: Self::broadcast_block_id(source_numblocks, &coord),
+                .map(|(dep_idx, dep_coord)| ArgSlot::Dep {
+                    name_idx: *dep_idx,
+                    coord: dep_coord.clone(),
                 })
                 .collect();
             tasks.push(NeutralTask {
