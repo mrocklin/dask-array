@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import struct
 import sys
 
@@ -83,6 +84,19 @@ def _decode_layer_chunk(chunk):
         tasks.append((name, task_coord, compute, tuple(slot(dep_names) for _ in range(u8()))))
     assert pos == len(chunk)
     return names, dep_names, tasks
+
+
+def _xarray_sliding_window_uses_chunk_manager():
+    try:
+        import xarray.compat.dask_array_compat as compat
+    except ImportError:
+        return False
+
+    try:
+        source = inspect.getsource(compat.sliding_window_view)
+    except OSError:
+        return False
+    return "get_chunked_array_type" in source and ".array_api" in source
 
 
 def test_dask_graph_does_not_import_frisky_modules():
@@ -231,6 +245,8 @@ def test_xarray_rolling_sum_where_literal_uses_binary_records():
     import json
 
     xr = pytest.importorskip("xarray")
+    if not _xarray_sliding_window_uses_chunk_manager():
+        pytest.skip("requires xarray sliding_window_view dispatch through the chunk manager array API")
 
     x = da.from_array(np.ones((100, 5)), chunks=(20, 5))
     xda = xr.DataArray(x, dims=("time", "asset"))

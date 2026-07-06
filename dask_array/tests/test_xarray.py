@@ -15,6 +15,23 @@ from dask_array._rechunk import TasksRechunk
 from dask_array._xarray import DaskArrayExprManager
 
 
+def _xarray_sliding_window_uses_chunk_manager():
+    import inspect
+    import xarray.compat.dask_array_compat as compat
+
+    try:
+        source = inspect.getsource(compat.sliding_window_view)
+    except OSError:
+        return False
+    return "get_chunked_array_type" in source and ".array_api" in source
+
+
+requires_xarray_sliding_window_chunk_manager = pytest.mark.skipif(
+    not _xarray_sliding_window_uses_chunk_manager(),
+    reason="requires xarray sliding_window_view dispatch through the chunk manager array API",
+)
+
+
 def _contains_expr_type(expr, typ):
     if isinstance(expr, typ):
         return True
@@ -43,6 +60,7 @@ def test_public_xarray_register_and_isactive(monkeypatch):
     assert isinstance(managers["dask"], DaskArrayExprManager)
 
 
+@requires_xarray_sliding_window_chunk_manager
 def test_xarray_rolling_full_time_chunk_avoids_padding_rechunk():
     da.xarray.register()
     x = xr.DataArray(
@@ -150,6 +168,23 @@ class TestXarrayIntegration:
 
         assert isinstance(get_chunked_array_type(arr), DaskArrayExprManager)
 
+    def test_get_chunked_array_type_survives_legacy_dask_import(self):
+        """Importing legacy dask.array must not reclaim xarray's manager."""
+        import subprocess
+        import sys
+
+        code = (
+            "import dask_array as da\n"
+            "import dask.array\n"
+            "from dask_array._xarray import DaskArrayExprManager\n"
+            "from xarray.namedarray.parallelcompat import get_chunked_array_type, list_chunkmanagers\n"
+            "arr = da.ones((10, 10), chunks=(5, 5))\n"
+            "assert isinstance(list_chunkmanagers()['dask'], DaskArrayExprManager)\n"
+            "assert isinstance(get_chunked_array_type(arr), DaskArrayExprManager)\n"
+        )
+        proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+        assert proc.returncode == 0, proc.stderr
+
     def test_dask_new_collection_roundtrip(self):
         """Test Dask can rebuild dask_array.Array from its expression."""
         from dask._collections import new_collection
@@ -204,6 +239,7 @@ class TestXarrayIntegration:
         result = da_xr.sum().compute()
         assert result.values == 200.0
 
+    @requires_xarray_sliding_window_chunk_manager
     def test_dataarray_rolling_mean(self):
         arr = da.from_array(np.arange(12.0), chunks=4)
         da_xr = xr.DataArray(arr, dims=["time"])
@@ -214,6 +250,7 @@ class TestXarrayIntegration:
         expected = np.array([np.nan, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, np.nan])
         np.testing.assert_allclose(result.compute().values, expected)
 
+    @requires_xarray_sliding_window_chunk_manager
     def test_dataarray_rolling_construct_multi_axis(self):
         data = np.arange(4 * 6.0).reshape(4, 6)
         da_xr = xr.DataArray(

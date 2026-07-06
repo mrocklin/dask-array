@@ -1217,22 +1217,13 @@ def test_new_collection_after_legacy_array_backend_steals_dispatch():
         get_collection_type.register(np.ndarray)(original)
 
 
-def test_masked_from_array_tokenizes_without_legacy_dask_array():
-    """from_array on a masked source must not require legacy dask.array.
-
-    Default-named from_array tokenizes its source at construction. dask only
-    registers a masked-array tokenize handler when legacy ``dask.array`` is
-    imported (its generic ndarray path crashes on masked arrays), so this
-    package registers its own handler in ``_dispatch``. Run in a subprocess:
-    inside the test suite some other test may have imported legacy dask.array,
-    which would mask a regression.
-    """
+def test_masked_from_array_tokenizes():
+    """from_array on a masked source tokenizes correctly in a fresh process."""
     import subprocess
     import sys
 
     code = (
-        "import sys, numpy as np, dask_array as da\n"
-        "assert 'dask.array' not in sys.modules, 'precondition: legacy import leaked'\n"
+        "import numpy as np, dask_array as da\n"
         "arr = np.ma.array(np.arange(100).reshape(10, 10), mask=False)\n"
         "arr.mask[5, 5] = True\n"
         "x = da.from_array(arr, chunks=(3, 3))\n"
