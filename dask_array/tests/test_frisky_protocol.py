@@ -382,6 +382,25 @@ def test_from_array_getter_uses_binary_records_chunk():
     assert holder[1].__name__ == "identity" and holder[2][0] is src and holder[4] == []
 
 
+def test_arg_reduction_chunk_uses_binary_records():
+    """The per-block chunk step of an arg reduction (argmax/argmin) goes binary.
+    It carries the shared reduction ``axis`` as an int-tuple slot rather than a
+    ``Literal`` (which the binary grammar can't express), so ArgChunk emits one
+    records chunk instead of N Python getter tuples."""
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    import json
+
+    y = da.ones((20, 20), chunks=(5, 5)).argmax(axis=1)  # 4x4 chunk-step blocks
+
+    chunks, records, chunk_groups = y.__frisky_records_chunks__()
+
+    ops = [json.loads(m)["op"] for _, m, _ in chunk_groups]
+    assert "ArgChunk" in ops  # the chunk step went binary, not to plain records
+    argchunk = [e for e in y._lowered_expr.walk() if type(e).__name__ == "ArgChunk"][0]
+    assert not any(r[0].startswith(f"('{argchunk._name}',") for r in records)
+
+
 def test_xarray_rolling_sum_where_literal_uses_binary_records():
     if importlib.util.find_spec("dask_array._rust") is None:
         pytest.skip("requires Rust extension")

@@ -22,7 +22,7 @@ class ArgChunkLayer(Layer):
             name,
             chunk_func,
             {},
-            axis,
+            [int(a) for a in axis],
             dep_name,
             [int(n) for n in numblocks],
             bool(ravel),

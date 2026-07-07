@@ -8,8 +8,10 @@
 //! (`pluck(axis[0], offsets)` in the legacy non-ravel branch). So it fits the
 //! neutral form exactly: one shared func, output coord == input coord (identity,
 //! like coarsen), with three args per task — a single `ArgSlot::Dep` (the input
-//! block), one `ArgSlot::Literal` (the shared `axis`), and one
-//! `ArgSlot::Scalar(Num::Int(off))` (the per-block offset).
+//! block), one `ArgSlot::IntTuple` (the shared `axis`, always a tuple of ints —
+//! `arg_chunk` only does `len(axis)`/`axis[0]`, so a plain int-tuple is
+//! behaviour-identical and, unlike a `Literal`, expressible in binary records),
+//! and one `ArgSlot::Scalar(Num::Int(off))` (the per-block offset).
 //!
 //! Two offset shapes: the non-ravel (`axis=k`) case carries a per-block scalar
 //! (`ArgSlot::Scalar`); the ravel (`axis=None`) case carries the nested
@@ -30,8 +32,9 @@ pub struct ArgChunkLayer {
     func: Py<PyAny>,
     /// Shared kwargs applied to every call — empty.
     kwargs: Py<PyAny>,
-    /// Shared literals `[axis]`, referenced by `ArgSlot::Literal(0)`.
-    literals: Vec<Py<PyAny>>,
+    /// The shared reduction `axis`, a tuple of ints, emitted per task as an
+    /// `ArgSlot::IntTuple`.
+    axis: Vec<i64>,
     /// Name of the single input dependency.
     dep_names: Vec<String>,
     /// Number of blocks per dimension (input grid; arg-chunk preserves the grid,
@@ -61,7 +64,7 @@ impl ArgChunkLayer {
         name: String,
         func: Py<PyAny>,
         kwargs: Py<PyAny>,
-        axis: Py<PyAny>,
+        axis: Vec<i64>,
         dep_name: String,
         numblocks: Vec<usize>,
         ravel: bool,
@@ -73,7 +76,7 @@ impl ArgChunkLayer {
             name,
             func,
             kwargs,
-            literals: vec![axis],
+            axis,
             dep_names: vec![dep_name],
             numblocks,
             ravel,
@@ -98,7 +101,7 @@ impl ArgChunkLayer {
 
 impl ArgChunkLayer {
     /// Build the neutral form. One task per block, output coord == input coord, a
-    /// single dependency at the same coord plus the shared `axis` literal and the
+    /// single dependency at the same coord plus the shared `axis` int-tuple and the
     /// per-block offset scalar. Iterates blocks in C order to match
     /// `itertools.product` (last axis fastest), so `offs[p]` lines up with the
     /// `p`-th block.
@@ -134,7 +137,7 @@ impl ArgChunkLayer {
                         name_idx: 0,
                         coord: coord.clone(),
                     },
-                    ArgSlot::Literal(0), // axis
+                    ArgSlot::IntTuple(self.axis.clone()), // axis
                     off_slot,
                 ],
             });
@@ -152,7 +155,7 @@ impl ArgChunkLayer {
             names: vec![&self.name],
             funcs: vec![&self.func],
             kwargs: &self.kwargs,
-            literals: &self.literals,
+            literals: &[],
             dep_names: &self.dep_names,
             tasks,
         }
