@@ -34,12 +34,18 @@ def test_classify_conserves_tasks_and_valid_tiers():
 
 
 def test_classify_task_weighted_and_named():
-    # from_delayed lowers to a FromMap layer that declines the binary chunk,
-    # so the collection has a non-binary layer, and classify names it and
-    # weighs it by block count.
+    # A concat of from_delayed blocks with DISTINCT ndarray args lowers to one
+    # FromMap that declines the binary chunk (the arg varies per block and isn't
+    # binary-expressible, so it can be neither baked nor slotted), so classify
+    # names it and weighs it by block count.
     from dask import delayed
 
-    leaf = da.from_delayed(delayed(lambda: np.ones((8, 4)))(), shape=(8, 4), dtype="f8")
+    def load(a):
+        return a
+
+    leaf = da.concatenate(
+        [da.from_delayed(delayed(load)(np.full((8, 4), i, dtype="f8")), shape=(8, 4), dtype="f8") for i in range(2)]
+    )
     result = classify(leaf + 1.0)
 
     assert set(result["tiers"]) <= set(TIERS)
@@ -63,7 +69,12 @@ def test_classify_shares_seen_across_collections():
 def test_python_groups_ranked_descending():
     from dask import delayed
 
-    leaf = da.from_delayed(delayed(lambda: np.ones((16, 4)))(), shape=(16, 4), dtype="f8")
+    def load(a):
+        return a
+
+    leaf = da.concatenate(
+        [da.from_delayed(delayed(load)(np.full((16, 4), i, dtype="f8")), shape=(16, 4), dtype="f8") for i in range(2)]
+    )
     rows = python_groups([(leaf + 1).rechunk((8, 4)).sum(axis=1)])
     assert rows  # at least the FromMap leaf
     tasks = [n for _cls, _reason, n in rows]
