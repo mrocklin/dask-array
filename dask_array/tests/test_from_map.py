@@ -505,3 +505,187 @@ def test_collect_selects_native_from_map_layer(monkeypatch):
     a = da.from_map(_load, _obj([1, 2, 3]), chunks=((5, 5, 5),), dtype="int64")
     collect_mod.collect_task_records(a)
     assert "FromMap" not in fell_back
+
+
+# ---------------------------------------------------------------------------
+# binary (pure-Rust) FromMap layer: coalesced delayed calls that share one
+# function and carry only binary-expressible per-block args (scalars, strings
+# like filenames, int-tuples, and lists thereof) emit a native binary records
+# CHUNK -- no per-block Python task tuples. Anything else falls back to the
+# plain-records FromMapLayer (and logs why).
+# ---------------------------------------------------------------------------
+
+
+# A store keyed by "filename": the common delayed pattern is one loader function
+# called per block with a *string* path. This pins that path onto the binary
+# grammar (a per-block string arg), not just the scalar-index case.
+_FAKE_FILES = {"a.npy": 1, "bb.npy": 2, "ccc.npy": 3, "dddd.npy": 4}
+
+
+def _load_named(path):
+    """One shared loader, called once per block with a filename string."""
+    return np.full(5, _FAKE_FILES[path], dtype="int64")
+
+
+def _load_arr(block):
+    """A loader whose per-block arg is an ndarray -- NOT binary-expressible, so
+    the coalesced FromMap must decline the binary path and fall back."""
+    return block.astype("int64")
+
+
+def _the_from_map(arr):
+    """The single merged FromMap in a (lowered) collection's expression."""
+    fms = [e for e in arr._lowered_expr.walk() if isinstance(e, FromMap)]
+    assert len(fms) == 1, f"expected one FromMap, got {len(fms)}"
+    return fms[0]
+
+
+def _from_map_block_records(arr, fm):
+    """The plain (Python-tuple) records whose key belongs to this FromMap layer.
+    Empty when the layer went binary (its blocks live in a records CHUNK)."""
+    _chunks, records, _groups = arr.__frisky_records_chunks__()
+    return [r for r in records if r[0].startswith(f"('{fm._name}'")]
+
+
+def test_concatenated_delayeds_with_scalar_args_use_binary_records():
+    """The headline case: many `from_delayed(delayed(f)(scalar))` concatenated
+    merge to one FromMap that emits a pure-Rust binary chunk -- zero per-block
+    Python task tuples."""
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    pieces = [da.from_delayed(dask.delayed(_load)(v), (5,), dtype="int64") for v in [1, 2, 3]]
+    arr = da.concatenate(pieces)
+    fm = _the_from_map(arr)
+
+    # (1) The layer engages the binary encoder (bytes, not a NotImplementedError).
+    assert isinstance(fm._frisky_layer().to_records_chunk(), bytes)
+
+    # (2) End to end: the FromMap's blocks land in a binary chunk group, and NO
+    # FromMap block shows up as a plain Python-tuple record.
+    _chunks, _records, chunk_groups = arr.__frisky_records_chunks__()
+    assert fm._name in {name for name, _m, _u in chunk_groups}
+    assert _from_map_block_records(arr, fm) == []
+
+    assert_eq(arr, np.concatenate([np.full(5, v) for v in [1, 2, 3]]).astype("int64"))
+
+
+def test_concatenated_delayeds_with_string_args_use_binary_records():
+    """Filenames are the common delayed argument. A concat of
+    `from_delayed(delayed(load)(path))` over string paths must ALSO go binary --
+    strings are a first-class per-block slot, not a fallback."""
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    names = ["a.npy", "bb.npy", "ccc.npy"]
+    pieces = [da.from_delayed(dask.delayed(_load_named)(n), (5,), dtype="int64") for n in names]
+    arr = da.concatenate(pieces)
+    fm = _the_from_map(arr)
+
+    assert isinstance(fm._frisky_layer().to_records_chunk(), bytes)
+
+    _chunks, _records, chunk_groups = arr.__frisky_records_chunks__()
+    assert fm._name in {name for name, _m, _u in chunk_groups}
+    assert _from_map_block_records(arr, fm) == []
+
+    expected = np.concatenate([np.full(5, _FAKE_FILES[n]) for n in names]).astype("int64")
+    assert_eq(arr, expected)
+
+
+def test_binary_from_map_layer_graph_matches_legacy():
+    """The native binary layer's per-block graph must reproduce the legacy
+    `_layer()` block-for-block. Covers scalar args, string args, and a NON-square
+    multi-axis grid (nested stacks -> one 3-D FromMap with a (2, 3, 1) block grid
+    and distinct per-block values), which would catch a C-order row/column swap
+    in the per-block arg placement."""
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    from dask.core import flatten
+    from dask.local import get_sync
+
+    scalars = da.concatenate([da.from_delayed(dask.delayed(_load)(v), (5,), dtype="int64") for v in [1, 2, 3]])
+    strings = da.concatenate(
+        [da.from_delayed(dask.delayed(_load_named)(n), (5,), dtype="int64") for n in ["a.npy", "bb.npy"]]
+    )
+    grid = da.stack(
+        [
+            da.stack([da.from_delayed(dask.delayed(_load)(v), (5,), dtype="int64") for v in row])
+            for row in [[1, 2, 3], [4, 5, 6]]
+        ]
+    )  # (2, 3, 5), block grid (2, 3, 1), all-distinct values
+    for arr in (scalars, strings, grid):
+        fm = _the_from_map(arr)
+        assert isinstance(fm._frisky_layer().to_records_chunk(), bytes)  # all go binary
+        legacy = fm._layer()
+        native = fm._frisky_layer().to_dask_graph()
+        for key in flatten(fm.__dask_keys__()):
+            nblock, lblock = get_sync(native, key), get_sync(legacy, key)
+            np.testing.assert_array_equal(nblock, lblock)
+            # dtype too: a coerced arg type (e.g. np.int8 -> int) would silently
+            # change the block's inferred dtype without changing its values.
+            assert nblock.dtype == lblock.dtype
+
+
+def test_nonsimple_arg_delayeds_fall_back_to_plain_records_and_warn(caplog):
+    """A per-block arg the binary grammar can't hold (here an ndarray) makes the
+    coalesced FromMap decline the binary path -- it stays on the plain-records
+    FromMapLayer and logs why, so a missed fast path is visible."""
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    import logging
+
+    pieces = [da.from_delayed(dask.delayed(_load_arr)(np.full(5, v)), (5,), dtype="int64") for v in [1, 2, 3]]
+    arr = da.concatenate(pieces)
+    fm = _the_from_map(arr)
+
+    # No binary chunk for this layer -- the encoder declines.
+    with pytest.raises(NotImplementedError):
+        fm._frisky_layer().to_records_chunk()
+
+    # It falls back to plain Python-tuple records (still correct)...
+    with caplog.at_level(logging.WARNING):
+        assert _from_map_block_records(arr, fm) != []
+    # ...and it says so, naming the layer.
+    assert any(fm._name in rec.getMessage() for rec in caplog.records)
+
+    expected = np.concatenate([np.full(5, v) for v in [1, 2, 3]]).astype("int64")
+    assert_eq(arr, expected)
+
+
+def test_binary_from_map_declines_numpy_scalar_args():
+    """A numpy-scalar per-block arg is DECLINED (not silently coerced to a plain
+    Python scalar), so the binary path can't change the argument type -- or the
+    block's inferred dtype -- the block function sees vs the legacy path. It falls
+    back to the faithful Python-tuple layer, still correct."""
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    pieces = [da.from_delayed(dask.delayed(_load)(np.int64(v)), (5,), dtype="int64") for v in [1, 2, 3]]
+    arr = da.concatenate(pieces)
+    fm = _the_from_map(arr)
+    with pytest.raises(NotImplementedError):
+        fm._frisky_layer().to_records_chunk()  # numpy scalar arg -> declined, not binary
+    assert _from_map_block_records(arr, fm) != []  # fell back to python-tuple records
+    assert_eq(arr, np.concatenate([np.full(5, v) for v in [1, 2, 3]]).astype("int64"))
+
+
+def test_binary_from_map_executes_under_frisky(array_scheduler):
+    """End-to-end: coalesced from_delayed concats that became a binary FromMap
+    compute correctly under the Frisky scheduler -- scalar args AND string
+    (filename) args, the latter exercising the v2 Str-slot grammar across both the
+    dask-array encoder and the Frisky decoder. Runs only on --scheduler=frisky
+    (needs both native extensions in one interpreter); the dask suite otherwise
+    exercises only _layer / to_dask_graph, never the wire."""
+    if array_scheduler != "frisky":
+        pytest.skip("requires --scheduler=frisky")
+
+    scalars = da.concatenate([da.from_delayed(dask.delayed(_load)(v), (5,), dtype="int64") for v in [1, 2, 3]])
+    names = ["a.npy", "bb.npy", "ccc.npy", "dddd.npy"]
+    strings = da.concatenate([da.from_delayed(dask.delayed(_load_named)(n), (5,), dtype="int64") for n in names])
+
+    # Guard against a vacuous pass: both must actually produce a binary chunk (a
+    # version-mismatched Frisky would fall back to Python records and still pass).
+    assert isinstance(_the_from_map(scalars)._frisky_layer().to_records_chunk(), bytes)
+    assert isinstance(_the_from_map(strings)._frisky_layer().to_records_chunk(), bytes)
+
+    np.testing.assert_array_equal(scalars.compute(), np.concatenate([np.full(5, v) for v in [1, 2, 3]]).astype("int64"))
+    np.testing.assert_array_equal(
+        strings.compute(), np.concatenate([np.full(5, _FAKE_FILES[n]) for n in names]).astype("int64")
+    )

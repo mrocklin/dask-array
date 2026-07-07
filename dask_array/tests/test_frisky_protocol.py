@@ -65,7 +65,7 @@ def _decode_layer_chunk(chunk):
             return ("scalar", i64() if num_tag == 0 else struct.unpack("<d", take(8))[0])
         raise AssertionError(f"unknown slot tag {tag}")
 
-    assert u8() == 1
+    assert u8() == 2  # RECORDS_PROTOCOL_VERSION (v2 added the Str slot, tag 5)
     names = [string() for _ in range(u32())]
     dep_names = [string() for _ in range(u32())]
     for _ in range(u32()):

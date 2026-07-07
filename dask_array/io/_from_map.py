@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import logging
 from itertools import product
 
 import numpy as np
@@ -8,6 +9,8 @@ import numpy as np
 from dask._task_spec import Task
 from dask_array.io._base import IO
 from dask_array._utils import meta_from_array
+
+logger = logging.getLogger(__name__)
 
 
 def _apply_call(bundle):
@@ -67,15 +70,15 @@ def _merge_from_maps(children, axis, new_axis, dtype, meta):
     return FromMap(func, values, chunks, dtype, meta, kwargs, None)
 
 
-def _map_block(func, value, shape, kwargs):
-    """Run one block: ``func(value, **kwargs)``, matched to the block's declared
-    chunk ``shape``. In the common case the func already returns the chunk shape
-    and this is a no-op. The only reshape the rewrites need is inserting unit
-    axes (a ``stack`` new axis, e.g. ``(5,) -> (1, 5)``), which never reorders
-    data; anything else -- a same-size-but-permuted shape -- would silently
-    corrupt the block, so it is rejected. Kept a single task so the block never
-    splits into an ungrouped sub-task."""
-    x = func(value, **kwargs)
+def _match_block_shape(x, shape):
+    """Coerce a block func's return ``x`` to the declared chunk ``shape``. In the
+    common case ``x`` already IS that shape and this is a no-op. The only reshape
+    the rewrites need is inserting unit axes (a ``stack`` new axis, e.g.
+    ``(5,) -> (1, 5)``), which never reorders data; anything else -- a
+    same-size-but-permuted shape -- would silently corrupt the block, so it is
+    rejected. Shared by both from_map block bodies (``_map_block`` and
+    ``_apply_args``) so the contract can't drift between them."""
+    shape = tuple(shape)
     xshape = getattr(x, "shape", None)
     if xshape is None:
         # A bare scalar (or list) return -- natural for a 0-d block. Coerce to an
@@ -90,6 +93,75 @@ def _map_block(func, value, shape, kwargs):
             f"with the declared chunk shape {shape}"
         )
     return x.reshape(shape)
+
+
+def _map_block(func, value, shape, kwargs):
+    """Run one block: ``func(value, **kwargs)``, matched to the block's declared
+    chunk ``shape``. Kept a single task so the block never splits into an
+    ungrouped sub-task."""
+    return _match_block_shape(func(value, **kwargs), shape)
+
+
+def _apply_args(args, shape, *, _fn, _fkwargs):
+    """Binary-path block body: call the shared, hoisted function ``_fn`` with this
+    block's positional ``args`` (splatted) and the shared ``_fkwargs``, then match
+    the declared chunk ``shape``. ``_fn`` and ``_fkwargs`` are constant across the
+    layer and bound once (via the records-chunk partial, or the shared task
+    kwargs); only ``args`` / ``shape`` vary per block, and both are binary-grammar
+    values, which is what keeps this layer pure-Rust."""
+    return _match_block_shape(_fn(*args, **(_fkwargs or {})), shape)
+
+
+# Largest / smallest integer the binary grammar's i64 scalar/int-tuple slots hold.
+_I64_MIN, _I64_MAX = -(2**63), 2**63 - 1
+
+
+def _encode_arg(a):
+    """Classify one call argument into a ``(tag, payload)`` slot descriptor the
+    Rust ``FromMapBinaryLayer`` slots directly, or ``None`` if it isn't a value the
+    binary grammar can carry *without changing what the block function sees*.
+
+    Only EXACT Python ``int`` / ``float`` / ``str`` (a filename), tuples of exact
+    ``int`` (rebuilt as a tuple), and lists thereof (rebuilt as a list) are
+    accepted. A numpy scalar -- or any ``int``/``float`` subclass -- is declined
+    rather than coerced: the legacy ``_apply_call`` path passes the *original*
+    object to the block function, so silently turning ``np.int64(5)`` into a plain
+    ``int`` could change the function's result or the block's inferred dtype. Those
+    args fall back to the faithful Python-tuple layer instead (``type(a) is int``
+    also excludes ``bool``, which is an ``int`` subclass but semantically
+    distinct)."""
+    t = type(a)
+    if t is str:
+        return ("s", a)
+    if t is int:
+        return ("i", a) if _I64_MIN <= a <= _I64_MAX else None
+    if t is float:
+        return ("f", a)
+    if t is tuple:
+        if all(type(x) is int for x in a):
+            return ("t", list(a)) if all(_I64_MIN <= x <= _I64_MAX for x in a) else None
+        return None
+    if t is list:
+        inner = []
+        for x in a:
+            d = _encode_arg(x)
+            if d is None:
+                return None
+            inner.append(d)
+        return ("l", inner)
+    return None
+
+
+def _encode_call_args(args):
+    """The list of slot descriptors for a call's positional args, or ``None`` if
+    any single arg isn't binary-expressible."""
+    out = []
+    for a in args:
+        d = _encode_arg(a)
+        if d is None:
+            return None
+        out.append(d)
+    return out
 
 
 class FromMap(IO):
@@ -138,11 +210,70 @@ class FromMap(IO):
             dsk[key] = Task(key, _map_block, func, values[idx], block_shape, kwargs)
         return dsk
 
+    def _binary_frisky_layer(self):
+        """The pure-Rust ``FromMapBinaryLayer`` when this is a coalesced-delayed
+        FromMap whose blocks share ONE function and carry only binary-expressible
+        args (scalars, strings, int-tuples, lists); otherwise ``None``.
+
+        Only the coalesced-from_delayed shape qualifies: ``func is _apply_call``,
+        so each per-block value is a ``(fn, args, kwargs)`` call bundle. We hoist
+        the shared ``fn``/``kwargs`` (pickled once) and turn each block's ``args``
+        into slot descriptors. A direct ``da.from_map`` (arbitrary per-block value,
+        user ``func``) stays on the general ``FromMapLayer``."""
+        if self.operand("func") is not _apply_call or self.operand("kwargs"):
+            return None
+        values = self.operand("values")
+        chunks = self.chunks
+        idxs = list(product(*(range(len(c)) for c in chunks)))  # C order == Rust iteration
+        bundles = [values[idx] for idx in idxs]
+        if not bundles or not all(isinstance(b, tuple) and len(b) == 3 for b in bundles):
+            return None
+        fn, fkwargs = bundles[0][0], bundles[0][2]
+        block_args = []
+        for f, args, kw in bundles:
+            if f is not fn:
+                return None  # blocks call different functions -> can't hoist one
+            try:
+                if kw != fkwargs:
+                    return None  # differing per-call kwargs across blocks
+            except Exception:
+                return None  # non-comparable kwargs (e.g. an ndarray value)
+            descs = _encode_call_args(args)
+            if descs is None:
+                return None  # an arg the binary grammar can't hold
+            block_args.append(descs)
+
+        from dask_array._frisky.from_map import FromMapBinaryLayer
+
+        return FromMapBinaryLayer(
+            self._name,
+            _apply_args,
+            {"_fn": fn, "_fkwargs": dict(fkwargs)},
+            block_args,
+            [list(c) for c in chunks],
+        )
+
     def _frisky_layer(self):
-        """Native records layer: the O(n_blocks) expansion runs in Rust instead
-        of the generic ``GraphRecordsLayer`` re-lowering ``_layer()``. Values are
-        flattened C-order to match the Rust layer's row-major block iteration
-        (and ``_layer``'s ``itertools.product``)."""
+        """Native records layer. Prefer the pure-Rust ``FromMapBinaryLayer`` (one
+        shared function + binary-expressible per-block args -> a binary
+        ``to_records_chunk``); otherwise the general ``FromMapLayer``, whose block
+        values are arbitrary Python objects and so ship as plain task records.
+
+        Values are flattened C-order to match the Rust layer's row-major block
+        iteration (and ``_layer``'s ``itertools.product``)."""
+        binary = self._binary_frisky_layer()
+        if binary is not None:
+            return binary
+        if self.operand("func") is _apply_call:
+            # A coalesced-from_delayed FromMap that could have been pure-Rust but
+            # whose blocks don't share one function with binary-only args. Correct
+            # (plain records below), but flag the missed fast path.
+            logger.warning(
+                "FromMap %s stays on Python-tuple records: its blocks don't share "
+                "one function with binary-expressible args (scalars/strings/"
+                "int-tuples), so Frisky ships one Python task per block.",
+                self._name,
+            )
         from dask_array._frisky.from_map import FromMapLayer
 
         return FromMapLayer(

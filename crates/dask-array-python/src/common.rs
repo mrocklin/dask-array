@@ -48,6 +48,10 @@ pub enum ArgSlot {
     /// arange block's start/stop, or an eye block's diagonal offset. Used by the
     /// indexed-creation layers, whose blocks differ only in such scalars.
     Scalar(Num),
+    /// A per-block string — e.g. a filename passed to a shared loader function.
+    /// Rebuilds a Python `str`; carried as its own slot so string-arg `from_map` /
+    /// coalesced-`from_delayed` blocks stay pure-Rust instead of falling back.
+    Str(String),
 }
 
 /// A scalar carried in an [`ArgSlot::Scalar`]. The int/float split is preserved
@@ -199,6 +203,7 @@ fn build_arg_dask<'py>(
         ArgSlot::IntTuple(v) => Ok(int_tuple(py, v)?.into_any()),
         ArgSlot::Index(s) => Ok(index_tuple(py, s, slice_cls)?.into_any()),
         ArgSlot::Scalar(n) => num_obj(py, *n),
+        ArgSlot::Str(s) => Ok(PyString::new(py, s).into_any()),
         ArgSlot::List(items) => {
             let mut elems: Vec<Bound<'py, PyAny>> = Vec::with_capacity(items.len());
             for it in items {
@@ -304,6 +309,7 @@ fn build_arg_rec<'py>(
         ArgSlot::IntTuple(v) => Ok(int_tuple(py, v)?.into_any()),
         ArgSlot::Index(s) => Ok(index_tuple(py, s, slice_cls)?.into_any()),
         ArgSlot::Scalar(n) => num_obj(py, *n),
+        ArgSlot::Str(s) => Ok(PyString::new(py, s).into_any()),
         ArgSlot::List(items) => {
             let out = PyList::empty(py);
             for it in items {
@@ -410,7 +416,7 @@ pub fn to_task_records<'py>(py: Python<'py>, exp: &Expanded) -> PyResult<Bound<'
 //   COORD := u8 n, u32*n        COMPUTE := u8 (0 Call{u32 idx} | 2 Alias)
 //   SLOT  := u8 tag (0 Dep{u32 name_idx, COORD} | 1 Index{u8 n, ELEM*}
 //                    | 2 IntTuple{u8 n, i64*} | 3 List{u32 n, SLOT*}
-//                    | 4 Scalar{NUM})
+//                    | 4 Scalar{NUM} | 5 Str{STR})
 //   ELEM  := u8 (0 Slice{OPTI64 start,stop,step} | 1 Int{i64})
 //   OPTI64:= u8 present, i64?   NUM := u8 (0 Int{i64} | 1 Float{f64})
 //   STR := u32 len, utf8        BYTES := u32 len, bytes
@@ -421,7 +427,9 @@ pub fn to_task_records<'py>(py: Python<'py>, exp: &Expanded) -> PyResult<Bound<'
 
 /// Grammar version stamped at the head of every LAYER chunk; Frisky's decoder
 /// (`records_proto::CHUNK_GRAMMAR_VERSION`) rejects a mismatch and falls back.
-pub const RECORDS_PROTOCOL_VERSION: u8 = 1;
+/// v2 added the `Str` slot (tag 5) for per-block string args (`from_map`
+/// filenames). Bump this and Frisky's `CHUNK_GRAMMAR_VERSION` together.
+pub const RECORDS_PROTOCOL_VERSION: u8 = 2;
 
 /// A count that the grammar stores in one byte (coords, slots, index elems —
 /// all bounded by ndim / arg arity in practice). A layer that somehow exceeds
@@ -516,6 +524,10 @@ fn w_slot(buf: &mut Vec<u8>, slot: &ArgSlot) -> PyResult<()> {
                     buf.extend_from_slice(&f.to_le_bytes());
                 }
             }
+        }
+        ArgSlot::Str(s) => {
+            buf.push(5);
+            w_str(buf, s);
         }
         ArgSlot::Literal(_) => {
             return Err(pyo3::exceptions::PyNotImplementedError::new_err(
