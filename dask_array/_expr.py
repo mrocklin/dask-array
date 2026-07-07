@@ -339,6 +339,35 @@ class ArrayExpr(SingletonExpr):
                 others[node._name] = node
         return others
 
+    def _requires_grid_preservation(self, dependency):
+        """Whether this node observes a dependency's block grid."""
+        return False
+
+    def _has_grid_sensitive_dependent(self, expr, dependents):
+        for ref in dependents.get(expr._name, ()):
+            node = ref()
+            requires = getattr(node, "_requires_grid_preservation", None)
+            if requires is not None and requires(expr):
+                return True
+        return False
+
+    def _preserve_grid_contract(self, parent, result, dependents):
+        """Decline pushdowns that would alter a grid-sensitive parent's input."""
+        if not self._has_grid_sensitive_dependent(parent, dependents):
+            return result
+        if result is None:
+            return None
+
+        from dask_array._blockwise import Blockwise
+
+        # Blockwise nodes can keep the outer chunks while letting later nested
+        # rewrites refine their inputs, so keep them behind the original grid.
+        if isinstance(self, Blockwise):
+            return None
+        if getattr(result, "chunks", None) != parent.chunks:
+            return None
+        return result
+
     def _slice_pushdown(self, slice_expr, dependents):
         """Push ``slice_expr`` into ``self`` unless another parent needs
         ``self`` in full.
@@ -354,7 +383,8 @@ class ArrayExpr(SingletonExpr):
         others = self._other_dependents(slice_expr, dependents)
         if any(not isinstance(node, SliceSlicesIntegers) for node in others.values()):
             return None
-        return self._accept_slice(slice_expr)
+        result = self._accept_slice(slice_expr)
+        return self._preserve_grid_contract(slice_expr, result, dependents)
 
     def _rechunk_pushdown(self, rechunk_expr, dependents):
         """Push ``rechunk_expr`` into ``self`` unless anything else depends
@@ -368,7 +398,8 @@ class ArrayExpr(SingletonExpr):
         """
         if self._other_dependents(rechunk_expr, dependents):
             return None
-        return rechunk_expr._pushdown()
+        result = rechunk_expr._pushdown()
+        return self._preserve_grid_contract(rechunk_expr, result, dependents)
 
     def _shuffle_pushdown(self, shuffle_expr, dependents):
         """Push ``shuffle_expr`` into ``self`` unless anything else depends
@@ -378,7 +409,8 @@ class ArrayExpr(SingletonExpr):
         """
         if self._other_dependents(shuffle_expr, dependents):
             return None
-        return self._accept_shuffle(shuffle_expr)
+        result = self._accept_shuffle(shuffle_expr)
+        return self._preserve_grid_contract(shuffle_expr, result, dependents)
 
     def optimize(self, fuse: bool = True):
         expr = self.simplify().lower_completely()

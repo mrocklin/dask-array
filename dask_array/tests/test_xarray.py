@@ -7,6 +7,7 @@ handle dask_array.Array types.
 
 import numpy as np
 import pytest
+import dask
 
 xr = pytest.importorskip("xarray")
 
@@ -73,6 +74,50 @@ def test_xarray_rolling_full_time_chunk_avoids_padding_rechunk():
 
     assert not _contains_expr_type(optimized, TasksRechunk)
     np.testing.assert_allclose(result.compute().values, np.full((6, 8), 72.0))
+
+
+def test_xarray_rolling_slice_rechunk_map_blocks_receives_full_day_block():
+    da.xarray.register()
+    samples_per_day = 8
+    step_s = 86400 // samples_per_day
+    n = 13 * samples_per_day
+    time = (
+        np.datetime64("2026-06-17")
+        + np.timedelta64(step_s, "s")
+        + np.arange(n) * np.timedelta64(step_s, "s")
+    ).astype("datetime64[ns]")
+    x = xr.DataArray(
+        da.ones((n, 2), chunks=(samples_per_day, 2)),
+        dims=("time", "asset"),
+        coords={"time": time, "asset": ["A", "B"]},
+    )
+
+    adv = x.fillna(0.0).rolling({"time": 5 * samples_per_day}, min_periods=1).sum() * 0.2
+    adv = adv.fillna(0.0) + xr.ones_like(x)
+    one_day = adv.sel(
+        time=slice(
+            np.datetime64("2026-06-29"),
+            np.datetime64("2026-06-29T23:59:59"),
+        )
+    )
+    arr = one_day.data[:samples_per_day].rechunk((samples_per_day, 2))
+
+    def write_sentinel(block, block_info=None):
+        assert block.shape == (samples_per_day, 2)
+        return np.array([[1]], dtype="uint8")
+
+    out = arr.map_blocks(
+        write_sentinel,
+        dtype="uint8",
+        chunks=(1, 1),
+        meta=np.array((), dtype="uint8"),
+    )
+
+    assert arr.chunks == ((samples_per_day,), (2,))
+    assert out.chunks == ((1,), (1,))
+    for optimize_graph in (True, False):
+        result = dask.compute(out, optimize_graph=optimize_graph)[0]
+        np.testing.assert_array_equal(result, np.array([[1]], dtype="uint8"))
 
 
 class TestDaskArrayExprManager:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from functools import cached_property
 from itertools import product
-from numbers import Number
+from numbers import Integral, Number
 import operator
 
 import numpy as np
@@ -349,7 +349,22 @@ def map_blocks(
     if chunks is not None:
         if len(chunks) != len(out_ind):
             raise ValueError(f"Provided chunks have {len(chunks)} dims; expected {len(out_ind)} dims")
-        adjust_chunks = dict(zip(out_ind, chunks))
+        block_chunks = {}
+        for arg, ind in argpairs:
+            if ind is None:
+                continue
+            for c, i in zip(arg.chunks, ind):
+                if i not in block_chunks or len(c) > len(block_chunks[i]):
+                    block_chunks[i] = c
+        for k, v in new_axes.items():
+            block_chunks[k] = tuple(v) if isinstance(v, (tuple, list)) else (v,)
+
+        adjust_chunks = {}
+        for ind, chunk in zip(out_ind, chunks):
+            if isinstance(chunk, Integral):
+                adjust_chunks[ind] = (chunk,) * len(block_chunks[ind])
+            else:
+                adjust_chunks[ind] = chunk
     else:
         adjust_chunks = None
 
@@ -552,6 +567,9 @@ class MapBlocksOutput(ArrayExpr):
     @property
     def _is_blockwise_fusable(self):
         return False
+
+    def _requires_grid_preservation(self, dependency):
+        return True
 
     @cached_property
     def input_exprs(self):

@@ -208,6 +208,9 @@ class Blockwise(ArrayExpr):
                         return False
         return True
 
+    def _requires_grid_preservation(self, dependency):
+        return type(self) is Blockwise and not self.align_arrays
+
     def _idx_to_block(self, block_id: tuple[int, ...]) -> dict:
         """Map symbolic indices to output block coordinates."""
         idx_to_block = {idx: block_id[dim] for dim, idx in enumerate(self.out_ind)}
