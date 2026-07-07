@@ -239,6 +239,50 @@ def test_contracted_einsum_fused_blockwise_binary_chunk_tracks_remapped_deps():
         assert slots == tuple(expected_by_source[source_name] for source_name in slot_source_order)
 
 
+@pytest.mark.parametrize(
+    "label, build",
+    [
+        ("transpose_plus_self", lambda x: x.T + x),
+        ("self_matmul", lambda x: x @ x),
+        ("gram", lambda x: x @ x.T),
+    ],
+)
+def test_repeated_operand_fused_blockwise_uses_binary_records(label, build):
+    """A fused block that reads the SAME source more than once — Gram matrices
+    (``A @ A.T``), ``x.T + x``, self-matmul — must still take the binary records
+    path. The block structure is fine: distinct-source contraction (see the
+    einsum test above) is already binary. Today ``_fast_spec`` labels each fused
+    input by its source *name*, so two reads of one source collide and it bails
+    to the O(N)-Python-tuple ``_slow_records``. This pins the fast path back on.
+
+    Note the diagonal wrinkle these cases carry: where the two reads of the one
+    source land on the *same* block (``i == j`` in a Gram matrix), dask dedups
+    them to a single dependency, so per-block fan-in varies (2 off-diagonal, 1
+    on) — the fast path must reproduce that, not just relabel."""
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    from dask_array._frisky.fused_blockwise import FusedBlockwiseLayer
+
+    x = da.from_array(np.arange(16.0).reshape(4, 4), chunks=(2, 2))
+    y = build(x)
+    fused = [e for e in y._lowered_expr.walk() if type(e).__name__ == "FusedBlockwise"]
+    assert len(fused) == 1
+    layer = FusedBlockwiseLayer(fused[0])
+
+    # (1) Faithful: the fast (binary) records reproduce the slow path's
+    # per-block key -> {upstream deps} exactly, including the deduped diagonal.
+    fast = layer._fast_records()
+    assert fast is not None, "repeated-operand fused block should take the binary/fast path"
+
+    def key_deps(recs):
+        return {key: sorted({str(d) for d in deps}) for key, _f, _a, _k, deps in recs}
+
+    assert key_deps(fast) == key_deps(layer._slow_records())
+
+    # (2) Engages the binary encoder (bytes, not a NotImplementedError fall-through).
+    assert isinstance(layer.to_records_chunk(), bytes)
+
+
 def test_xarray_rolling_sum_where_literal_uses_binary_records():
     if importlib.util.find_spec("dask_array._rust") is None:
         pytest.skip("requires Rust extension")

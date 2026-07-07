@@ -33,34 +33,22 @@ def _resolve(arg, cache):
 
 
 def records_per_key(collection, output_keys):
-    """Collect records over the lowered tree; materialize uncovered leaves (e.g.
-    from_array) via the dask path; run the records with a worker-style resolver.
-    Returns {key_str: value} for output_keys."""
-    expr = collection.expr.lower_completely()
-    records, cache = [], {}
-    stack, seen = [expr], set()
-    while stack:
-        e = stack.pop()
-        if e._name in seen:
-            continue
-        seen.add(e._name)
-        layer = getattr(e, "_frisky_layer", None)
-        covered = False
-        if layer is not None:
-            try:
-                records.extend(layer().to_task_records())
-                covered = True
-            except NotImplementedError:
-                covered = False
-        if covered:
-            stack.extend(e.dependencies())
-        else:
-            # Leaf (no frisky layer): provide its blocks as inputs via dask.
-            g = dict(e._layer())
-            for k, v in zip(g, get_sync(g, list(g))):
-                cache[str(k)] = v
+    """Resolve the *actual* Frisky task records (``collect_task_records`` — the
+    same path Frisky submits, including RootAlias output-key pinning and the
+    from_array data node) with a worker-style resolver, cluster-free. Returns
+    {key_str: value} for output_keys.
 
-    produced = {r[0]: r for r in records}
+    Distinct (arange) source data makes a mis-sliced / mis-ordered block assembly
+    show up as a value mismatch that ``da.ones``-based checks can't. Walking the
+    real records (not a hand-rolled lowered-tree walk) keeps this aligned with
+    ``__dask_keys__``: the records path pins output keys back to the collection's
+    raw name via RootAlias, so the earlier ``expr.lower_completely()`` walk
+    produced *lowered* names that never matched ``output_keys`` — every case
+    KeyError'd. This resolves the same records the scheduler would run."""
+    from dask_array._frisky.collect import collect_task_records
+
+    produced = {r[0]: r for r in collect_task_records(collection)}
+    cache = {}
 
     def compute(key):
         if key in cache:
@@ -201,6 +189,14 @@ def cases():
     yield "argmax 3d axis2", arr((6, 5, 8), (3, 5, 2)).argmax(axis=2)
     yield "argmin ravel 2d", arr((9, 6), (2, 2)).argmin()
     yield "argmax ravel 3d", arr((4, 6, 5), (2, 3, 2)).argmax()
+    # repeated-operand fused blockwise (same source read >1x per block -> the
+    # site-based fast path; includes the coincident-block/diagonal dedup case)
+    yield "gram A@A.T", arr((6, 6), (2, 3)) @ arr((6, 6), (2, 3)).T
+    yield "self-matmul A@A", arr((6, 6), (3, 3)) @ arr((6, 6), (3, 3))
+    yield "transpose plus self x.T+x", arr((6, 6), (2, 2)).T + arr((6, 6), (2, 2))
+    yield "self-mul x*x.T", arr((6, 6), (3, 3)) * arr((6, 6), (3, 3)).T
+    yield "x + reversed x", arr((12,), (4,)) + arr((12,), (4,))[::-1]
+    yield "gram then scale", (arr((8, 8), (4, 4)) @ arr((8, 8), (4, 4)).T) * 2
     # cumulative (sequential carry: chunk + identity + tail-getitem + binop)
     yield "cumsum axis0", arr((9, 6), (2, 2)).cumsum(axis=0)
     yield "cumsum axis1", arr((9, 6), (2, 2)).cumsum(axis=1)
