@@ -1096,6 +1096,23 @@ def test_cumreduction_no_rechunk_on_1d_array():
     assert no_rechunk
 
 
+@pytest.mark.parametrize("method", ["sequential", "blelloch"])
+@pytest.mark.parametrize("func", ["cumsum", "cumprod"])
+def test_cumreduction_empty_blocks(func, method):
+    """A cumulative scan must handle blocks that are empty along the reduction
+    axis — a boolean mask can filter out a whole chunk. An empty block's running
+    total is the identity, not its unbroadcastable size-0 last slice (which used
+    to crash the sequential scan with a ``(0,) (n,)`` broadcast error). Covers an
+    empty leading / middle / trailing / all-but-one block."""
+    x = da.from_array(np.arange(1.0, 21.0), chunks=5)  # blocks [1-5][6-10][11-15][16-20]
+    dfunc, nfunc = getattr(da, func), getattr(np, func)
+    for mask in [x > 8, (x < 4) | (x > 13), x < 9, x == 14]:
+        xn = x[mask]
+        base = np.asarray(xn.compute())
+        got = np.asarray(dfunc(xn, axis=0, method=method).compute())
+        np.testing.assert_array_equal(got, nfunc(base))
+
+
 @pytest.mark.parametrize("axis", [3, 0, [1, 3]])
 @pytest.mark.parametrize("q", [0.75, [0.75], [0.75, 0.4]])
 @pytest.mark.parametrize("rechunk", [True, False])

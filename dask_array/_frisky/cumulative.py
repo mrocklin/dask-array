@@ -3,10 +3,10 @@
 ``CumReduction._frisky_layer`` builds the shared per-block chunk function — the
 ``partial(func, axis=…[, dtype=…])`` the legacy ``_layer`` uses, replicating its
 ``inspect.signature`` dtype decision exactly — and hands the Rust
-``CumReductionLayer`` the remaining funcs (an identity-block wrapper, the
-copy-if-small ``chunk.getitem``, the ``binop``), and the block grid. Rust emits
-the four task kinds (chunk / identity / tail-getitem / binop) with the
-sequential carry along the reduction axis.
+``CumReductionLayer`` the remaining funcs (an identity-block wrapper, the ``tail``
+function, the ``binop``), and the block grid. Rust emits the four task kinds
+(chunk / identity / tail / binop) with the sequential carry along the reduction
+axis.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ import numpy as np
 from dask_array import _rust
 from dask_array._chunk import getitem as chunk_getitem
 from dask_array._frisky.base import Layer
+from dask_array.reductions._cumulative import _cum_tail
 
 
 class CumReductionLayer(Layer):
@@ -39,15 +40,21 @@ class CumReductionLayer(Layer):
 
         identity_func = partial(_full_like_shape, meta, ident, dtype)
 
+        # The per-block carry: the last hyperplane along the axis, or the identity
+        # when a block is empty there (so an empty block contributes nothing rather
+        # than an unbroadcastable size-0 slice). The non-empty branch uses
+        # chunk.getitem (copy-if-small), not operator.getitem: the tail is a
+        # one-slice view of the whole previous cumulated block and would otherwise
+        # pin it until the next binop runs. See TasksRechunk._frisky_layer.
+        ndim = len(numblocks)
+        tail_slice = (slice(None),) * axis + (slice(-1, None),) + (slice(None),) * (ndim - axis - 1)
+        tail_func = partial(_cum_tail, chunk_getitem, tail_slice, ident, axis)
+
         self._rust = _rust.CumReductionLayer(
             name,
             chunk_func,
             identity_func,
-            # chunk.getitem (copy-if-small), not operator.getitem: the tail
-            # getitem is a one-slice view of the whole previous cumulated
-            # block and would otherwise pin it until the next binop runs.
-            # See TasksRechunk._frisky_layer for the full story.
-            chunk_getitem,
+            tail_func,
             binop,
             {},
             x_name,

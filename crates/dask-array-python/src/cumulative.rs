@@ -10,9 +10,13 @@
 //!     axis is `full_like_shape_bound(shape)` (the identity, with size 1 along
 //!     the axis).
 //!     Subsequent blocks are `binop(extra[prev], tail[prev])`.
-//!   - **tail** (`name-tail`): `getitem(chunk[blk], last-along-axis)`. The legacy
-//!     nests this `getitem` inline inside the `binop` task; the neutral form has
-//!     no nested-task arg, so we flatten it into its own named task.
+//!   - **tail** (`name-tail`): `tail_func(chunk[blk])` — the last hyperplane
+//!     along the axis (the block's running total), or the identity when the block
+//!     is empty there (so an empty block carries nothing rather than an
+//!     unbroadcastable size-0 slice). `tail_func` is a partial with the slice,
+//!     identity and axis pre-bound in the Python wrapper. The legacy nests the
+//!     getitem inline inside the `binop` task; the neutral form has no nested-task
+//!     arg, so we flatten it into its own named task.
 //!   - **output** (`name`): first block along the axis aliases `chunk`;
 //!     subsequent blocks are `binop(extra[blk], chunk[blk])`.
 //!
@@ -23,9 +27,7 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use crate::common::{
-    to_dask_graph, to_task_records, ArgSlot, Compute, Expanded, IndexElem, NeutralTask,
-};
+use crate::common::{to_dask_graph, to_task_records, ArgSlot, Compute, Expanded, NeutralTask};
 
 // Name indices into the interned `names` list (also used as `Dep` name_idx).
 const N_OUT: usize = 0;
@@ -36,7 +38,7 @@ const N_X: usize = 4;
 // Func indices.
 const F_CHUNK: usize = 0;
 const F_FULL_LIKE: usize = 1;
-const F_GETITEM: usize = 2;
+const F_TAIL: usize = 2;
 const F_BINOP: usize = 3;
 
 #[pyclass]
@@ -44,7 +46,7 @@ pub struct CumReductionLayer {
     /// `[output, chunk, extra, tail, x]` names — produced names use the first
     /// four; `Dep`s reference chunk/extra/tail/x.
     names: Vec<String>,
-    /// `[chunk_func, identity_func, operator.getitem, binop]`.
+    /// `[chunk_func, identity_func, tail_func, binop]`.
     funcs: Vec<Py<PyAny>>,
     /// Shared kwargs (empty).
     kwargs: Py<PyAny>,
@@ -62,7 +64,7 @@ impl CumReductionLayer {
         name: String,
         chunk_func: Py<PyAny>,
         full_like: Py<PyAny>,
-        getitem: Py<PyAny>,
+        tail: Py<PyAny>,
         binop: Py<PyAny>,
         kwargs: Py<PyAny>,
         x_name: String,
@@ -79,7 +81,7 @@ impl CumReductionLayer {
         ];
         Self {
             names,
-            funcs: vec![chunk_func, full_like, getitem, binop],
+            funcs: vec![chunk_func, full_like, tail, binop],
             kwargs,
             axis,
             numblocks,
@@ -101,28 +103,6 @@ impl CumReductionLayer {
 }
 
 impl CumReductionLayer {
-    /// The `getitem` index that selects the last position along `axis`:
-    /// `(:, …, slice(-1, None), …, :)`.
-    fn tail_index(&self) -> Vec<IndexElem> {
-        (0..self.numblocks.len())
-            .map(|d| {
-                if d == self.axis {
-                    IndexElem::Slice {
-                        start: Some(-1),
-                        stop: None,
-                        step: None,
-                    }
-                } else {
-                    IndexElem::Slice {
-                        start: None,
-                        stop: None,
-                        step: None,
-                    }
-                }
-            })
-            .collect()
-    }
-
     fn expand(&self) -> Expanded<'_> {
         let ndim = self.numblocks.len();
         let n = self.numblocks[self.axis];
@@ -200,20 +180,16 @@ impl CumReductionLayer {
                 let old = full_coord(&na_coord, i - 1);
                 let cur = full_coord(&na_coord, i);
 
-                // tail[old] = getitem(chunk[old], last-along-axis)
+                // tail[old] = tail_func(chunk[old]) — last hyperplane, or the
+                // identity when that block is empty along the axis.
                 tasks.push(NeutralTask {
                     name_idx: N_TAIL,
                     coord: old.clone(),
-                    compute: Compute::Call {
-                        func_idx: F_GETITEM,
-                    },
-                    slots: vec![
-                        ArgSlot::Dep {
-                            name_idx: N_CHUNK,
-                            coord: old.clone(),
-                        },
-                        ArgSlot::Index(self.tail_index()),
-                    ],
+                    compute: Compute::Call { func_idx: F_TAIL },
+                    slots: vec![ArgSlot::Dep {
+                        name_idx: N_CHUNK,
+                        coord: old.clone(),
+                    }],
                 });
                 // extra[cur] = binop(extra[old], tail[old])
                 tasks.push(NeutralTask {

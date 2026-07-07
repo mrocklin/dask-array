@@ -25,6 +25,20 @@ def _cumprod_merge(a, b):
     return a * b
 
 
+def _cum_tail(getitem, index, ident, axis, x):
+    """The block's running total to carry to later blocks: the last hyperplane
+    along ``axis`` (via ``getitem``), or the identity (size 1 along ``axis``) when
+    the block is empty there. An empty block must carry the identity — its empty
+    ``[-1:]`` slice has a size-0 axis that would fail to broadcast against the next
+    block's real data (the sequential-scan crash on e.g. ``cumsum`` of a
+    boolean-masked array with an empty block)."""
+    if x.shape[axis] == 0:
+        shape = list(x.shape)
+        shape[axis] = 1
+        return np.full_like(x, ident, shape=tuple(shape))
+    return getitem(x, index)
+
+
 def _prefixscan_first(func, x, axis, dtype):
     """Compute the prefix scan (e.g., cumsum) on the first block."""
     return func(x, axis=axis, dtype=dtype)
@@ -137,12 +151,11 @@ class CumReduction(ArrayExpr):
         from dask_array._frisky.cumulative import CumReductionLayer
 
         # Unknown (nan) chunk sizes are fine: the sequential plan is fixed by the
-        # block *count* (numblocks); the one size use — the `extra` identity block's
-        # shape — is 1 along the reduction axis and otherwise only broadcasts, so
-        # the layer maps a nan size to 1. The generated graph mirrors stock dask's,
-        # so it runs exactly where stock dask's does (an empty *leading* block along
-        # the axis crashes both at runtime — a pre-existing sequential-scan limit,
-        # which the Blelloch path happens to sidestep).
+        # block *count* (numblocks). The one place the passed sizes are used — the
+        # `extra` identity block's shape — is 1 along the reduction axis and
+        # otherwise only broadcasts, so an unknown size maps to 1. (Blocks that are
+        # empty along the axis are handled separately, by `_cum_tail` off the
+        # runtime block shape — not from these sizes.)
         return CumReductionLayer(
             self._name,
             self.func,
@@ -234,11 +247,12 @@ class CumReduction(ArrayExpr):
             indices = list(product(*[range(nb) if ii != axis else [i] for ii, nb in enumerate(x.numblocks)]))
             for old, ind in zip(last_indices, indices):
                 this_extra = (self._name, "extra") + ind
-                # Combine previous extra with the last element of the previous block
+                # Combine previous extra with the previous block's running total
+                # (its last hyperplane, or the identity if that block is empty).
                 dsk[this_extra] = (
                     binop,
                     (self._name, "extra") + old,
-                    (operator.getitem, (per_block_name,) + old, slc),
+                    (_cum_tail, operator.getitem, slc, ident, axis, (per_block_name,) + old),
                 )
                 # Add the extra to this block's result
                 dsk[(self._name,) + ind] = (

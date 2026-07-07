@@ -53,7 +53,7 @@ mod stack;
 /// coordinate on is the binary records grammar (`common::RECORDS_PROTOCOL_VERSION`
 /// ↔ Frisky's `records_proto::CHUNK_GRAMMAR_VERSION`), which only moves when the
 /// chunk byte-grammar changes — not when a layer is added.
-const NATIVE_BUILD_GENERATION: usize = 33;
+const NATIVE_BUILD_GENERATION: usize = 34;
 
 #[pyfunction]
 fn native_build_generation() -> usize {
