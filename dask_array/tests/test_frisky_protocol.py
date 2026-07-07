@@ -860,14 +860,6 @@ def test_frisky_scheduler_uses_records_chunks_protocol(array_scheduler, monkeypa
     np.testing.assert_array_equal(result, np.full((2, 2), 7.0))
 
 
-def test_nested_flattened_cumreduction_uses_graph_fallback():
-    x = da.from_array(np.arange(12).reshape(3, 4), chunks=(2, 2))
-    y = da.cumsum(x, axis=None, method="sequential") + 1
-
-    with pytest.raises(NotImplementedError, match="flattened cumulative reductions"):
-        y.__frisky_records_chunks__()
-
-
 def test_persisted_collection_arithmetic_roundtrips(array_scheduler):
     """Chained persist: a persisted collection lowers to a ``FromGraph`` whose
     blocks ARE frisky Futures. Doing arithmetic on it and recomputing must wire

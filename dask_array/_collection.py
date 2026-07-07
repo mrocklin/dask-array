@@ -315,21 +315,17 @@ class Array(DaskMethodsMixin):
         # keyed by block coordinate, and numblocks is known even when sizes are
         # not, so the graph is fully static (boolean masks, unique, argwhere).
         # Only tasks that need concrete sizes fail, and those decline per-layer.
-        from dask_array._reshape import ReshapeLowered
-        from dask_array.reductions._cumulative import CumReduction
-
-        stack = [(self._lowered_expr, False)]
-        seen = set()
-        while stack:
-            expr, inside_cumreduction = stack.pop()
-            inside_cumreduction = inside_cumreduction or isinstance(expr, CumReduction)
-            state = (expr._name, inside_cumreduction)
-            if state in seen:
-                continue
-            seen.add(state)
-            if inside_cumreduction and isinstance(expr, ReshapeLowered):
-                raise NotImplementedError("flattened cumulative reductions use the regular dask graph path")
-            stack.extend((dep, inside_cumreduction) for dep in expr.dependencies())
+        #
+        # We previously also bailed the whole submission when a ReshapeLowered
+        # sat under a CumReduction ("flattened cumulative reductions"), out of a
+        # concern that the reshape-backed sequential-scan graph could not be
+        # ordered safely on the records path.  Direct testing showed the records
+        # generate cleanly (no dangling deps) and both the records and
+        # expression paths compute the correct, deterministic result for the
+        # axis=None flatten and reshape-fed EW-scan shapes -- the guard only
+        # forced correct graphs down the slow materialized-graph path.  The
+        # reshape and cumulative are ordinary producer/consumer layers, so let
+        # them ride the records path.
 
     def __frisky_graph__(self, seen=None):
         """Frisky submission protocol (duck-typed; Frisky never imports
