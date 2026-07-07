@@ -9,11 +9,10 @@ and shaped concatenate tasks without materializing Dask's old-style
 
 from __future__ import annotations
 
-import operator
-
 from dask.array.core import concatenate_shaped
 
 from dask_array import _rust
+from dask_array._chunk import getitem
 from dask_array._frisky.base import Layer
 
 
@@ -30,7 +29,11 @@ class OverlapLayer(Layer):
         self._rust = _rust.OverlapLayer(
             name,
             dep_name,
-            operator.getitem,
+            # chunk.getitem (copy-if-small), not operator.getitem: halo
+            # slices are small views of whole neighbor blocks and would
+            # otherwise pin them in worker memory until the concatenate
+            # runs.  See TasksRechunk._frisky_layer for the full story.
+            getitem,
             concatenate_shaped,
             {},
             [int(n) for n in numblocks],

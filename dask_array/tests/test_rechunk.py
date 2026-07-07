@@ -114,3 +114,56 @@ def test_rechunk_below_limit_unchanged():
         keys_unbounded = set(y.optimize().__dask_graph__())
 
     assert keys_default == keys_unbounded
+
+
+def test_rechunk_split_tasks_copy_small_selections():
+    """Split tasks must use chunk.getitem (copy-if-small), not operator.getitem.
+
+    A raw-getitem split is a numpy view that keeps its whole parent block
+    refcount-alive after the parent is released; lingering splits on
+    rechunk-heavy graphs pin "released" parents as untracked worker RSS.
+    """
+    from dask_array._chunk import getitem as chunk_getitem
+
+    x = da.ones((40, 40), chunks=(40, 40))
+    y = x.rechunk((40, 4))
+
+    # Python-materialized graph path (_compute_rechunk).
+    graph = dict(y.optimize().__dask_graph__())
+    split_tasks = [
+        task
+        for key, task in graph.items()
+        if "rechunk-split" in str(key) and hasattr(task, "func")
+    ]
+    assert split_tasks, "expected rechunk-split tasks in the graph"
+    parent = np.ones((40, 40))
+    for task in split_tasks:
+        assert task.func is chunk_getitem
+    piece = split_tasks[0].func(parent, (slice(0, 40), slice(0, 4)))
+    assert piece.flags.owndata, "small split selection must be a copy"
+
+    # Rust records path (TasksRechunk._frisky_layer -> RechunkLayer).
+    import dask_array._frisky as frisky_mod
+
+    captured = {}
+    real_layer = frisky_mod.RechunkLayer
+
+    class RecordingLayer:
+        def __init__(self, getitem, concatenate3, steps):
+            captured["getitem"] = getitem
+            self._wrapped = real_layer(getitem, concatenate3, steps)
+
+        def __getattr__(self, name):
+            return getattr(self._wrapped, name)
+
+    frisky_mod.RechunkLayer = RecordingLayer
+    try:
+        expr = y.optimize().expr
+        rechunk_exprs = [
+            e for e in expr.walk() if type(e).__name__ == "TasksRechunk"
+        ]
+        assert rechunk_exprs, "expected a TasksRechunk node"
+        rechunk_exprs[0]._frisky_layer()
+    finally:
+        frisky_mod.RechunkLayer = real_layer
+    assert captured["getitem"] is chunk_getitem

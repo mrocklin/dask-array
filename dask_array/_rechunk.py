@@ -18,6 +18,7 @@ from dask._task_spec import Alias, List, Task, TaskRef
 from dask.base import tokenize
 from dask.utils import cached_property, parse_bytes
 
+from dask_array._chunk import getitem as chunk_getitem
 from dask_array._expr import ArrayExpr
 from dask_array._core_utils import concatenate3, normalize_chunks
 from dask_array._utils import validate_axis
@@ -1080,7 +1081,14 @@ class TasksRechunk(Rechunk):
             name = merge_name
             cur_chunks = c
 
-        return RechunkLayer(operator.getitem, concatenate3, descs)
+        # chunk.getitem, not operator.getitem: split tasks must copy when the
+        # selection is small (< half the block).  A raw getitem returns a
+        # numpy *view* that keeps its whole parent block refcount-alive after
+        # the parent task is released; on rechunk-heavy graphs the lingering
+        # split views pin hundreds of GB of "released" parents as RSS that no
+        # accounting sees (rss - managed - transient).  Upstream dask's
+        # _compute_rechunk uses the same copying getitem for this reason.
+        return RechunkLayer(chunk_getitem, concatenate3, descs)
 
 
 def _convert_to_task_refs(obj):
@@ -1136,10 +1144,11 @@ def _compute_rechunk(old_name, old_chunks, chunks, level, name):
                 # No slicing needed - use old block directly
                 rec_cat_arg_flat[rec_cat_index] = old_blocks[old_block_index]
             else:
-                # Need to slice the old block
+                # Need to slice the old block.  chunk.getitem (copy-if-small),
+                # not operator.getitem — see TasksRechunk._frisky_layer.
                 intermediates[intermediate_name] = Task(
                     intermediate_name,
-                    operator.getitem,
+                    chunk_getitem,
                     TaskRef(old_blocks[old_block_index]),
                     slices,
                 )
