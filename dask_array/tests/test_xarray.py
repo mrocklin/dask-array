@@ -76,15 +76,46 @@ def test_xarray_rolling_full_time_chunk_avoids_padding_rechunk():
     np.testing.assert_allclose(result.compute().values, np.full((6, 8), 72.0))
 
 
+def test_xarray_rolling_bottleneck_short_first_chunk():
+    # xarray's bottleneck rolling path is map_overlap with depth
+    # (window - 1, 0) and boundary "none". A first chunk of window - 1 rows
+    # gets no left halo, so bottleneck used to reject the block ("Moving
+    # window (=30) must between 1 and 29"); the short edge chunk must be
+    # merged into its neighbor instead.
+    pytest.importorskip("bottleneck")
+    da.xarray.register()
+    n = 30
+    rng = np.random.default_rng(0)
+    data = rng.random((n - 1 + 2 * n, 4))
+    x = da.from_array(data, chunks=((n - 1, n, n), (4,)))
+    result = xr.DataArray(x, dims=["time", "asset"]).rolling(time=n, min_periods=1).sum().compute()
+    expected = xr.DataArray(data, dims=["time", "asset"]).rolling(time=n, min_periods=1).sum()
+    np.testing.assert_allclose(result.values, expected.values)
+
+
+def test_xarray_rolling_head_slice_inside_first_window():
+    # Slice pushdown used to shrink the rolling's input to window - 1 rows
+    # (expanded extent == depth exactly), handing bottleneck a block it must
+    # reject: "Moving window (=8640) must between 1 and 8639, inclusive".
+    pytest.importorskip("bottleneck")
+    da.xarray.register()
+    n = 30
+    rng = np.random.default_rng(0)
+    data = rng.random((5 * n, 4))
+    x = da.from_array(data, chunks=((n,) * 5, (4,)))
+    r = xr.DataArray(x, dims=["time", "asset"]).rolling(time=n, min_periods=1).sum()
+    result = r.isel(time=slice(0, n - 1)).compute()
+    expected = xr.DataArray(data, dims=["time", "asset"]).rolling(time=n, min_periods=1).sum()[: n - 1]
+    np.testing.assert_allclose(result.values, expected.values)
+
+
 def test_xarray_rolling_slice_rechunk_map_blocks_receives_full_day_block():
     da.xarray.register()
     samples_per_day = 8
     step_s = 86400 // samples_per_day
     n = 13 * samples_per_day
     time = (
-        np.datetime64("2026-06-17")
-        + np.timedelta64(step_s, "s")
-        + np.arange(n) * np.timedelta64(step_s, "s")
+        np.datetime64("2026-06-17") + np.timedelta64(step_s, "s") + np.arange(n) * np.timedelta64(step_s, "s")
     ).astype("datetime64[ns]")
     x = xr.DataArray(
         da.ones((n, 2), chunks=(samples_per_day, 2)),

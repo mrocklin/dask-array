@@ -208,7 +208,9 @@ class MapOverlap(ArrayExpr):
         primary = self._get_primary_array()
         primary_idx = self._get_primary_index()
         if self.allow_rechunk:
-            return _get_overlap_rechunked_chunks(new_collection(primary), self.depth[primary_idx])
+            return _get_overlap_rechunked_chunks(
+                new_collection(primary), self.depth[primary_idx], self.boundary[primary_idx]
+            )
         return primary.chunks
 
     @functools.cached_property
@@ -296,6 +298,17 @@ class MapOverlap(ArrayExpr):
                 ):
                     return None
                 if max_depth > expanded_stop - expanded_start:
+                    return None
+                # With boundary "none" the edge blocks get no outer halo, so
+                # the sliced extent must span at least one full kernel window
+                # (before + after + 1). Anything shorter hands a moving-window
+                # func (e.g. bottleneck move_sum via xarray rolling, depth
+                # (window - 1, 0)) a block it must reject; no rechunk can help
+                # because the data is simply not in the slice. Decline and
+                # compute the full overlap, slicing afterwards.
+                if self.boundary[0].get(axis, "none") == "none" and (
+                    expanded_stop - expanded_start <= left_depth + right_depth
+                ):
                     return None
 
                 # Replace this axis in full_index with expanded slice
@@ -762,10 +775,25 @@ def ensure_minimum_chunksize(size, chunks):
     return tuple(output)
 
 
-def _get_overlap_rechunked_chunks(x, depth2):
-    depths = [max(d) if isinstance(d, tuple) else d for d in depth2.values()]
+def _get_overlap_rechunked_chunks(x, depth2, boundary2):
     # rechunk if new chunks are needed to fit depth in every chunk
-    return tuple(ensure_minimum_chunksize(size, c) for size, c in zip(depths, x.chunks))
+    chunks = []
+    for axis, c in enumerate(x.chunks):
+        d = depth2.get(axis, 0)
+        before, after = d if isinstance(d, tuple) else (d, d)
+        c = ensure_minimum_chunksize(max(before, after), c)
+        if boundary2.get(axis, "none") == "none":
+            # With boundary "none" the edge blocks get no outer halo, so an
+            # edge chunk of size <= its missing depth yields a block smaller
+            # than a full kernel window (before + after + 1).  Moving-window
+            # kernels (e.g. bottleneck via xarray rolling) fail on such
+            # blocks; merge the edge chunk into its neighbor instead.
+            if len(c) > 1 and c[0] <= before:
+                c = (c[0] + c[1],) + c[2:]
+            if len(c) > 1 and c[-1] <= after:
+                c = c[:-2] + (c[-2] + c[-1],)
+        chunks.append(c)
+    return tuple(chunks)
 
 
 def overlap(x, depth, boundary, *, allow_rechunk=True):
@@ -832,7 +860,7 @@ def overlap(x, depth, boundary, *, allow_rechunk=True):
     depths = [max(d) if isinstance(d, tuple) else d for d in depth2.values()]
     if allow_rechunk:
         # rechunk if new chunks are needed to fit depth in every chunk
-        x1 = x.rechunk(_get_overlap_rechunked_chunks(x, depth2))  # this is a no-op if x.chunks == new_chunks
+        x1 = x.rechunk(_get_overlap_rechunked_chunks(x, depth2, boundary2))  # this is a no-op if x.chunks == new_chunks
 
     else:
         original_chunks_too_small = any(min(c) < d for d, c in zip(depths, x.chunks))

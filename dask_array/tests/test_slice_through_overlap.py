@@ -495,3 +495,98 @@ def test_slice_pushdown_into_nested_overlap_is_correct():
     # Full (no slice pushdown) result is the oracle for the sliced one.
     full = x.compute()
     assert_eq(x[6:11], full[6:11])
+
+
+# =============================================================================
+# Boundary chunks smaller than a one-sided overlap depth
+# =============================================================================
+# With boundary "none" the first block gets no left halo (and the last block
+# no right halo), so an edge chunk of size <= depth produces a block smaller
+# than a full kernel window (before + after + 1). Moving-window kernels such
+# as bottleneck's (xarray's dask rolling path uses depth=(window - 1, 0))
+# reject such blocks. overlap() must merge the short edge chunk into its
+# neighbor. Integer-valued data keeps the window sums float-exact.
+
+
+def trailing_window_sum(x):
+    """Rolling 10-sum with partial head windows; needs a full window per block."""
+    if x.shape[0] < 10:
+        raise ValueError(f"block of {x.shape[0]} rows is smaller than the window (10)")
+    c = np.cumsum(x, axis=0)
+    out = c.astype("float64")
+    out[10:] = c[10:] - c[:-10]
+    return out
+
+
+def leading_window_sum(x):
+    """Forward-looking 10-sum with partial tail windows; needs a full window per block."""
+    if x.shape[0] < 10:
+        raise ValueError(f"block of {x.shape[0]} rows is smaller than the window (10)")
+    c = np.concatenate([np.zeros((1,) + x.shape[1:]), np.cumsum(x, axis=0)], axis=0)
+    end = np.minimum(np.arange(x.shape[0]) + 10, x.shape[0])
+    return c[end] - c[:-1]
+
+
+@pytest.mark.parametrize(
+    "chunks",
+    [
+        (9, 10, 10, 11),  # short first chunk: exactly window - 1, no left halo
+        (10, 9, 10, 11),  # short middle chunk: healed by the neighbor halo
+        (11, 10, 10, 9),  # short last chunk: fine for a trailing window
+        (10, 10, 10, 10),  # first chunk exactly == window: no merge needed
+        (2,) * 20,  # every chunk below depth
+        (8, 1, 10, 21),  # depth-merge lands exactly on depth (== window - 1)
+    ],
+)
+def test_map_overlap_short_boundary_chunk_trailing_window(chunks):
+    arr = np.arange(160, dtype="float64").reshape(40, 4)
+    x = da.from_array(arr, chunks=(chunks, (4,)))
+    result = da.map_overlap(
+        trailing_window_sum, x, depth={0: (9, 0), 1: 0}, boundary="none", trim=True, dtype="float64"
+    )
+    assert_eq(result, trailing_window_sum(arr))
+
+
+def test_map_overlap_short_boundary_chunk_leading_window():
+    arr = np.arange(160, dtype="float64").reshape(40, 4)
+    x = da.from_array(arr, chunks=((11, 10, 10, 9), (4,)))
+    result = da.map_overlap(leading_window_sum, x, depth={0: (0, 9), 1: 0}, boundary="none", trim=True, dtype="float64")
+    assert_eq(result, leading_window_sum(arr))
+
+
+def test_nested_overlap_tail_slice_with_short_first_chunk():
+    """Shift stacked on a rolling window, tail-sliced, with a merged first chunk."""
+    arr = np.arange(160, dtype="float64").reshape(40, 4)
+    x = da.from_array(arr, chunks=((9, 10, 10, 11), (4,)))
+    inner = da.map_overlap(trailing_window_sum, x, depth={0: (9, 0), 1: 0}, boundary="none", trim=True, dtype="float64")
+    outer = da.map_overlap(lag1, inner, depth={0: (1, 0), 1: 0}, boundary="none", trim=True, dtype="float64")
+    result = outer[35:]
+    result._lowered_expr  # trim_internal's adjust_chunks grid must stay consistent
+    expected = np.full_like(arr, np.nan)
+    expected[1:] = trailing_window_sum(arr)[:-1]
+    assert_eq(result, expected[35:])
+
+
+def test_slice_ending_inside_first_window_declines_pushdown():
+    """A pushed slice whose expanded extent is shorter than one kernel window
+    (before + after + 1) must decline: with boundary "none" the missing rows
+    are simply not in the slice, so no rechunk can heal the block and a
+    moving-window kernel rejects it. Production signature: xarray rolling
+    (depth (window - 1, 0)) sliced with stop == window - 1 crashed worker-side
+    with "Moving window (=8640) must between 1 and 8639"."""
+    arr = np.arange(160, dtype="float64").reshape(40, 4)
+    x = da.from_array(arr, chunks=((10,) * 4, (4,)))
+    r = da.map_overlap(trailing_window_sum, x, depth={0: (9, 0), 1: 0}, boundary="none", trim=True, dtype="float64")
+    expected = trailing_window_sum(arr)
+    assert_eq(r[:9], expected[:9])  # stop == window - 1: expanded extent == depth
+    assert_eq(r[3:9], expected[3:9])  # interior start, same clipped extent
+    assert_eq(r[:10], expected[:10])  # control: a full window still pushes down
+
+
+def test_tail_slice_inside_last_window_declines_pushdown():
+    arr = np.arange(160, dtype="float64").reshape(40, 4)
+    x = da.from_array(arr, chunks=((10,) * 4, (4,)))
+    r = da.map_overlap(leading_window_sum, x, depth={0: (0, 9), 1: 0}, boundary="none", trim=True, dtype="float64")
+    expected = leading_window_sum(arr)
+    assert_eq(r[-9:], expected[-9:])  # expanded extent == after == window - 1
+    assert_eq(r[-10:], expected[-10:])  # control
