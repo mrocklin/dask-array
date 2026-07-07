@@ -54,6 +54,8 @@ class FromArrayGetterLayer:
         # case doesn't hold. lock is always False here (lock falls back upstream),
         # so the extra args are needed only when asarray is False.
         extra_args = (bool(asarray), False) if not asarray else None
+        self._name = name
+        self._array = array
         self._rust = _rust.FromArrayGetterLayer(name, array, getitem, dims, bool(inline_array), extra_args)
 
     def to_dask_graph(self):
@@ -61,6 +63,19 @@ class FromArrayGetterLayer:
 
     def to_task_records(self):
         return self._rust.to_task_records()
+
+    def to_records_chunk(self):
+        # Binary chunk for the N getter tasks (raises NotImplementedError for the
+        # inline / 5-arg-getter cases, so the walk falls back to to_task_records).
+        return self._rust.to_records_chunk()
+
+    def chunk_side_records(self):
+        """The source array as a single plain "holder" record, emitted alongside
+        the binary getter chunk. The chunk's ``Dep`` slots reference it by the key
+        ``('original-<name>',)`` (a Dep with empty coord), so the array is shipped
+        once, not embedded per block."""
+        holder = f"original-{self._name}"
+        return [(str((holder,)), toolz.identity, (self._array,), {}, [])]
 
 
 class FromArrayLayer:

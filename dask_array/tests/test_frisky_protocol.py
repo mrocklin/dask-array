@@ -301,6 +301,36 @@ def test_unknown_chunks_run_on_frisky_not_stock_dask():
     assert chunks or records  # a real graph was generated, not a stock-dask fallback
 
 
+def test_from_array_getter_uses_binary_records_chunk():
+    """An array-like (zarr/h5py/…) from_array puts its N getter tasks on the binary
+    records path and ships the source array ONCE as a plain holder record, instead
+    of N Python getter tuples. The holder is keyed ('original-<name>',) so each
+    getter task references it with a Dep(empty coord) slot — no grammar change."""
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    import json
+
+    class Lazy:  # a slicing target that is NOT a plain ndarray -> the getter path
+        def __init__(self, a):
+            self.a, self.shape, self.dtype, self.ndim = a, a.shape, a.dtype, a.ndim
+
+        def __getitem__(self, i):
+            return self.a[i]
+
+    src = Lazy(np.arange(48.0).reshape(6, 8))
+    x = da.from_array(src, chunks=(3, 4))  # 6 getter blocks
+
+    chunks, records, chunk_groups = x.__frisky_records_chunks__()
+
+    ops = [json.loads(m)["op"] for _, m, _ in chunk_groups]
+    assert "FromArray" in ops  # the getter tasks went binary, not to plain records
+    # The only plain record is the shared holder — no per-block getter tuples.
+    assert len(records) == 1
+    holder = records[0]
+    assert holder[0] == str((f"original-{x.name}",))
+    assert holder[1].__name__ == "identity" and holder[2][0] is src and holder[4] == []
+
+
 def test_xarray_rolling_sum_where_literal_uses_binary_records():
     if importlib.util.find_spec("dask_array._rust") is None:
         pytest.skip("requires Rust extension")

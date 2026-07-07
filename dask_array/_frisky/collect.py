@@ -224,6 +224,12 @@ def _walk_record_chunks(roots, seen, chunks, records, chunk_groups):
             # Upstream group names = this layer's child exprs' _names (deduped).
             upstream = sorted({c._name for c in deps})
             chunk_groups.append((e._name, _layer_metadata(e), upstream))
+            # A layer whose chunk references a shared data node it can't put in the
+            # chunk (from_array's source array) emits it here as a plain record, so
+            # the array ships once and the chunk's Dep slots resolve to it.
+            side = getattr(layer, "chunk_side_records", None)
+            if side is not None:
+                records.extend(side())
         else:
             records.extend(layer.to_task_records())
 

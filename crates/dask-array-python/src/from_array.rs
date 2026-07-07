@@ -22,7 +22,9 @@
 //! shared converters a from_array-only concept.
 
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyString, PyTuple};
+use pyo3::types::{PyBytes, PyDict, PyList, PyString, PyTuple};
+
+use crate::common::{ArgSlot, Compute, Expanded, IndexElem, NeutralTask};
 
 /// Per-dimension chunk sizes and the region offset (start) applied to that
 /// dimension's slices. `offset` is 0 when there is no `_region`.
@@ -215,6 +217,60 @@ impl FromArrayGetterLayer {
             records.append((key, getter.clone(), args_tuple, empty_kwargs.clone(), deps))?;
         }
         Ok(records)
+    }
+
+    /// The Frisky binary-records fast path: one LAYER chunk for the N getter
+    /// tasks, built through the shared `common` machinery. The source array is
+    /// NOT in the chunk — it ships once as a plain "holder" record the Python
+    /// layer emits (`chunk_side_records`), which each getter references via a
+    /// `Dep` slot with an empty coord (key `('original-<name>',)`). The per-block
+    /// slice is an `Index` slot derived from the chunk sizes. Declines (falls back
+    /// to `to_task_records`) when the array is inlined per task or the 5-arg
+    /// getter (asarray/lock) is needed — neither is expressible as a shared chunk.
+    fn to_records_chunk<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        if self.inline_array || self.extra_args.is_some() {
+            return Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                "from_array getter: inline_array / extra getter args are not on the binary path",
+            ));
+        }
+        let dep_names = vec![self.original_name()];
+        let empty_kwargs: Py<PyAny> = PyDict::new(py).unbind().into_any();
+        let numblocks: Vec<usize> = self.dims.iter().map(|d| d.sizes.len()).collect();
+        let total: usize = numblocks.iter().product();
+        let mut tasks: Vec<NeutralTask> = Vec::with_capacity(total);
+        for coord in Self::each_block(&numblocks) {
+            let mut index: Vec<IndexElem> = Vec::with_capacity(self.dims.len());
+            for (d, dim) in self.dims.iter().enumerate() {
+                let start: i64 = dim.offset + dim.sizes[..coord[d]].iter().sum::<i64>();
+                let stop = start + dim.sizes[coord[d]];
+                index.push(IndexElem::Slice {
+                    start: Some(start),
+                    stop: Some(stop),
+                    step: None,
+                });
+            }
+            tasks.push(NeutralTask {
+                name_idx: 0,
+                coord: coord.iter().map(|&c| c as u32).collect(),
+                compute: Compute::Call { func_idx: 0 },
+                slots: vec![
+                    ArgSlot::Dep {
+                        name_idx: 0,
+                        coord: Vec::new(),
+                    },
+                    ArgSlot::Index(index),
+                ],
+            });
+        }
+        let exp = Expanded {
+            names: vec![&self.name],
+            funcs: vec![&self.getitem],
+            kwargs: &empty_kwargs,
+            literals: &[],
+            dep_names: &dep_names,
+            tasks,
+        };
+        crate::common::to_records_chunk(py, &exp)
     }
 }
 
