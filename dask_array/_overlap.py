@@ -146,8 +146,16 @@ class MapOverlap(ArrayExpr):
     rechunk -> boundaries -> overlap_internal -> map_blocks -> trim
     """
 
+    # Every input array is a *direct* ``Expr`` operand: the primary input is the
+    # named ``array``; any additional inputs are trailing operands (the same
+    # convention Concatenate/Stack use). This is load-bearing -- the optimizer's
+    # ``dependencies()``/``simplify``/``lower`` only descend into direct Expr
+    # operands, so stashing the inputs in an ``arrays`` tuple would hide them:
+    # the source would never be simplified and lowering would re-materialize the
+    # un-optimized original (e.g. a mergeable ``concatenate([from_delayed, ...])``
+    # stranded as per-block ``FromDelayed`` instead of one merged ``FromMap``).
     _parameters = [
-        "arrays",  # tuple of input ArrayExpr
+        "array",  # primary input ArrayExpr; extra inputs are trailing operands
         "func",  # callable
         "depth",  # list of dicts (one per array)
         "boundary",  # list of dicts (one per array)
@@ -160,6 +168,11 @@ class MapOverlap(ArrayExpr):
         "allow_rechunk": True,
         "kwargs": None,
     }
+
+    @functools.cached_property
+    def arrays(self):
+        """All input arrays: the named ``array`` plus any trailing operands."""
+        return (self.array,) + tuple(self.operands[len(self._parameters) :])
 
     @functools.cached_property
     def _meta(self):
@@ -326,15 +339,16 @@ class MapOverlap(ArrayExpr):
             sliced = new_collection(arr)[tuple(full_index)]
             new_arrays.append(sliced.expr)
 
-        # Create new MapOverlap with sliced inputs
+        # Create new MapOverlap with sliced inputs (primary + trailing arrays)
         new_expr = MapOverlap(
-            arrays=tuple(new_arrays),
-            func=self.func,
-            depth=self.depth,
-            boundary=self.boundary,
-            trim_output=self.trim_output,
-            allow_rechunk=self.allow_rechunk,
-            kwargs=self.kwargs,
+            new_arrays[0],
+            self.func,
+            self.depth,
+            self.boundary,
+            self.trim_output,
+            self.allow_rechunk,
+            self.kwargs,
+            *new_arrays[1:],
         )
 
         if needs_trim:
@@ -1218,13 +1232,14 @@ def map_overlap(
     # It will be lowered to the full pipeline during optimization
     return new_collection(
         MapOverlap(
-            arrays=tuple(a.expr for a in args),
-            func=func,
-            depth=depth,
-            boundary=boundary,
-            trim_output=trim,
-            allow_rechunk=allow_rechunk,
-            kwargs=kwargs if kwargs else None,
+            args[0].expr,
+            func,
+            depth,
+            boundary,
+            trim,
+            allow_rechunk,
+            kwargs if kwargs else None,
+            *[a.expr for a in args[1:]],
         )
     )
 

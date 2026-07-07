@@ -468,25 +468,33 @@ def test_xarray_rolling_sum_where_literal_uses_binary_records():
 
     chunks, records, chunk_groups = y.__frisky_records_chunks__()
 
+    # The rolling sum lowers to overlap + a where-with-literal (min_periods mask)
+    # + trim. With the overlap input properly simplified, the where-elemwise
+    # fuses into the FusedBlockwise trim node, so every compute layer rides the
+    # binary records path end to end -- the only Python records are the
+    # from_array data source. (This test is the direct binary coverage for a
+    # where-with-literal -- now via the fused node; the *_scalar_fused_blockwise
+    # tests cover the same literal-slot mechanism for other scalar ops.)
     assert chunks
     ops = [json.loads(meta)["op"] for _, meta, _ in chunk_groups]
-    assert "Elemwise" in ops
     assert "FusedBlockwise" in ops
+    # no compute layer falls back: every Python record is a from_array source block
+    assert all("array-" in record[0] for record in records)
 
-    elemwise = [e for e in y._lowered_expr.walk() if type(e).__name__ == "Elemwise"]
-    assert len(elemwise) == 1
-    expr = elemwise[0]
-    assert expr._frisky_layer().to_records_chunk()
-    assert not any(record[0].startswith(f"('{expr._name}',") for record in records)
-    dep_graph = {}
-    for dep in expr.dependencies():
-        dep_graph.update(dict(dep.__dask_graph__()))
-    legacy_graph = expr._layer()
-    native_graph = expr._frisky_layer().to_dask_graph()
-    for key in flatten(expr.__dask_keys__()):
-        expected = get_sync({**dep_graph, **legacy_graph}, key)
-        actual = get_sync({**dep_graph, **native_graph}, key)
-        np.testing.assert_array_equal(actual, expected)
+    fused = [e for e in y._lowered_expr.walk() if type(e).__name__ == "FusedBlockwise"]
+    assert fused
+    for fb in fused:
+        assert fb._frisky_layer().to_records_chunk()  # the fused where-literal goes binary
+        assert not any(record[0].startswith(f"('{fb._name}',") for record in records)
+
+    # the binary path is numerically identical to computing on numpy.
+    ref = (
+        xr.DataArray(np.ones((100, 5)), dims=("time", "asset"))
+        .rolling({"time": 10}, min_periods=1)
+        .sum()
+        .data
+    )
+    np.testing.assert_array_equal(np.asarray(y), np.asarray(ref))
 
 
 @pytest.mark.parametrize(
