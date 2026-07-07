@@ -423,6 +423,32 @@ class ArrayExpr(SingletonExpr):
 
         return optimize_blockwise_fusion_array(self)
 
+    @staticmethod
+    def _fuse_many(exprs):
+        """Fuse several array expressions in ONE blockwise-fusion pass.
+
+        Fusing each expression on its own (``[e.fuse() for e in exprs]``)
+        cannot see across roots, so a subtree shared by several of them is
+        fused/duplicated into each consumer -- the shared work is then
+        recomputed once per consumer.  Fusing them together (one pass over a
+        combined root) leaves a multi-dependent shared subtree materialized
+        once, feeding every consumer.  Returns the fused expressions in the
+        same order.  A caller that submits the results as one graph (so the
+        shared node's single copy is visible to all consumers) both ships a
+        smaller expression and computes the shared subtree once.
+        """
+        from dask._expr import _ExprSequence
+        from dask_array._blockwise import optimize_blockwise_fusion_array
+
+        exprs = list(exprs)
+        if not exprs:
+            return []
+        fused = optimize_blockwise_fusion_array(_ExprSequence(*exprs))
+        operands = list(fused.operands)
+        if len(operands) != len(exprs):
+            raise RuntimeError("multi-expression fusion changed operand count")
+        return operands
+
     def rechunk(
         self,
         chunks="auto",

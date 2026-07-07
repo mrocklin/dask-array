@@ -1231,3 +1231,35 @@ def test_masked_from_array_tokenizes():
     )
     proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert proc.returncode == 0, proc.stderr
+
+
+def test_fuse_many_preserves_values_and_shares_subtree():
+    """``ArrayExpr._fuse_many`` fuses several lowered exprs in one pass: values
+    are unchanged, order/length preserved, and a subtree shared by several
+    consumers is kept once instead of duplicated into each (as per-operand
+    ``.fuse()`` would).  Inputs are lowered, matching ``.fuse()``'s contract."""
+    from dask._expr import _ExprSequence
+    from dask_array._blockwise import FusedBlockwise
+    from dask_array._collection import new_collection
+    from dask_array._expr import ArrayExpr
+
+    base = da.ones((40, 40), chunks=(20, 20)) * 3 + 1  # shared, multi-consumer
+    consumers = [base + i for i in range(4)] + [base * (i + 1) for i in range(4)]
+    lowered = [c.expr.simplify().lower_completely() for c in consumers]
+
+    fused = ArrayExpr._fuse_many(lowered)
+    assert len(fused) == len(consumers)
+    for expr, consumer in zip(fused, consumers):
+        assert_eq(new_collection(expr), consumer)
+
+    # A single expr fuses exactly as ``.fuse()`` does.
+    (one,) = ArrayExpr._fuse_many([lowered[0]])
+    assert one._name == lowered[0].fuse()._name
+
+    # Per-operand ``.fuse()`` folds a private copy of ``base`` into every
+    # consumer's FusedBlockwise; fusing together leaves the multi-dependent
+    # ``base`` un-inlined (materialized once), so fewer operands collapse to a
+    # single FusedBlockwise root.
+    n_shared_fused = sum(isinstance(f, FusedBlockwise) for f in fused)
+    n_per_operand_fused = sum(isinstance(e.fuse(), FusedBlockwise) for e in lowered)
+    assert n_shared_fused < n_per_operand_fused
