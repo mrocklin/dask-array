@@ -421,12 +421,25 @@ class FusedBlockwiseLayer:
         if maximal_bid is None:
             return None
         tm = e._task((e._name, *maximal_bid), maximal_bid)
-        sm = self._walk_sites(tm.args[0], tm.args[1], set(tm.args[2]))
-        if sm is None or len(set(sm)) != n_sites:
+        inkeys_m = tuple(tm.args[2])
+        sm = self._walk_sites(tm.args[0], tm.args[1], set(inkeys_m))
+        if sm is None or len(set(sm)) != n_sites or set(sm) != set(inkeys_m):
             return None
-        shared = _FusedSubgraph(tm.args[0], tm.args[1], tuple(sm))
+        # Order the slots by the maximal block's inkey order (``args[2]``), not the
+        # structural ``_walk_sites`` order. Both are permutations of the same
+        # distinct sites, but emitting in inkey order keeps the binary chunk's
+        # slot layout identical to the exact per-block paths (block-0 inkey order
+        # for distinct sources) — otherwise the two orders differ by hash seed and
+        # the layout is non-deterministic. ``projections[j]`` and ``sm[j]`` are the
+        # same structural site, so map each inkey to its projection through ``sm``.
+        site_of = {sm[j]: j for j in range(n_sites)}
+        ordered = [projections[site_of[ik]] for ik in inkeys_m]
+        shared = _FusedSubgraph(tm.args[0], tm.args[1], inkeys_m)
 
-        dep_slots = [block_slots(bid) for bid in product(*(range(n) for n in nb))]
+        def ordered_slots(bid):
+            return [(dep_i, tuple(bid[co] if kind == "bid" else co for kind, co in pj)) for dep_i, pj in ordered]
+
+        dep_slots = [ordered_slots(bid) for bid in product(*(range(n) for n in nb))]
         return shared, dep_names, dep_slots
 
     @staticmethod
