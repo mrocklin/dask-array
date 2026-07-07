@@ -401,6 +401,37 @@ def test_arg_reduction_chunk_uses_binary_records():
     assert not any(r[0].startswith(f"('{argchunk._name}',") for r in records)
 
 
+def test_map_overlap_lifts_block_id_seed_to_binary_records():
+    """A fused map_overlap block bakes its own ``block_id`` into the subgraph (the
+    ``_trim`` ``(block_id, numblocks)`` literal), so the block-independent fast
+    paths correctly decline. ``_seed_spec`` lifts that literal into a per-block
+    seed, making the fused layer binary — a guard against silently regressing back
+    onto the O(N) ``_slow_records`` path for stencil/overlap graphs."""
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    import json
+    from itertools import product
+
+    from dask_array._frisky.fused_blockwise import FusedBlockwiseLayer
+
+    y = da.ones((12, 12), chunks=(4, 4)).map_overlap(lambda b: b + 1, depth=1, boundary="none")
+    fb = [e for e in y._lowered_expr.walk() if type(e).__name__ == "FusedBlockwise"][0]
+
+    chunks, records, chunk_groups = y.__frisky_records_chunks__()
+    ops = [json.loads(m)["op"] for _, m, _ in chunk_groups]
+    assert "FusedBlockwise" in ops  # the fused trim went binary, not to plain records
+    assert not any(r[0].startswith(f"('{fb._name}',") for r in records)
+
+    # The block-independent exact paths decline (the baked block_id differs per
+    # block); the seed path handles it, emitting one (block_id, numblocks) seed.
+    layer = FusedBlockwiseLayer(fb)
+    assert layer._analytical_site_spec() is None
+    _shared, _dep_names, _dep_slots, seed_slots = layer._seed_spec()
+    nb = fb.numblocks
+    for bid, seeds in zip(product(*(range(n) for n in nb)), seed_slots):
+        assert seeds == [(bid, nb)]
+
+
 def test_xarray_rolling_sum_where_literal_uses_binary_records():
     if importlib.util.find_spec("dask_array._rust") is None:
         pytest.skip("requires Rust extension")

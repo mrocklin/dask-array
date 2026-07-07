@@ -100,18 +100,28 @@ class FusedBlockwiseLayer:
         fast = self._fast_spec()
         if fast is None:
             raise NotImplementedError
-        shared, dep_names, dep_slots = fast
         try:
-            from dask_array._frisky.base import _rust
+            rust = self._build_rust(fast)
         except ImportError as exc:
             raise NotImplementedError from exc
+        return rust.to_records_chunk()
+
+    def _build_rust(self, spec):
+        """Build the Rust ``FusedBlockwiseLayer`` from a fast spec
+        ``(shared, dep_names, dep_slots, seed_slots)``. ``seed_slots`` is ``[]``
+        for the common case (no lifted ``block_id`` literals) and one seed-value
+        list per output block otherwise."""
+        shared, dep_names, dep_slots, seed_slots = spec
+        from dask_array._frisky.base import _rust
+
         return _rust.FusedBlockwiseLayer(
             self.expr._name,
             shared,
             [int(n) for n in self.expr.numblocks],
             dep_names,
             dep_slots,
-        ).to_records_chunk()
+            seed_slots,
+        )
 
     def _slow_records(self):
         # ``task.dependencies`` is a frozenset, so ``deps`` order is not stable
@@ -128,14 +138,18 @@ class FusedBlockwiseLayer:
         fast = self._fast_spec()
         if fast is None:
             return None
-        shared, dep_names, dep_slots = fast
+        shared, dep_names, dep_slots, seed_slots = fast
         name = self.expr._name
         numblocks = self.expr.numblocks
         records = []
-        for bid, slots in zip(product(*(range(n) for n in numblocks)), dep_slots):
+        for i, (bid, slots) in enumerate(zip(product(*(range(n) for n in numblocks)), dep_slots)):
             dep_keys = [self._dep_key(dep_names, slot) for slot in slots]
             refs = [TaskRef(dep_key) for dep_key in dep_keys]
-            records.append((str((name, *bid)), shared, tuple(refs), _EMPTY_KWARGS, dep_keys))
+            # Lifted block_id seeds ride after the dep refs as plain values (not
+            # dependencies), matching the shared subgraph's inkeys order.
+            seeds = tuple(seed_slots[i]) if seed_slots else ()
+            args = tuple(refs) + seeds
+            records.append((str((name, *bid)), shared, args, _EMPTY_KWARGS, dep_keys))
         return records
 
     def _fast_spec(self):
@@ -153,8 +167,13 @@ class FusedBlockwiseLayer:
           as correctness fallbacks for shapes the projection can't model (a
           reversed axis and other non-index-preserving block maps). They read each
           block's real ``_task``, so they are O(blocks) but validate on probes so
-          they are no longer dominated by per-block canonical comparisons."""
-        return self._analytical_site_spec() or self._fast_spec_uniform() or self._site_based_spec()
+          they are no longer dominated by per-block canonical comparisons.
+        - ``_seed`` handles a subgraph that bakes its own ``block_id`` in as data
+          (map_overlap's trim, stencils, ``block_info``): it lifts each such
+          block-dependent int-literal into a per-block seed so the remaining
+          subgraph is block-independent. Tried last, since only shapes the others
+          decline reach it."""
+        return self._analytical_site_spec() or self._fast_spec_uniform() or self._site_based_spec() or self._seed_spec()
 
     def _fast_spec_uniform(self):
         """Shared fused callable + source mapping for the case where each output
@@ -199,7 +218,7 @@ class FusedBlockwiseLayer:
                 ]
                 for bid in product(*(range(n) for n in numblocks))
             ]
-            return shared, dep_names, dep_slots
+            return shared, dep_names, dep_slots, []
 
         # Contraction / non-broadcast fallback: read each block's source coords
         # exactly. Block-independence (canonical) is validated on a PROBE sample
@@ -235,7 +254,7 @@ class FusedBlockwiseLayer:
                 slots_by_label[label] = slot
             dep_slots.append([slots_by_label[label] for label in labels0])
 
-        return shared, dep_names, dep_slots
+        return shared, dep_names, dep_slots, []
 
     def _site_based_spec(self):
         """Fast-path spec that also admits a source read more than once per block.
@@ -316,7 +335,7 @@ class FusedBlockwiseLayer:
 
         if maximal is None:
             return None
-        return _FusedSubgraph(*maximal), dep_names, dep_slots
+        return _FusedSubgraph(*maximal), dep_names, dep_slots, []
 
     def _analytical_site_spec(self):
         """Analytical fast path: infer each input SITE's per-dimension coord
@@ -450,7 +469,173 @@ class FusedBlockwiseLayer:
             return [(dep_i, tuple(bid[co] if kind == "bid" else co for kind, co in pj)) for dep_i, pj in ordered]
 
         dep_slots = [ordered_slots(bid) for bid in product(*(range(n) for n in nb))]
-        return shared, dep_names, dep_slots
+        return shared, dep_names, dep_slots, []
+
+    def _seed_spec(self):
+        """Fast path for a fused subgraph that bakes its own ``block_id`` in as
+        data — map_overlap's ``_trim`` carries ``(block_id, numblocks)``; stencils
+        and ``block_info`` are the same shape. Such a subgraph is *not*
+        block-independent (the baked coordinate differs per block), so the other
+        derivations correctly bail. Here each block-dependent int-literal is
+        *lifted* into a per-block SEED: the shared subgraph carries a hole
+        (``TaskRef('__seed__', k)``) where the literal was, and ``_execute_subgraph``
+        fills it with the block's value — generated by arithmetic from the block
+        id, exactly like the source-coord projections. With the literals lifted the
+        remaining subgraph *is* block-independent and shareable.
+
+        Returns ``(shared, dep_names, dep_slots, seed_slots)`` or ``None``. Tried
+        last, so only shapes the other paths decline (i.e. block-id-bearing ones)
+        pay for it. Only int-structured literals are liftable; anything else (a
+        non-affine coordinate, a dict ``block_info``) falls through to
+        ``_slow_records``."""
+        e = self.expr
+        nb = e.numblocks
+        if not nb:
+            return None
+        dep_names = [d._name for d in e.dependencies()]
+        dep_idx = {name: i for i, name in enumerate(dep_names)}
+        zero = (0,) * len(nb)
+
+        t0 = e._task((e._name, *zero), zero)
+        if t0.func is not _execute_subgraph or len(t0.args) < 3:
+            return None
+        sites0 = self._walk_sites(t0.args[0], t0.args[1], set(t0.args[2]))
+        if not sites0:
+            return None
+        n_sites = len(sites0)
+        site_src = [k[0] for k in sites0]
+        if any(s not in dep_idx for s in site_src):
+            return None
+        proj = [[("const", int(c)) for c in k[1:]] for k in sites0]
+
+        # Candidate seeds: every int-structured *pure-data* arg of a canonical
+        # inner task (a bare callable/partial isn't int-structured, so it's never a
+        # candidate — its per-block instance identity is handled by the canonical
+        # tokenize check below, not by ``==``). Keyed by (canonical key, arg index).
+        canon0 = self._canonical(t0)
+        seed_val0 = {}
+        for ck, task in canon0[0].items():
+            for ai, arg in enumerate(task.args):
+                if self._pure_literal(arg) and self._lit_template(arg) is not None:
+                    seed_val0[(ck, ai)] = arg
+        seed_tmpl = {}  # (ck, ai) -> nested int template, for the ones that vary
+
+        # Infer source-coord AND seed projections by bumping one output dim.
+        for o in range(len(nb)):
+            if nb[o] <= 1:
+                continue
+            bid = list(zero)
+            bid[o] = 1
+            t = e._task((e._name, *bid), tuple(bid))
+            if t.func is not _execute_subgraph or len(t.args) < 3:
+                return None
+            sites = self._walk_sites(t.args[0], t.args[1], set(t.args[2]))
+            if sites is None or len(sites) != n_sites:
+                return None
+            for j in range(n_sites):
+                if sites[j][0] != site_src[j]:
+                    return None
+                base = tuple(int(c) for c in sites0[j][1:])
+                bump = tuple(int(c) for c in sites[j][1:])
+                for d, (cv, bv) in enumerate(zip(base, bump)):
+                    if bv != cv:
+                        if bv - cv == 1:
+                            proj[j][d] = ("bid", o)
+                        else:
+                            return None
+            canon = self._canonical(t)
+            if set(canon[0]) != set(canon0[0]) or canon[1] != canon0[1]:
+                return None
+            for (ck, ai), v0 in seed_val0.items():
+                task_c = canon[0].get(ck)
+                if task_c is None or ai >= len(task_c.args):
+                    return None
+                v = task_c.args[ai]
+                if v == v0:
+                    continue  # constant under this bump
+                if (ck, ai) not in seed_tmpl:
+                    seed_tmpl[(ck, ai)] = self._lit_template(v0)
+                seed_tmpl[(ck, ai)] = self._bump_template(seed_tmpl[(ck, ai)], v0, v, o)
+                if seed_tmpl[(ck, ai)] is None:
+                    return None
+
+        seeds = sorted(seed_tmpl)
+        if not seeds:
+            return None  # no lifted literal -> not our case; let the slow path run
+        projections = [(dep_idx[site_src[j]], proj[j]) for j in range(n_sites)]
+        if len({(dep_i, tuple(pj)) for dep_i, pj in projections}) != n_sites:
+            return None
+
+        def source_slots(bid):
+            return [(dep_i, tuple(bid[co] if kind == "bid" else co for kind, co in pj)) for dep_i, pj in projections]
+
+        # Validate on probes: block-independence *modulo* the lifted literals, and
+        # that the inferred source-coord and seed projections reproduce each block's
+        # exact reads and literal values.
+        hole = "__seed_hole__"
+        canon0_holed = self._hole_canonical(canon0, seeds, hole)
+        for bid in self._probe_blocks(nb):
+            t = e._task((e._name, *bid), bid)
+            if t.func is not _execute_subgraph or len(t.args) < 3:
+                return None
+            canon = self._canonical(t)
+            if self._hole_canonical(canon, seeds, hole) != canon0_holed:
+                return None
+            sites = self._walk_sites(t.args[0], t.args[1], set(t.args[2]))
+            if sites is None:
+                return None
+            actual = sorted((dep_idx[k[0]], tuple(int(c) for c in k[1:])) for k in sites)
+            if sorted(source_slots(bid)) != actual:
+                return None
+            for ck, ai in seeds:
+                if self._apply_template(seed_tmpl[(ck, ai)], bid) != canon[0][ck].args[ai]:
+                    return None
+
+        # Shared subgraph from a maximal block (source sites all distinct), with the
+        # lifted literals holed out to seed inkeys appended after the sources.
+        maximal_bid = None
+        for bid in product(*(range(n) for n in nb)):
+            if len({(dep_i, c) for dep_i, c in source_slots(bid)}) == n_sites:
+                maximal_bid = bid
+                break
+        if maximal_bid is None:
+            return None
+        tm = e._task((e._name, *maximal_bid), maximal_bid)
+        inkeys_m = tuple(tm.args[2])
+        sm = self._walk_sites(tm.args[0], tm.args[1], set(inkeys_m))
+        if sm is None or len(set(sm)) != n_sites or set(sm) != set(inkeys_m):
+            return None
+        site_of = {sm[j]: j for j in range(n_sites)}
+        src_inkeys = sorted(inkeys_m, key=lambda k: (str(k[0]), tuple(int(c) for c in k[1:])))
+        ordered = [projections[site_of[ik]] for ik in src_inkeys]
+
+        new_sub = dict(tm.args[0])
+        seed_keys = []
+        seed_templates = []
+        for si, (ck, ai) in enumerate(seeds):
+            seed_key = ("__seed__", si)
+            actual_key = self._actual_key(new_sub, ck)
+            if actual_key is None:
+                return None
+            task = new_sub[actual_key]
+            if ai >= len(task.args):
+                return None
+            new_args = list(task.args)
+            new_args[ai] = TaskRef(seed_key)
+            new_sub[actual_key] = self._rebuild_task(task, new_args)
+            seed_keys.append(seed_key)
+            seed_templates.append(seed_tmpl[(ck, ai)])
+
+        full_inkeys = tuple(src_inkeys) + tuple(seed_keys)
+        shared = _FusedSubgraph(new_sub, tm.args[1], full_inkeys)
+
+        def ordered_slots(bid):
+            return [(dep_i, tuple(bid[co] if kind == "bid" else co for kind, co in pj)) for dep_i, pj in ordered]
+
+        all_bids = list(product(*(range(n) for n in nb)))
+        dep_slots = [ordered_slots(bid) for bid in all_bids]
+        seed_slots = [[self._apply_template(tmpl, bid) for tmpl in seed_templates] for bid in all_bids]
+        return shared, dep_names, dep_slots, seed_slots
 
     @staticmethod
     def _walk_sites(subgraph, outkey, inkeys_set):
@@ -559,6 +744,125 @@ class FusedBlockwiseLayer:
     def _dep_key(dep_names, slot):
         dep_idx, coord = slot
         return str((dep_names[dep_idx], *coord))
+
+    # --- block_id seed lifting (used by ``_seed_spec``) --------------------
+
+    @staticmethod
+    def _pure_literal(arg):
+        """True if ``arg`` carries no ``TaskRef`` anywhere — a plain data value
+        (int, tuple, callable, dict of data, …). Only such args are candidates to
+        lift; anything referencing a dependency is wiring, not data."""
+        if isinstance(arg, TaskRef):
+            return False
+        if isinstance(arg, (list, tuple)):
+            return all(FusedBlockwiseLayer._pure_literal(a) for a in arg)
+        if isinstance(arg, dict):
+            return all(FusedBlockwiseLayer._pure_literal(a) for a in arg.values())
+        return True
+
+    @staticmethod
+    def _lit_template(value):
+        """A block-id projection *template* for an int-structured literal: the same
+        nested shape with each int leaf marked ``("const", v)``. ``None`` if the
+        literal isn't purely ints nested in tuples/lists (e.g. a callable, a string,
+        a dict) — those aren't liftable and the caller falls through."""
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return ("const", value)
+        if isinstance(value, (tuple, list)):
+            kind = "tuple" if isinstance(value, tuple) else "list"
+            children = [FusedBlockwiseLayer._lit_template(v) for v in value]
+            if any(c is None for c in children):
+                return None
+            return (kind, children)
+        return None
+
+    @staticmethod
+    def _bump_template(tmpl, v0, v, o):
+        """Refine ``tmpl`` (built from block-0 value ``v0``) given the value ``v`` at
+        the block with output dim ``o`` bumped by 1. An int leaf that rose by 1
+        starts tracking ``bid[o]``; one that stayed put stays constant; any other
+        delta (or a shape mismatch) is not an index-preserving projection and
+        returns ``None``."""
+        kind = tmpl[0]
+        if kind == "const":
+            if not isinstance(v, int) or isinstance(v, bool):
+                return None
+            if v == v0:
+                return tmpl
+            return ("bid", o) if v - v0 == 1 else None
+        if kind == "bid":
+            # Already tracks some dim; bumping ``o`` changes it iff that dim is ``o``.
+            if not isinstance(v, int) or isinstance(v, bool) or not isinstance(v0, int):
+                return None
+            expected = v0 + (1 if tmpl[1] == o else 0)
+            return tmpl if v == expected else None
+        # container
+        if not isinstance(v, (tuple, list)) or not isinstance(v0, (tuple, list)):
+            return None
+        children = tmpl[1]
+        if len(v) != len(children) or len(v0) != len(children):
+            return None
+        new_children = []
+        for c, x0, x in zip(children, v0, v):
+            nc = FusedBlockwiseLayer._bump_template(c, x0, x, o)
+            if nc is None:
+                return None
+            new_children.append(nc)
+        return (kind, new_children)
+
+    @staticmethod
+    def _apply_template(tmpl, bid):
+        """Materialize a seed template for output block ``bid``: ``const`` leaves
+        keep their value, ``bid`` leaves take ``bid[o]``. Rebuilds the same
+        tuple/list nesting the original literal had."""
+        kind = tmpl[0]
+        if kind == "const":
+            return tmpl[1]
+        if kind == "bid":
+            return bid[tmpl[1]]
+        parts = [FusedBlockwiseLayer._apply_template(c, bid) for c in tmpl[1]]
+        return tuple(parts) if kind == "tuple" else parts
+
+    @staticmethod
+    def _actual_key(subgraph, canon_key):
+        """The subgraph's real key whose canonical (name-only) form is
+        ``canon_key`` — internal keys canonicalize to ``(name,)``, unique within a
+        block, so this is a 1:1 inverse."""
+        for k in subgraph:
+            ck = (k[0],) if isinstance(k, tuple) else (k,)
+            if ck == canon_key:
+                return k
+        return None
+
+    @staticmethod
+    def _rebuild_task(task, new_args):
+        """A copy of ``task`` with its positional args replaced (func, key and
+        kwargs preserved). Embedded ``TaskRef``s in ``new_args`` register as
+        dependencies, so a holed literal becomes a real seed reference."""
+        from dask._task_spec import Task
+
+        return Task(task.key, task.func, *new_args, **(task.kwargs or {}))
+
+    @staticmethod
+    def _hole_canonical(canon, seeds, hole):
+        """``canon`` (a ``_canonical`` result) with the lifted-literal positions
+        blanked to a fixed sentinel, so two blocks compare equal iff they differ
+        *only* in those lifted literals (plus keys, already normalized)."""
+        cdict, cout = canon
+        by_key = {}
+        for ck, ai in seeds:
+            by_key.setdefault(ck, set()).add(ai)
+        holed = {}
+        for ck, task in cdict.items():
+            ais = by_key.get(ck)
+            if ais is None:
+                holed[ck] = task
+            else:
+                new_args = [hole if i in ais else a for i, a in enumerate(task.args)]
+                holed[ck] = FusedBlockwiseLayer._rebuild_task(task, new_args)
+        return holed, cout
 
     @staticmethod
     def _probe_blocks(numblocks):
