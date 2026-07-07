@@ -11,11 +11,11 @@ walk uses ``to_task_records``. ``values`` is the block grid flattened in C order
 to align with the Rust layer's row-major block iteration.
 
 ``FromMapBinaryLayer`` is the pure-Rust special case (see ``FromMap._frisky_layer``):
-one shared function across all blocks, with only binary-expressible per-block args
-(scalars, strings, int-tuples, lists). ``func`` is the shared block wrapper
-``_apply_args`` and ``kwargs`` binds the hoisted user function + its kwargs; the
-per-block ``block_args`` are ``(tag, payload)`` descriptors the Rust layer slots
-directly, so it emits a binary ``to_records_chunk``.
+one shared function across all blocks. ``func`` is the shared block wrapper
+``_apply_args_template`` and ``kwargs`` binds the hoisted user function, its kwargs,
+and any positional args uniform across blocks; the per-block ``block_args`` are
+``(tag, payload)`` descriptors for the args that VARY per block, which the Rust
+layer slots directly, so it emits a binary ``to_records_chunk``.
 """
 
 from __future__ import annotations

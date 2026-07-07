@@ -533,6 +533,13 @@ def _load_arr(block):
     return block.astype("int64")
 
 
+def _read_scaled(path, storage_options):
+    """A loader taking a POSITIONAL storage_options-style dict alongside the
+    varying path. When that dict is uniform across blocks it should be baked into
+    the shared pickled partial (once), not block the binary path."""
+    return np.full(5, len(path) * storage_options["scale"], dtype="int64")
+
+
 def _the_from_map(arr):
     """The single merged FromMap in a (lowered) collection's expression."""
     fms = [e for e in arr._lowered_expr.walk() if isinstance(e, FromMap)]
@@ -666,26 +673,78 @@ def test_binary_from_map_declines_numpy_scalar_args():
     assert_eq(arr, np.concatenate([np.full(5, v) for v in [1, 2, 3]]).astype("int64"))
 
 
+def test_uniform_positional_object_arg_is_baked_and_goes_binary():
+    """A positional arg that is UNIFORM across blocks but not slot-expressible (a
+    storage_options-style dict) is baked into the shared pickled partial (once), so
+    the layer still goes binary -- only the varying arg (the path) is slotted."""
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    so = {"scale": 10, "anon": False}
+    paths = ["a", "bb", "ccc"]
+    pieces = [da.from_delayed(dask.delayed(_read_scaled)(p, so), (5,), dtype="int64") for p in paths]
+    arr = da.concatenate(pieces)
+    fm = _the_from_map(arr)
+
+    assert isinstance(fm._frisky_layer().to_records_chunk(), bytes)  # baked -> binary
+    _chunks, _records, chunk_groups = arr.__frisky_records_chunks__()
+    assert fm._name in {name for name, _m, _u in chunk_groups}
+    assert _from_map_block_records(arr, fm) == []
+
+    # byte + dtype parity of the native (baked-template) graph vs legacy _layer.
+    from dask.core import flatten
+    from dask.local import get_sync
+
+    legacy, native = fm._layer(), fm._frisky_layer().to_dask_graph()
+    for key in flatten(fm.__dask_keys__()):
+        nblock, lblock = get_sync(native, key), get_sync(legacy, key)
+        np.testing.assert_array_equal(nblock, lblock)
+        assert nblock.dtype == lblock.dtype
+
+    assert_eq(arr, np.concatenate([np.full(5, len(p) * 10) for p in paths]).astype("int64"))
+
+
+def test_varying_nonexpressible_positional_arg_still_declines():
+    """An arg that BOTH varies per block AND isn't slot-expressible (a distinct
+    dict per block) has nothing to bake and nothing to slot -- so the layer still
+    declines to the faithful Python-tuple fallback."""
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    combos = [("a", 1), ("bb", 2), ("ccc", 3)]
+    pieces = [da.from_delayed(dask.delayed(_read_scaled)(p, {"scale": s}), (5,), dtype="int64") for p, s in combos]
+    arr = da.concatenate(pieces)
+    fm = _the_from_map(arr)
+    with pytest.raises(NotImplementedError):
+        fm._frisky_layer().to_records_chunk()  # varying dict: can't bake, can't slot
+    assert _from_map_block_records(arr, fm) != []
+    assert_eq(arr, np.concatenate([np.full(5, len(p) * s) for p, s in combos]).astype("int64"))
+
+
 def test_binary_from_map_executes_under_frisky(array_scheduler):
     """End-to-end: coalesced from_delayed concats that became a binary FromMap
-    compute correctly under the Frisky scheduler -- scalar args AND string
-    (filename) args, the latter exercising the v2 Str-slot grammar across both the
-    dask-array encoder and the Frisky decoder. Runs only on --scheduler=frisky
-    (needs both native extensions in one interpreter); the dask suite otherwise
-    exercises only _layer / to_dask_graph, never the wire."""
+    compute correctly under the Frisky scheduler -- scalar args, string (filename)
+    args (the v2 Str-slot grammar across both extensions), and a uniform positional
+    dict arg baked into the shared partial. Runs only on --scheduler=frisky (needs
+    both native extensions in one interpreter); the dask suite otherwise exercises
+    only _layer / to_dask_graph, never the wire."""
     if array_scheduler != "frisky":
         pytest.skip("requires --scheduler=frisky")
 
     scalars = da.concatenate([da.from_delayed(dask.delayed(_load)(v), (5,), dtype="int64") for v in [1, 2, 3]])
     names = ["a.npy", "bb.npy", "ccc.npy", "dddd.npy"]
     strings = da.concatenate([da.from_delayed(dask.delayed(_load_named)(n), (5,), dtype="int64") for n in names])
+    so = {"scale": 10, "anon": False}
+    paths = ["a", "bb", "ccc"]
+    baked = da.concatenate([da.from_delayed(dask.delayed(_read_scaled)(p, so), (5,), dtype="int64") for p in paths])
 
-    # Guard against a vacuous pass: both must actually produce a binary chunk (a
+    # Guard against a vacuous pass: all must actually produce a binary chunk (a
     # version-mismatched Frisky would fall back to Python records and still pass).
-    assert isinstance(_the_from_map(scalars)._frisky_layer().to_records_chunk(), bytes)
-    assert isinstance(_the_from_map(strings)._frisky_layer().to_records_chunk(), bytes)
+    for coll in (scalars, strings, baked):
+        assert isinstance(_the_from_map(coll)._frisky_layer().to_records_chunk(), bytes)
 
     np.testing.assert_array_equal(scalars.compute(), np.concatenate([np.full(5, v) for v in [1, 2, 3]]).astype("int64"))
     np.testing.assert_array_equal(
         strings.compute(), np.concatenate([np.full(5, _FAKE_FILES[n]) for n in names]).astype("int64")
+    )
+    np.testing.assert_array_equal(
+        baked.compute(), np.concatenate([np.full(5, len(p) * 10) for p in paths]).astype("int64")
     )

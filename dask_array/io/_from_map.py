@@ -77,7 +77,7 @@ def _match_block_shape(x, shape):
     ``(5,) -> (1, 5)``), which never reorders data; anything else -- a
     same-size-but-permuted shape -- would silently corrupt the block, so it is
     rejected. Shared by both from_map block bodies (``_map_block`` and
-    ``_apply_args``) so the contract can't drift between them."""
+    ``_apply_args_template``) so the contract can't drift between them."""
     shape = tuple(shape)
     xshape = getattr(x, "shape", None)
     if xshape is None:
@@ -102,13 +102,20 @@ def _map_block(func, value, shape, kwargs):
     return _match_block_shape(func(value, **kwargs), shape)
 
 
-def _apply_args(args, shape, *, _fn, _fkwargs):
-    """Binary-path block body: call the shared, hoisted function ``_fn`` with this
-    block's positional ``args`` (splatted) and the shared ``_fkwargs``, then match
-    the declared chunk ``shape``. ``_fn`` and ``_fkwargs`` are constant across the
-    layer and bound once (via the records-chunk partial, or the shared task
-    kwargs); only ``args`` / ``shape`` vary per block, and both are binary-grammar
-    values, which is what keeps this layer pure-Rust."""
+def _apply_args_template(varying, shape, *, _fn, _fkwargs, _template, _positions):
+    """Binary-path block body. Everything constant across the layer is baked into
+    the shared partial (pickled once): the hoisted function ``_fn``, its shared
+    ``_fkwargs``, and ``_template`` -- the full positional-arg list with the args
+    that are UNIFORM across blocks already in place and the varying positions left
+    as placeholders. ``varying`` carries this block's values for the varying
+    positions (``_positions``, in order); splice them in and call ``_fn``, then
+    match the declared chunk ``shape``. Only ``varying`` / ``shape`` differ per
+    block, and both are binary-grammar values -- which is what keeps this layer
+    pure-Rust even when some args (a storage_options dict, a config object) aren't
+    themselves expressible in the grammar."""
+    args = list(_template)
+    for pos, val in zip(_positions, varying):
+        args[pos] = val
     return _match_block_shape(_fn(*args, **(_fkwargs or {})), shape)
 
 
@@ -152,16 +159,22 @@ def _encode_arg(a):
     return None
 
 
-def _encode_call_args(args):
-    """The list of slot descriptors for a call's positional args, or ``None`` if
-    any single arg isn't binary-expressible."""
-    out = []
-    for a in args:
-        d = _encode_arg(a)
-        if d is None:
-            return None
-        out.append(d)
-    return out
+def _all_equal(col):
+    """True iff every element of ``col`` equals the first -- used to decide which
+    positional args are UNIFORM across blocks (bake into the shared partial) vs
+    VARYING (slot per block). Safe for values whose ``==`` doesn't return a plain
+    bool (ndarrays): identity short-circuits first, then a guarded ``==`` treats a
+    non-bool or raising result as 'not equal', so the arg is handled as varying."""
+    first = col[0]
+    for x in col[1:]:
+        if x is first:
+            continue
+        try:
+            if not bool(x == first):
+                return False
+        except Exception:
+            return False
+    return True
 
 
 class FromMap(IO):
@@ -212,14 +225,16 @@ class FromMap(IO):
 
     def _binary_frisky_layer(self):
         """The pure-Rust ``FromMapBinaryLayer`` when this is a coalesced-delayed
-        FromMap whose blocks share ONE function and carry only binary-expressible
-        args (scalars, strings, int-tuples, lists); otherwise ``None``.
+        FromMap whose blocks share ONE function; otherwise ``None``.
 
         Only the coalesced-from_delayed shape qualifies: ``func is _apply_call``,
         so each per-block value is a ``(fn, args, kwargs)`` call bundle. We hoist
-        the shared ``fn``/``kwargs`` (pickled once) and turn each block's ``args``
-        into slot descriptors. A direct ``da.from_map`` (arbitrary per-block value,
-        user ``func``) stays on the general ``FromMapLayer``."""
+        everything constant across the layer -- the shared ``fn``, its ``kwargs``,
+        and every positional arg that is UNIFORM across blocks -- into the shared
+        partial (pickled once). Only the positional args that VARY per block go
+        through the slot grammar, so they must be binary-expressible; an arg that
+        both varies AND isn't expressible has nowhere to go -> decline. A direct
+        ``da.from_map`` (user ``func``) stays on the general ``FromMapLayer``."""
         if self.operand("func") is not _apply_call or self.operand("kwargs"):
             return None
         values = self.operand("values")
@@ -229,8 +244,7 @@ class FromMap(IO):
         if not bundles or not all(isinstance(b, tuple) and len(b) == 3 for b in bundles):
             return None
         fn, fkwargs = bundles[0][0], bundles[0][2]
-        block_args = []
-        for f, args, kw in bundles:
+        for f, _args, kw in bundles:
             if f is not fn:
                 return None  # blocks call different functions -> can't hoist one
             try:
@@ -238,17 +252,34 @@ class FromMap(IO):
                     return None  # differing per-call kwargs across blocks
             except Exception:
                 return None  # non-comparable kwargs (e.g. an ndarray value)
-            descs = _encode_call_args(args)
-            if descs is None:
-                return None  # an arg the binary grammar can't hold
-            block_args.append(descs)
+        # Positional args must share arity to classify uniform-vs-varying by position.
+        arity = len(bundles[0][1])
+        if any(len(b[1]) != arity for b in bundles):
+            return None
+        # Each position is UNIFORM (bake into the template, pickled once) or VARYING
+        # (slot per block -- must be binary-expressible). ``template`` holds the
+        # baked args in place with ``None`` placeholders at the varying positions.
+        template = [None] * arity
+        positions = []
+        block_args = [[] for _ in bundles]
+        for i in range(arity):
+            col = [b[1][i] for b in bundles]
+            if _all_equal(col):
+                template[i] = col[0]  # uniform -> baked once
+                continue
+            descs = [_encode_arg(v) for v in col]
+            if any(d is None for d in descs):
+                return None  # varies AND not expressible -> decline
+            positions.append(i)
+            for slots, d in zip(block_args, descs):
+                slots.append(d)
 
         from dask_array._frisky.from_map import FromMapBinaryLayer
 
         return FromMapBinaryLayer(
             self._name,
-            _apply_args,
-            {"_fn": fn, "_fkwargs": dict(fkwargs)},
+            _apply_args_template,
+            {"_fn": fn, "_fkwargs": dict(fkwargs), "_template": template, "_positions": positions},
             block_args,
             [list(c) for c in chunks],
         )
