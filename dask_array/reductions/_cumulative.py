@@ -136,12 +136,13 @@ class CumReduction(ArrayExpr):
     def _frisky_layer(self):
         from dask_array._frisky.cumulative import CumReductionLayer
 
-        # The cumulative plan needs concrete chunk sizes. Unknown (nan) sizes
-        # can't be planned — decline so record generation falls back cleanly
-        # instead of the Rust layer raising a bare ValueError mid-walk. (Cumulative
-        # reductions over unknown-size arrays don't work on stock dask either.)
-        if any(math.isnan(s) for dim in self.array.chunks for s in dim):
-            raise NotImplementedError("cumulative reduction needs concrete chunk sizes")
+        # Unknown (nan) chunk sizes are fine: the sequential plan is fixed by the
+        # block *count* (numblocks); the one size use — the `extra` identity block's
+        # shape — is 1 along the reduction axis and otherwise only broadcasts, so
+        # the layer maps a nan size to 1. The generated graph mirrors stock dask's,
+        # so it runs exactly where stock dask's does (an empty *leading* block along
+        # the axis crashes both at runtime — a pre-existing sequential-scan limit,
+        # which the Blelloch path happens to sidestep).
         return CumReductionLayer(
             self._name,
             self.func,

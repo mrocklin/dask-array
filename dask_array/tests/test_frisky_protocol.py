@@ -314,24 +314,29 @@ def test_contractions_use_analytical_derivation():
     assert fbc and FusedBlockwiseLayer(fbc[0])._analytical_site_spec() is None
 
 
-def test_unknown_chunk_size_needing_layer_declines_cleanly():
-    """A layer that needs concrete sizes (cumulative) over unknown (nan) chunks
-    must decline with NotImplementedError — which the records walk catches and
-    falls back on — rather than a bare ValueError that would crash record
-    generation. Pins the decline contract the removed nan guard relies on."""
+def test_cumulative_over_unknown_chunks_uses_binary_records():
+    """A cumulative reduction over unknown (nan) chunk sizes generates a complete
+    binary records graph rather than declining. The sequential plan is fixed by
+    the block *count* (numblocks); the one place a size is used — the ``extra``
+    identity block's shape — is forced to 1 along the reduction axis and otherwise
+    only needs to broadcast, so an unknown size maps to 1 instead of crashing
+    ``int(nan)``. Record generation must complete without a bare-ValueError crash."""
     if importlib.util.find_spec("dask_array._rust") is None:
         pytest.skip("requires Rust extension")
     x = da.from_array(np.arange(20.0), chunks=5)
-    y = x[x > 7].cumsum(axis=0)  # unknown chunks; cumulative needs concrete sizes
+    y = x[x > 7].cumsum(axis=0)  # genuinely unknown (nan) chunk sizes
+    assert any(np.isnan(s) for dim in y.chunks for s in dim)
 
-    cum = [e for e in y._lowered_expr.walk() if type(e).__name__ == "CumReduction"]
-    assert cum
-    with pytest.raises(NotImplementedError):
-        cum[0]._frisky_layer()
+    cum = [e for e in y._lowered_expr.walk() if type(e).__name__ == "CumReduction"][0]
+    assert cum._frisky_layer().to_records_chunk()  # goes binary, no decline, no crash
 
-    # …and record generation still completes (declines to the adapter), not crash.
-    chunks, records, _ = y.__frisky_records_chunks__()
-    assert chunks or records
+    # Record generation completes and the CumReduction went binary — its group is
+    # present among the binary chunks and no CumReduction task fell to the plain
+    # records tail. (nan-chunk layers carry no JSON metadata, so match the layer
+    # name, not the op.)
+    chunks, records, chunk_groups = y.__frisky_records_chunks__()
+    assert cum._name in {name for name, _meta, _up in chunk_groups}
+    assert not any(r[0].startswith(f"('{cum._name}'") for r in records)
 
 
 def test_unknown_chunks_run_on_frisky_not_stock_dask():

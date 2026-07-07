@@ -11,6 +11,7 @@ sequential carry along the reduction axis.
 
 from __future__ import annotations
 
+import math
 from functools import partial
 
 import numpy as np
@@ -52,7 +53,12 @@ class CumReductionLayer(Layer):
             x_name,
             int(axis),
             [int(n) for n in numblocks],
-            [[int(c) for c in dim] for dim in chunks],
+            # Chunk sizes feed only the `extra` identity block's shape, which is 1
+            # along the reduction axis and otherwise just broadcasts against real
+            # block data — so an unknown (nan) size can become 1 rather than crash
+            # `int(nan)`. The plan itself never depended on sizes, only on the fixed
+            # block count.
+            [[1 if math.isnan(c) else int(c) for c in dim] for dim in chunks],
         )
 
 
