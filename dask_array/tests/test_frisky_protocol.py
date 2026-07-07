@@ -339,6 +339,22 @@ def test_cumulative_over_unknown_chunks_uses_binary_records():
     assert not any(r[0].startswith(f"('{cum._name}'") for r in records)
 
 
+def test_blelloch_cumulative_uses_binary_records():
+    """The Blelloch parallel-scan cumulative (``method="blelloch"``) has a native
+    binary layer — the preop batches, the upsweep/downsweep combine tree, and the
+    prefix-scan outputs all emit as one binary chunk instead of running on the
+    ``GraphRecordsLayer`` adapter."""
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    y = da.cumsum(da.ones((40,), chunks=5), axis=0, method="blelloch")  # 8 axis chunks
+    bl = [e for e in y._lowered_expr.walk() if type(e).__name__ == "CumReductionBlelloch"][0]
+    assert bl._frisky_layer().to_records_chunk()  # binary, not the adapter
+
+    chunks, records, chunk_groups = y.__frisky_records_chunks__()
+    assert bl._name in {name for name, _meta, _up in chunk_groups}
+    assert not any(r[0].startswith(f"('{bl._name}'") for r in records)
+
+
 def test_unknown_chunks_run_on_frisky_not_stock_dask():
     """Unknown (nan) chunk *sizes* no longer force the whole graph to stock dask.
     Records are keyed by block coordinate and numblocks is known even when sizes

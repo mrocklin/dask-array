@@ -21,6 +21,7 @@ use pyo3::prelude::*;
 
 mod arange;
 mod arg_chunk;
+mod blelloch;
 mod blocks;
 mod blockwise;
 mod broadcast;
@@ -52,7 +53,7 @@ mod stack;
 /// coordinate on is the binary records grammar (`common::RECORDS_PROTOCOL_VERSION`
 /// ↔ Frisky's `records_proto::CHUNK_GRAMMAR_VERSION`), which only moves when the
 /// chunk byte-grammar changes — not when a layer is added.
-const NATIVE_BUILD_GENERATION: usize = 32;
+const NATIVE_BUILD_GENERATION: usize = 33;
 
 #[pyfunction]
 fn native_build_generation() -> usize {
@@ -65,6 +66,7 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(native_build_generation, m)?)?;
     m.add_class::<arange::ArangeLayer>()?;
     m.add_class::<arg_chunk::ArgChunkLayer>()?;
+    m.add_class::<blelloch::CumReductionBlellochLayer>()?;
     m.add_class::<blocks::BlocksLayer>()?;
     m.add_class::<blockwise::BlockwiseLayer>()?;
     m.add_class::<broadcast::BroadcastLayer>()?;

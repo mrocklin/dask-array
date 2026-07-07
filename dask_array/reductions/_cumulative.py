@@ -295,6 +295,22 @@ class CumReductionBlelloch(ArrayExpr):
         carry = 3 * (k - 1) * (x.nbytes / n) if n else 0.0
         return TransferBytes(carry, 2 * x.nbytes + carry)
 
+    def _frisky_layer(self):
+        from dask_array._frisky.blelloch import CumReductionBlellochLayer
+
+        # The Blelloch plan is fixed by the block count along the axis; it never
+        # uses chunk sizes, so unknown (nan) sizes are fine.
+        return CumReductionBlellochLayer(
+            self._name,
+            self.func,
+            self.preop,
+            self.binop,
+            self.axis,
+            self.dtype,
+            self.array._name,
+            self.array.numblocks,
+        )
+
     def _layer(self):
         import builtins as py_builtins
 
