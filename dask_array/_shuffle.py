@@ -381,6 +381,12 @@ class Shuffle(ArrayExpr):
     def _frisky_layer(self):
         from dask_array._frisky import ShuffleLayer
 
+        # The shuffle plan needs concrete chunk sizes (it maps element indices to
+        # blocks). Unknown (nan) sizes can't be planned — decline so the walk
+        # falls back to the generic adapter (or, if the adapter can't either,
+        # stock dask), instead of the Rust layer raising a bare ValueError.
+        if any(math.isnan(s) for chunks in (self.array.chunks, self._new_chunks) for dim in chunks for s in dim):
+            raise NotImplementedError("shuffle needs concrete chunk sizes")
         return ShuffleLayer(
             self._name,
             self.array._name,

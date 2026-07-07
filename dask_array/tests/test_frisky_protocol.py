@@ -283,6 +283,24 @@ def test_repeated_operand_fused_blockwise_uses_binary_records(label, build):
     assert isinstance(layer.to_records_chunk(), bytes)
 
 
+def test_unknown_chunks_run_on_frisky_not_stock_dask():
+    """Unknown (nan) chunk *sizes* no longer force the whole graph to stock dask.
+    Records are keyed by block coordinate and numblocks is known even when sizes
+    are not, so a boolean-mask graph is fully static and generates a complete
+    records graph — only ops that truly need concrete sizes decline per-layer."""
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+
+    x = da.from_array(np.arange(20.0), chunks=5)
+    y = x[x > 7] + 1
+    assert any(np.isnan(s) for dim in y.chunks for s in dim)  # genuinely unknown sizes
+
+    y._check_frisky_supported()  # no longer raises on nan chunks
+
+    chunks, records, _chunk_groups = y.__frisky_records_chunks__()
+    assert chunks or records  # a real graph was generated, not a stock-dask fallback
+
+
 def test_xarray_rolling_sum_where_literal_uses_binary_records():
     if importlib.util.find_spec("dask_array._rust") is None:
         pytest.skip("requires Rust extension")

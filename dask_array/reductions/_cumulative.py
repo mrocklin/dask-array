@@ -136,6 +136,12 @@ class CumReduction(ArrayExpr):
     def _frisky_layer(self):
         from dask_array._frisky.cumulative import CumReductionLayer
 
+        # The cumulative plan needs concrete chunk sizes. Unknown (nan) sizes
+        # can't be planned — decline so record generation falls back cleanly
+        # instead of the Rust layer raising a bare ValueError mid-walk. (Cumulative
+        # reductions over unknown-size arrays don't work on stock dask either.)
+        if any(math.isnan(s) for dim in self.array.chunks for s in dim):
+            raise NotImplementedError("cumulative reduction needs concrete chunk sizes")
         return CumReductionLayer(
             self._name,
             self.func,

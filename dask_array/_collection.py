@@ -311,8 +311,10 @@ class Array(DaskMethodsMixin):
     def _check_frisky_supported(self):
         if isinstance(self._meta, np.ma.MaskedArray):
             raise NotImplementedError("masked arrays use the regular dask graph path")
-        if any(math.isnan(s) for dim in self.chunks for s in dim):
-            raise NotImplementedError("unknown chunks use the regular dask graph path")
+        # Unknown (nan) chunk *sizes* are fine on the records path: records are
+        # keyed by block coordinate, and numblocks is known even when sizes are
+        # not, so the graph is fully static (boolean masks, unique, argwhere).
+        # Only tasks that need concrete sizes fail, and those decline per-layer.
         from dask_array._reshape import ReshapeLowered
         from dask_array.reductions._cumulative import CumReduction
 
