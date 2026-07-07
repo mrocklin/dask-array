@@ -357,6 +357,45 @@ def _pass_extra_kwargs(func, keys, *args, **kwargs):
     return func(*args[len(keys) :], **kwargs)
 
 
+class _BlockwiseDepLookup:
+    """Reconstruct per-block ``ArrayValuesDep`` values from the output block
+    coordinate on the Frisky binary-records path.
+
+    ``block_info`` (and other ``ArrayValuesDep`` extras) reach a task as one
+    arbitrary Python object per block — a nested dict for ``block_info`` — which
+    the binary records grammar can only carry as an opaque literal, forcing the
+    layer off the binary path onto O(tasks) Python records. Instead the layer
+    emits the block coordinate as an int-tuple slot (which the grammar *does*
+    express) and binds the whole ``{coord: value}`` mapping here once. At call
+    time we swap each such positional argument (currently the coordinate) for its
+    looked-up value before invoking the wrapped function, so the wrapped call sees
+    exactly what the plain dask path would have passed. The mapping is shared per
+    layer (pickled once), so client-side graph generation stays O(1) Python objects
+    — the tradeoff being that the whole mapping ships to every worker running the
+    layer, rather than each block's value going only to its own worker as the
+    per-task-literal records did. That is the right call for the small ``block_info``
+    dicts this targets; a layer with a huge per-block value would want the old path.
+
+    ``lookups`` maps an argument position (as seen by ``func``) to its
+    ``{coord_tuple: value}`` dict.
+    """
+
+    __slots__ = ("func", "lookups")
+
+    def __init__(self, func, lookups):
+        self.func = func
+        self.lookups = lookups
+
+    def __call__(self, *args, **kwargs):
+        args = list(args)
+        for pos, mapping in self.lookups.items():
+            args[pos] = mapping[tuple(args[pos])]
+        return self.func(*args, **kwargs)
+
+    def __reduce__(self):
+        return (_BlockwiseDepLookup, (self.func, self.lookups))
+
+
 def apply_and_enforce(*args, **kwargs):
     """Apply a function, and enforce the output.ndim to match expected_ndim
 

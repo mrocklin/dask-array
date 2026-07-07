@@ -22,7 +22,7 @@ from dask_array._core_utils import (
 from dask_array._utils import meta_from_array
 from dask.blockwise import blockwise as core_blockwise
 from dask.delayed import unpack_collections
-from dask.layers import ArrayBlockwiseDep
+from dask.layers import ArrayBlockwiseDep, ArrayValuesDep
 from dask.tokenize import TokenizationError, _tokenize_deterministic
 from dask.utils import SerializableLock, cached_property, funcname
 
@@ -411,6 +411,11 @@ class Blockwise(ArrayExpr):
         out_numblocks = tuple(len(c) for c in self.chunks)
 
         args = []
+        # ArrayValuesDep args (e.g. block_info) carry one arbitrary Python value
+        # per block that the binary grammar can't express as a slot; we emit the
+        # block coord instead and bind the {coord: value} map into a lookup shim.
+        # Keyed by the arg's position in ``func``'s call (== index in ``args``).
+        arg_lookups = {}
         for arg, ind in toolz.partition(2, self.args):
             if ind is None:
                 arg = normalize_arg(arg)
@@ -438,7 +443,7 @@ class Blockwise(ArrayExpr):
                 if len(ind) != len(nb):
                     raise NotImplementedError("index does not match ArrayBlockwiseDep ndim")
 
-                dep_values = []
+                dep_coords = []
                 for output_block_id in product(*[range(n) for n in out_numblocks]):
                     output_location = dict(zip(self.out_ind, output_block_id))
                     dep_block_id = []
@@ -449,8 +454,19 @@ class Blockwise(ArrayExpr):
                             dep_block_id.append(output_location[label])
                         else:
                             raise NotImplementedError("contracted ArrayBlockwiseDep dimension")
-                    dep_values.append(arg[tuple(dep_block_id)])
-                args.append(("blockwise_dep", dep_values))
+                    dep_coords.append(tuple(dep_block_id))
+                if isinstance(arg, ArrayValuesDep):
+                    # Per-block value is arbitrary (block_info's nested dict,
+                    # map_overlap trim's (block_id, numblocks) tuple) — not a binary
+                    # slot. Emit the block coord (an int tuple, which IS expressible)
+                    # and bind the {coord: value} map into the lookup shim so the
+                    # layer still goes binary.
+                    arg_lookups[len(args)] = {c: arg[c] for c in set(dep_coords)}
+                    args.append(("blockwise_dep", dep_coords))
+                else:
+                    # ArrayBlockIdDep etc.: the per-block value already IS the block
+                    # coord (a plain int tuple), so it expresses directly.
+                    args.append(("blockwise_dep", [arg[c] for c in dep_coords]))
             else:
                 raise NotImplementedError("ArrayBlockwiseDep argument")
 
@@ -462,8 +478,18 @@ class Blockwise(ArrayExpr):
                 raise NotImplementedError("dask collection in a keyword argument")
             kwargs[k] = v
 
+        func = self.func
+        if arg_lookups:
+            from dask_array._core_utils import _BlockwiseDepLookup
+
+            # Wrap here so _BlockwiseDepLookup sits *inside* any _BlockwiseBoundArgs
+            # that BlockwiseLayer adds for non-scalar literals: bound-args restores
+            # the full original-position arg list before calling in, which is what
+            # keeps arg_lookups' positions valid.
+            func = _BlockwiseDepLookup(func, arg_lookups)
+
         numblocks = tuple(len(c) for c in self.chunks)
-        return BlockwiseLayer(self._name, self.func, numblocks, out_ind, tuple(args), kwargs)
+        return BlockwiseLayer(self._name, func, numblocks, out_ind, tuple(args), kwargs)
 
     def _lower(self):
         if self.align_arrays:

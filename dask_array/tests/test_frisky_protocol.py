@@ -776,6 +776,68 @@ def test_map_overlap_trim_blockwise_dep_uses_native_records(monkeypatch):
     np.testing.assert_array_equal(y.compute(scheduler="synchronous"), np.arange(12) + 1)
 
 
+def _blockinfo_block(block, block_info=None):
+    # A block_info consumer shaped like pipeline/store.py's day writer: it reads
+    # the output chunk-location off block_info and folds it into the result.
+    loc = block_info[None]["chunk-location"][0]
+    return block + loc
+
+
+def test_block_info_map_blocks_uses_binary_records(monkeypatch):
+    """``map_blocks`` with a ``block_info=`` consumer must ride the binary records
+    path. ``block_info`` arrives as an ``ArrayValuesDep`` whose per-block value is a
+    nested dict — not expressible as a binary slot on its own — so we emit the block
+    coord as an ``IntTuple`` and bind the ``{coord: block_info}`` map into a lookup
+    shim. ``block_id=`` (a plain int tuple) already went binary; this closes the
+    ``block_info`` gap that left the pipeline's day writer generating Python task
+    records."""
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+
+    x = da.from_array(np.arange(24.0).reshape(6, 4), chunks=(2, 4))
+    y = x.map_blocks(_blockinfo_block, dtype=x.dtype)
+
+    expr = y._lowered_expr
+    bw = [e for e in expr.walk() if type(e).__name__ == "Blockwise"][0]
+    assert bw._frisky_layer().to_records_chunk()  # goes binary, no decline
+
+    # No task for the Blockwise layer falls to the plain records tail — it is fully
+    # binary — and nothing hits the stock-dask adapter.
+    chunks, records, chunk_groups = y.__frisky_records_chunks__()
+    assert not any(r[0].startswith(f"('{bw._name}'") for r in records)
+    assert _fallback_expr_counts(monkeypatch, y) == {}
+
+    # The native layer's own expansion (which drives the binary records) reconstructs
+    # each block's block_info through _BlockwiseDepLookup and matches the stock-dask
+    # graph block for block. Exercising to_dask_graph here covers the shim's runtime
+    # in the default (non-Frisky) test env, where ``compute`` would otherwise route
+    # around it through the stock ``_layer``.
+    dep_graph = dict(x.__dask_graph__())
+    legacy_graph = bw._layer()
+    native_graph = bw._frisky_layer().to_dask_graph()
+    for key in flatten(bw.__dask_keys__()):
+        expected = get_sync({**dep_graph, **legacy_graph}, key)
+        actual = get_sync({**dep_graph, **native_graph}, key)
+        np.testing.assert_array_equal(actual, expected)
+
+    # And it still computes the right thing (chunk-location folded into each block).
+    expected = np.arange(24.0).reshape(6, 4)
+    expected[2:4] += 1
+    expected[4:6] += 2
+    np.testing.assert_array_equal(y.compute(scheduler="synchronous"), expected)
+
+
+def test_block_info_map_blocks_binary_records_end_to_end(array_scheduler):
+    """The same block_info consumer computes correctly through the real Frisky
+    records submission path (not just the synchronous graph)."""
+    x = da.from_array(np.arange(24.0).reshape(6, 4), chunks=(2, 4))
+    y = x.map_blocks(_blockinfo_block, dtype=x.dtype)
+    expected = np.arange(24.0).reshape(6, 4)
+    expected[2:4] += 1
+    expected[4:6] += 2
+    np.testing.assert_array_equal(y.compute(), expected)
+
+
 def test_array_slice_blockwise_dep_preserves_tuple_records(monkeypatch):
     if importlib.util.find_spec("dask_array._rust") is None:
         pytest.skip("requires Rust extension")
