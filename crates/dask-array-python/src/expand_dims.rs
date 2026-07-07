@@ -1,7 +1,11 @@
 //! Dimension expansion layer (expand_dims).
 //!
-//! Each output block is `getitem(input_block, indexer)` where `indexer` is the
-//! same for every block (shared literal, `ArgSlot::Literal(0)`).
+//! Each output block is `func(input_block, axes)` -- `func` is `np.expand_dims`
+//! and `axes` is the sorted expansion positions, carried as a shared
+//! `ArgSlot::IntTuple` (a plain tuple of ints). Emitting the axes as an int
+//! tuple rather than an opaque `None`-bearing indexer literal is what lets the
+//! whole layer serialize to a binary records chunk instead of falling back to
+//! per-task records.
 //!
 //! The output block coord is the input coord with `0` inserted at each of the
 //! sorted expansion `axes`; equivalently, the input coord is the output coord
@@ -19,8 +23,6 @@ pub struct ExpandDimsLayer {
     input_name: String,
     func: Py<PyAny>,
     kwargs: Py<PyAny>,
-    /// The shared indexer tuple (one per layer, same for every block).
-    indexer: Py<PyAny>,
     /// Block counts of the INPUT array (output has 1 block on each new axis).
     input_numblocks: Vec<usize>,
     /// Sorted expansion axes (positions in the OUTPUT coordinate).
@@ -35,7 +37,6 @@ impl ExpandDimsLayer {
         input_name: String,
         func: Py<PyAny>,
         kwargs: Py<PyAny>,
-        indexer: Py<PyAny>,
         input_numblocks: Vec<usize>,
         axes: Vec<usize>,
     ) -> Self {
@@ -44,7 +45,6 @@ impl ExpandDimsLayer {
             input_name,
             func,
             kwargs,
-            indexer,
             input_numblocks,
             axes,
         }
@@ -68,7 +68,7 @@ impl ExpandDimsLayer {
     ///
     /// Iterates input blocks in C order. For each input coord:
     /// - output coord = input coord with `0` inserted at each axis in `self.axes`.
-    /// - slots = [Dep{input, input_coord}, Literal(0) (the indexer)]
+    /// - slots = [Dep{input, input_coord}, IntTuple(axes)]
     fn expand(&self) -> Expanded<'_> {
         let in_ndim = self.input_numblocks.len();
         let total: usize = if in_ndim == 0 {
@@ -82,6 +82,9 @@ impl ExpandDimsLayer {
 
         // For each output dimension, mark whether it's an expansion axis.
         let axes_set: Vec<bool> = (0..out_ndim).map(|i| self.axes.contains(&i)).collect();
+        // The `axis` argument to `np.expand_dims`: same tuple of ints for every
+        // block, cloned into each task's IntTuple slot.
+        let axes_i64: Vec<i64> = self.axes.iter().map(|&a| a as i64).collect();
 
         for _ in 0..total {
             // Build output coord: walk output dims, inserting 0 at expansion
@@ -107,8 +110,8 @@ impl ExpandDimsLayer {
                         name_idx: 0,
                         coord: in_coord.clone(),
                     },
-                    // literals[0] is the shared indexer tuple
-                    ArgSlot::Literal(0),
+                    // the shared `axis` tuple for np.expand_dims
+                    ArgSlot::IntTuple(axes_i64.clone()),
                 ],
             });
 
@@ -126,7 +129,7 @@ impl ExpandDimsLayer {
             names: vec![&self.name],
             funcs: vec![&self.func],
             kwargs: &self.kwargs,
-            literals: std::slice::from_ref(&self.indexer),
+            literals: &[],
             dep_names: std::slice::from_ref(&self.input_name),
             tasks,
         }

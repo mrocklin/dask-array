@@ -9,15 +9,14 @@ import numpy as np
 from dask_array._new_collection import new_collection
 from dask._task_spec import Task, TaskRef
 from dask_array._expr import ArrayExpr
-from dask_array._chunk import getitem
 
 
 class ExpandDims(ArrayExpr):
     """Dimension expansion expression.
 
-    Adds new axes of size 1 at specified positions using numpy indexing with None.
-    This is more efficient than reshape for dimension expansion and integrates
-    better with slice pushdown optimizations.
+    Adds new axes of size 1 at specified positions via ``np.expand_dims`` on
+    each block. This is more efficient than reshape for dimension expansion and
+    integrates better with slice pushdown optimizations.
 
     Parameters
     ----------
@@ -47,15 +46,8 @@ class ExpandDims(ArrayExpr):
     def _name(self):
         return f"expand-dims-{self.deterministic_token}"
 
-    @functools.cached_property
-    def _indexer(self):
-        """Build indexer tuple with None at expansion axes."""
-        out_ndim = self.array.ndim + len(self.axes)
-        return tuple(None if i in self.axes else slice(None) for i in range(out_ndim))
-
     def _layer(self) -> dict:
-        indexer = self._indexer
-        axes = sorted(self.axes)
+        axes = tuple(sorted(self.axes))
         input_name = self.array._name
 
         dsk = {}
@@ -66,7 +58,7 @@ class ExpandDims(ArrayExpr):
             for ax in axes:
                 out_block_id.insert(ax, 0)
             out_key = (self._name,) + tuple(out_block_id)
-            dsk[out_key] = Task(out_key, getitem, TaskRef(in_key), indexer)
+            dsk[out_key] = Task(out_key, np.expand_dims, TaskRef(in_key), axes)
 
         return dsk
 
@@ -77,8 +69,7 @@ class ExpandDims(ArrayExpr):
         return ExpandDimsLayer(
             name=self._name,
             input_name=self.array._name,
-            func=getitem,
-            indexer=self._indexer,
+            func=np.expand_dims,
             input_numblocks=self.array.numblocks,
             axes=sorted(self.axes),
         )

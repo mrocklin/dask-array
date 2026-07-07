@@ -448,6 +448,47 @@ def test_gufunc_leaf_uses_binary_records(multi):
     assert not any(r[0].startswith(f"('{leaf._name}'") for r in records)
 
 
+@pytest.mark.parametrize(
+    "shape, chunks_spec, axis",
+    [
+        ((8, 4), (4, 4), 1),
+        ((8, 4), (4, 2), (0, 3)),
+        ((12,), (4,), 0),
+        ((6, 6), (3, 3), (0, 2, 4)),
+    ],
+)
+def test_expand_dims_uses_binary_records(shape, chunks_spec, axis):
+    """expand_dims carries its expansion positions as an int-tuple ``axis`` slot
+    for ``np.expand_dims`` rather than an opaque ``None``-bearing getitem indexer
+    (a ``Literal`` the binary grammar can't express), so the layer emits one
+    records chunk instead of N Python tuples -- and still matches numpy."""
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    import json
+
+    base = np.arange(int(np.prod(shape)), dtype="f8").reshape(shape)
+    x = da.from_array(base, chunks=chunks_spec)
+    y = da.expand_dims(x, axis)
+
+    chunks, records, chunk_groups = y.__frisky_records_chunks__()
+    ops = [json.loads(m)["op"] for _, m, _ in chunk_groups]
+    assert "ExpandDims" in ops  # went binary, not to plain records
+    ed = [e for e in y._lowered_expr.walk() if type(e).__name__ == "ExpandDims"][0]
+    assert not any(r[0].startswith(f"('{ed._name}',") for r in records)
+
+    # native records graph is value-identical to the legacy graph, and to numpy.
+    dep_graph = {}
+    for dep in ed.dependencies():
+        dep_graph.update(dict(dep.__dask_graph__()))
+    legacy_graph = ed._layer()
+    native_graph = ed._frisky_layer().to_dask_graph()
+    for key in flatten(ed.__dask_keys__()):
+        expected = get_sync({**dep_graph, **legacy_graph}, key)
+        actual = get_sync({**dep_graph, **native_graph}, key)
+        np.testing.assert_array_equal(actual, expected)
+    np.testing.assert_array_equal(np.asarray(y), np.expand_dims(base, axis))
+
+
 def test_map_overlap_lifts_block_id_seed_to_binary_records():
     """A fused map_overlap block bakes its own ``block_id`` into the subgraph (the
     ``_trim`` ``(block_id, numblocks)`` literal), so the block-independent fast
