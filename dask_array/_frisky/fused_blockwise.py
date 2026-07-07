@@ -425,16 +425,26 @@ class FusedBlockwiseLayer:
         sm = self._walk_sites(tm.args[0], tm.args[1], set(inkeys_m))
         if sm is None or len(set(sm)) != n_sites or set(sm) != set(inkeys_m):
             return None
-        # Order the slots by the maximal block's inkey order (``args[2]``), not the
-        # structural ``_walk_sites`` order. Both are permutations of the same
-        # distinct sites, but emitting in inkey order keeps the binary chunk's
-        # slot layout identical to the exact per-block paths (block-0 inkey order
-        # for distinct sources) — otherwise the two orders differ by hash seed and
-        # the layout is non-deterministic. ``projections[j]`` and ``sm[j]`` are the
+        # Order the sites by a stable key — source name, then the maximal block's
+        # source-block coord — so the emitted per-block slot/dep layout is
+        # deterministic across processes. The maximal block's raw inkey order
+        # (``args[2]``) is hash-seed-dependent whenever a source appears at more
+        # than one site (a Gram matrix's maximal block reads the source twice);
+        # ordering by inkey only pinned the distinct-source case (maximal block =
+        # block 0). inkeys and slots reorder together, so the ``_execute_subgraph``
+        # seed<->ref pairing is preserved; ``projections[j]`` and ``sm[j]`` are the
         # same structural site, so map each inkey to its projection through ``sm``.
+        #
+        # (This pins the decoded slot layout only. The shared subgraph carried as
+        # the task func still pickles in hash-dependent order — a pre-existing
+        # property of *every* fused chunk, from the frozenset deps inside the inner
+        # Tasks — so the raw chunk *bytes* are not byte-stable across processes.
+        # That is harmless: dedup and completeness key on record keys, and nothing
+        # consumes chunk bytes by identity.)
         site_of = {sm[j]: j for j in range(n_sites)}
-        ordered = [projections[site_of[ik]] for ik in inkeys_m]
-        shared = _FusedSubgraph(tm.args[0], tm.args[1], inkeys_m)
+        inkeys = sorted(inkeys_m, key=lambda k: (str(k[0]), tuple(int(c) for c in k[1:])))
+        ordered = [projections[site_of[ik]] for ik in inkeys]
+        shared = _FusedSubgraph(tm.args[0], tm.args[1], tuple(inkeys))
 
         def ordered_slots(bid):
             return [(dep_i, tuple(bid[co] if kind == "bid" else co for kind, co in pj)) for dep_i, pj in ordered]

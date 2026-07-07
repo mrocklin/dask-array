@@ -224,19 +224,18 @@ def test_contracted_einsum_fused_blockwise_binary_chunk_tracks_remapped_deps():
     fused = y._lowered_expr.dependencies()[0].dependencies()[0]
     a_dep, b_dep = fused.dependencies()
     a_source, b_source = a_dep._name, b_dep._name
-    block0_task = fused._task((fused._name, 0, 0, 0, 0), (0, 0, 0, 0))
-    slot_source_order = [key[0] for key in block0_task.args[2]]
     assert not any(record[0].startswith(f"('{fused._name}',") for record in records)
     assert set(dep_names) == {a_source, b_source}
     assert len(tasks) == 36
     for name, coord, compute, slots in tasks:
         assert name == fused._name
         assert compute[0] == "call"
-        expected_by_source = {
-            a_source: ("dep", a_source, (coord[0], coord[1], coord[3])),
-            b_source: ("dep", b_source, (coord[0], coord[3], coord[2])),
+        # The slot *order* is a deterministic implementation detail (sites are
+        # ordered by (source, coord)); verify the coord remapping as a set.
+        assert set(slots) == {
+            ("dep", a_source, (coord[0], coord[1], coord[3])),
+            ("dep", b_source, (coord[0], coord[3], coord[2])),
         }
-        assert slots == tuple(expected_by_source[source_name] for source_name in slot_source_order)
 
 
 @pytest.mark.parametrize(
@@ -281,6 +280,58 @@ def test_repeated_operand_fused_blockwise_uses_binary_records(label, build):
 
     # (2) Engages the binary encoder (bytes, not a NotImplementedError fall-through).
     assert isinstance(layer.to_records_chunk(), bytes)
+
+
+def test_contractions_use_analytical_derivation():
+    """matmul / Gram / transpose+self engage the O(1)-per-block analytical
+    projection derivation, not the O(N) per-block exact fallback — a guard against
+    a silent perf regression back onto per-block ``_task()``. The analytical slots
+    match the value-verified exact ``_site_based_spec`` (as per-block dep sets),
+    and a fused block that reads one source at two always-coincident sites
+    (``a*b+a``) correctly bails to the exact path."""
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    from dask_array._frisky.fused_blockwise import FusedBlockwiseLayer
+
+    a = da.from_array(np.arange(64.0).reshape(8, 8), chunks=(4, 4))
+
+    def fused(coll):
+        return [e for e in coll._lowered_expr.walk() if type(e).__name__ == "FusedBlockwise"][0]
+
+    def per_block_dep_sets(spec):
+        return [sorted({str(s) for s in slots}) for slots in spec[2]]
+
+    for build in (lambda x: x @ x, lambda x: x @ x.T, lambda x: x.T + x):
+        layer = FusedBlockwiseLayer(fused(build(a)))
+        analytical = layer._analytical_site_spec()
+        assert analytical is not None  # the arithmetic (no per-block _task) path
+        assert per_block_dep_sets(analytical) == per_block_dep_sets(layer._site_based_spec())
+
+    # 'a' read at two always-coincident sites -> no all-distinct maximal block ->
+    # analytical bails; the exact uniform/site-based path still handles it.
+    b = da.from_array(np.arange(64.0).reshape(8, 8) + 100.0, chunks=(4, 4))
+    fbc = [e for e in (a * b + a)._lowered_expr.walk() if type(e).__name__ == "FusedBlockwise"]
+    assert fbc and FusedBlockwiseLayer(fbc[0])._analytical_site_spec() is None
+
+
+def test_unknown_chunk_size_needing_layer_declines_cleanly():
+    """A layer that needs concrete sizes (cumulative) over unknown (nan) chunks
+    must decline with NotImplementedError — which the records walk catches and
+    falls back on — rather than a bare ValueError that would crash record
+    generation. Pins the decline contract the removed nan guard relies on."""
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    x = da.from_array(np.arange(20.0), chunks=5)
+    y = x[x > 7].cumsum(axis=0)  # unknown chunks; cumulative needs concrete sizes
+
+    cum = [e for e in y._lowered_expr.walk() if type(e).__name__ == "CumReduction"]
+    assert cum
+    with pytest.raises(NotImplementedError):
+        cum[0]._frisky_layer()
+
+    # …and record generation still completes (declines to the adapter), not crash.
+    chunks, records, _ = y.__frisky_records_chunks__()
+    assert chunks or records
 
 
 def test_unknown_chunks_run_on_frisky_not_stock_dask():
