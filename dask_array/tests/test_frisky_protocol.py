@@ -422,6 +422,32 @@ def test_arg_reduction_chunk_uses_binary_records():
     assert not any(r[0].startswith(f"('{argchunk._name}',") for r in records)
 
 
+@pytest.mark.parametrize("multi", [False, True])
+def test_gufunc_leaf_uses_binary_records(multi):
+    """The output-splitting leaf of ``apply_gufunc`` goes binary — an alias per
+    block (single output) or ``getitem(block, i)`` (multiple outputs) — instead of
+    the per-task ``GraphRecordsLayer`` adapter."""
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    import json
+
+    a = da.ones((20, 30), chunks=(10, 30))
+    if multi:
+        out = da.apply_gufunc(lambda x: (np.mean(x, -1), np.std(x, -1)), "(i)->(),()", a, output_dtypes=(float, float))[
+            0
+        ]
+    else:
+        out = da.apply_gufunc(lambda x: np.sum(x, -1), "(i)->()", a, output_dtypes=float)
+
+    leaf = [e for e in out._lowered_expr.walk() if type(e).__name__ == "GUfuncLeafExpr"][0]
+    assert leaf._frisky_layer().to_records_chunk()  # binary, not the adapter
+
+    chunks, records, chunk_groups = out.__frisky_records_chunks__()
+    ops = [json.loads(m)["op"] for _, m, _ in chunk_groups]
+    assert "GUfuncLeafExpr" in ops
+    assert not any(r[0].startswith(f"('{leaf._name}'") for r in records)
+
+
 def test_map_overlap_lifts_block_id_seed_to_binary_records():
     """A fused map_overlap block bakes its own ``block_id`` into the subgraph (the
     ``_trim`` ``(block_id, numblocks)`` literal), so the block-independent fast
@@ -488,12 +514,7 @@ def test_xarray_rolling_sum_where_literal_uses_binary_records():
         assert not any(record[0].startswith(f"('{fb._name}',") for record in records)
 
     # the binary path is numerically identical to computing on numpy.
-    ref = (
-        xr.DataArray(np.ones((100, 5)), dims=("time", "asset"))
-        .rolling({"time": 10}, min_periods=1)
-        .sum()
-        .data
-    )
+    ref = xr.DataArray(np.ones((100, 5)), dims=("time", "asset")).rolling({"time": 10}, min_periods=1).sum().data
     np.testing.assert_array_equal(np.asarray(y), np.asarray(ref))
 
 

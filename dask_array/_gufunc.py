@@ -520,6 +520,18 @@ class GUfuncLeafExpr(ArrayExpr):
         output_chunks = self.loop_output_chunks + tuple(self.core_shapes[d] for d in self.ocd)
         return normalize_chunks(output_chunks, self._shape, dtype=self._meta.dtype)
 
+    def _frisky_layer(self):
+        from dask_array._frisky.gufunc import GUfuncLeafLayer
+
+        return GUfuncLeafLayer(
+            self._name,
+            self.array._name,
+            self.array.numblocks,
+            len(self.ocd),
+            bool(self.nout),
+            self.i,
+        )
+
     def _layer(self):
         core_chunkinds = len(self.ocd) * (0,)
         leaf_dsk = {
