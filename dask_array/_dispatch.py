@@ -10,9 +10,18 @@ re-exported here for convenience.
 
 from __future__ import annotations
 
+import inspect
+import sys
+import types
+
 import numpy as np
 
-from dask.tokenize import normalize_token
+from dask.tokenize import (
+    _normalize_pickle,
+    normalize_bound_method,
+    normalize_object,
+    normalize_token,
+)
 from dask.utils import Dispatch
 
 # Re-export from _core_utils for convenience
@@ -27,6 +36,109 @@ from dask_array._core_utils import concatenate_lookup, tensordot_lookup
 @normalize_token.register(np.ma.masked_array)
 def _normalize_masked_array(x):
     return (normalize_token(x.data), normalize_token(x.mask), normalize_token(x.fill_value))
+
+
+# --- Qualname tokenization of importable callables ---------------------------
+#
+# dask's fallback for a class / function / ufunc / np-dispatcher is
+# `_normalize_pickle`, which cloudpickles the object (plus a sys.modules scan).
+# During dask-array optimize every rewritten Expr re-tokenizes its block funcs,
+# so a tiny set of module-level callables (np.where, operator.mul, Elemwise,
+# ...) gets pickled hundreds of thousands of times.
+#
+# For an object that is importable by reference, its pickle IS just a
+# `(module, qualname)` global lookup -- so we normalize it directly to that
+# tuple: cheap, and cross-process deterministic (qualname is stable where a
+# pickle-bytes hash and its module scan are not). "Importable" is verified
+# strictly: import the module, walk the qualname by getattr, and confirm the
+# result `is` the original object -- exactly the round-trip pickle-by-reference
+# relies on. Anything that fails (closures, lambdas, dynamically built classes,
+# objects rebound away from their qualname) falls back to the existing pickle
+# path, so it tokenizes exactly as before.
+
+
+def _importable_ref(o):
+    """Return ``("importable", module, qualname)`` if ``o`` round-trips by
+    import, else ``None``.
+
+    The ``is o`` identity check is the whole correctness guarantee: only one
+    object can live at ``module.qualname``, so two distinct objects can never
+    share a reference token, and an object rebound away from its qualname (so
+    the path resolves to something else) is rejected and pickled instead.
+    """
+    module = getattr(o, "__module__", None)
+    qualname = getattr(o, "__qualname__", None)
+    if not isinstance(module, str) or not isinstance(qualname, str):
+        return None
+    # `__main__` round-trips within one interpreter but names a different object
+    # in another (a fresh client, or the frisky scheduler re-tokenizing the
+    # submitted expression) -- a reference token would then collide or diverge.
+    # dask/cloudpickle pickle `__main__` objects by value for the same reason,
+    # so fall through to that path.
+    if module == "__main__":
+        return None
+    # `<locals>` (nested defs / closures) and `<lambda>` never round-trip.
+    if "<" in qualname:
+        return None
+    # `sys.modules.get`, not `import_module`: tokenizing must never trigger an
+    # import as a side effect, and a not-yet-loaded module correctly falls
+    # through to pickle-by-value. It also avoids import_module's ~5-10us
+    # per-call overhead -- about the cost of the pickle-by-reference it
+    # replaces -- which otherwise erases the win on hot re-tokenization.
+    obj = sys.modules.get(module)
+    if obj is None:
+        return None
+    try:
+        for part in qualname.split("."):
+            obj = getattr(obj, part)
+    except AttributeError:
+        return None
+    if obj is o:
+        return "importable", module, qualname
+    return None
+
+
+@normalize_token.register(type)
+def _normalize_type(o):
+    # Non-importable classes keep dask's object handler (slotnames / dataclass
+    # / pickle), not bare pickle -- it is the correct fallback for a type.
+    return _importable_ref(o) or normalize_object(o)
+
+
+@normalize_token.register(types.FunctionType)
+def _normalize_function(func):
+    return _importable_ref(func) or _normalize_pickle(func)
+
+
+@normalize_token.register(types.BuiltinFunctionType)
+def _normalize_builtin(func):
+    # BuiltinMethodType is BuiltinFunctionType; a builtin bound to a non-module
+    # instance (e.g. an ndarray method) must tokenize by its receiver, as dask
+    # does -- only module-level builtins (operator.mul, ...) are importable.
+    self = getattr(func, "__self__", None)
+    if self is not None and not inspect.ismodule(self):
+        return normalize_bound_method(func)
+    return _importable_ref(func) or _normalize_pickle(func)
+
+
+# dask registers its numpy tokenize handlers (np.ndarray, np.ufunc, ...)
+# lazily -- the first time a numpy object is tokenized (see
+# `normalize_token.register_lazy("numpy")`). Force that to happen now, so the
+# np.ufunc handler below registers AFTER dask's and wins; otherwise a later
+# numpy tokenize fires the lazy hook and clobbers ours. Idempotent: if the hook
+# already fired, this just returns the cached handler.
+normalize_token.dispatch(np.ufunc)
+
+
+@normalize_token.register(np.ufunc)
+def _normalize_ufunc(func):
+    return _importable_ref(func) or _normalize_pickle(func)
+
+
+# np.where / np.sum / ... are `numpy._ArrayFunctionDispatcher` instances.
+@normalize_token.register(type(np.where))
+def _normalize_array_function_dispatcher(func):
+    return _importable_ref(func) or _normalize_pickle(func)
 
 
 # Dispatch registries for array operations
