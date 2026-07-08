@@ -6,8 +6,9 @@
 //! start/stop arithmetic (`start + elem_count*step`, which must preserve the
 //! int/float type of `start`/`step`) stays in Python's `_frisky_layer`, exactly
 //! mirroring the legacy `_layer`; Rust slots the resulting scalars into the
-//! per-block args via [`ArgSlot::Scalar`]. `step` and `dtype` are shared across
-//! blocks, so they ride in `literals`.
+//! per-block args via [`ArgSlot::Scalar`]. `step`, `dtype`, and `like` are baked
+//! into the shared Python function so the binary records path has no literal
+//! Python args.
 
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
@@ -21,8 +22,6 @@ pub struct ArangeLayer {
     func: Py<PyAny>,
     /// Shared kwargs (empty — everything is positional / baked into the partial).
     kwargs: Py<PyAny>,
-    /// Shared literals `[step, dtype]`, referenced by `ArgSlot::Literal(0|1)`.
-    literals: Vec<Py<PyAny>>,
     blockstarts: Vec<Num>,
     blockstops: Vec<Num>,
     sizes: Vec<i64>,
@@ -37,8 +36,6 @@ impl ArangeLayer {
         name: String,
         func: Py<PyAny>,
         kwargs: Py<PyAny>,
-        step: Py<PyAny>,
-        dtype: Py<PyAny>,
         blockstarts: Vec<Num>,
         blockstops: Vec<Num>,
         sizes: Vec<i64>,
@@ -47,7 +44,6 @@ impl ArangeLayer {
             name,
             func,
             kwargs,
-            literals: vec![step, dtype],
             blockstarts,
             blockstops,
             sizes,
@@ -74,13 +70,11 @@ impl ArangeLayer {
                 name_idx: 0,
                 coord: vec![i as u32],
                 compute: Compute::Call { func_idx: 0 },
-                // arange(blockstart, blockstop, step, size, dtype)
+                // arange_bound(blockstart, blockstop, size)
                 slots: vec![
                     ArgSlot::Scalar(self.blockstarts[i]),
                     ArgSlot::Scalar(self.blockstops[i]),
-                    ArgSlot::Literal(0), // step
                     ArgSlot::Scalar(Num::Int(self.sizes[i])),
-                    ArgSlot::Literal(1), // dtype
                 ],
             })
             .collect();
@@ -89,7 +83,7 @@ impl ArangeLayer {
             names: vec![&self.name],
             funcs: vec![&self.func],
             kwargs: &self.kwargs,
-            literals: &self.literals,
+            literals: &[],
             dep_names: &[],
             tasks,
         }

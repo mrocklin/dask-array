@@ -412,7 +412,7 @@ pub fn to_task_records<'py>(py: Python<'py>, exp: &Expanded) -> PyResult<Bound<'
 //
 //   LAYER := u8 grammar_version, STRLIST names, STRLIST dep_names, BYTESLIST funcs,
 //            u32 n_tasks, TASK*
-//   TASK  := u32 name_idx, COORD, COMPUTE, u8 n_slots, SLOT*
+//   TASK  := u32 name_idx, COORD, i64 expected_nbytes, COMPUTE, u8 n_slots, SLOT*
 //   COORD := u8 n, u32*n        COMPUTE := u8 (0 Call{u32 idx} | 2 Alias)
 //   SLOT  := u8 tag (0 Dep{u32 name_idx, COORD} | 1 Index{u8 n, ELEM*}
 //                    | 2 IntTuple{u8 n, i64*} | 3 List{u32 n, SLOT*}
@@ -428,8 +428,9 @@ pub fn to_task_records<'py>(py: Python<'py>, exp: &Expanded) -> PyResult<Bound<'
 /// Grammar version stamped at the head of every LAYER chunk; Frisky's decoder
 /// (`records_proto::CHUNK_GRAMMAR_VERSION`) rejects a mismatch and falls back.
 /// v2 added the `Str` slot (tag 5) for per-block string args (`from_map`
-/// filenames). Bump this and Frisky's `CHUNK_GRAMMAR_VERSION` together.
-pub const RECORDS_PROTOCOL_VERSION: u8 = 2;
+/// filenames). v3 added per-task `expected_nbytes` after the task coordinate.
+/// Bump this and Frisky's `CHUNK_GRAMMAR_VERSION` together.
+pub const RECORDS_PROTOCOL_VERSION: u8 = 3;
 
 /// A count that the grammar stores in one byte (coords, slots, index elems —
 /// all bounded by ndim / arg arity in practice). A layer that somehow exceeds
@@ -574,6 +575,7 @@ pub fn to_records_chunk<'py>(py: Python<'py>, exp: &Expanded) -> PyResult<Bound<
     for task in &exp.tasks {
         w_u32(&mut buf, task.name_idx as u32);
         w_coord(&mut buf, &task.coord)?;
+        w_i64(&mut buf, 0);
         match &task.compute {
             Compute::Call { func_idx } => {
                 buf.push(0);

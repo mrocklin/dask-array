@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import math
+import struct
 
 import numpy as np
 
@@ -151,6 +152,150 @@ def _layer_metadata(e):
         return None
 
 
+_I64_MAX = (1 << 63) - 1
+
+
+def _expected_nbytes_getter(e):
+    """Return ``expected(task_name, coord)`` for this expr, or None.
+
+    Binary records are still array-agnostic. The collector is the one place that
+    has both the emitted layer chunk and the array expression metadata, so it can
+    stamp final output tasks for any binary-capable layer with known
+    ``chunks``/``dtype``. Internal helper tasks use other names or non-output
+    coords and stay at 0 (unknown).
+    """
+    try:
+        name = e._name
+        chunks = e.chunks
+        itemsize = int(np.dtype(e.dtype).itemsize)
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+    def expected(task_name, coord):
+        if task_name != name or len(coord) != len(chunks) or itemsize <= 0:
+            return 0
+        nbytes = itemsize
+        for axis, block in enumerate(coord):
+            try:
+                size = chunks[axis][block]
+            except (IndexError, TypeError):
+                return 0
+            if isinstance(size, float) and math.isnan(size):
+                return 0
+            try:
+                size = int(size)
+            except (TypeError, ValueError, OverflowError):
+                return 0
+            if size < 0:
+                return 0
+            nbytes *= size
+            if nbytes > _I64_MAX:
+                return _I64_MAX
+        return nbytes
+
+    return expected
+
+
+def _stamp_expected_nbytes(chunk, e):
+    expected = _expected_nbytes_getter(e)
+    if expected is None:
+        return chunk
+
+    data = bytearray(chunk)
+    pos = 0
+
+    def take(n):
+        nonlocal pos
+        end = pos + n
+        if end > len(data):
+            raise NotImplementedError("short binary records chunk")
+        out = data[pos:end]
+        pos = end
+        return out
+
+    def u8():
+        return take(1)[0]
+
+    def u32():
+        return struct.unpack("<I", take(4))[0]
+
+    def coord():
+        return tuple(u32() for _ in range(u8()))
+
+    def string():
+        return take(u32()).decode()
+
+    def opt_i64():
+        if u8():
+            take(8)
+
+    def skip_slot():
+        tag = u8()
+        if tag == 0:  # Dep
+            u32()
+            coord()
+        elif tag == 1:  # Index
+            for _ in range(u8()):
+                elem_tag = u8()
+                if elem_tag == 0:
+                    opt_i64()
+                    opt_i64()
+                    opt_i64()
+                elif elem_tag == 1:
+                    take(8)
+                else:
+                    raise NotImplementedError(f"unknown index elem tag {elem_tag}")
+        elif tag == 2:  # IntTuple
+            take(8 * u8())
+        elif tag == 3:  # List
+            for _ in range(u32()):
+                skip_slot()
+        elif tag == 4:  # Scalar
+            num_tag = u8()
+            if num_tag not in (0, 1):
+                raise NotImplementedError(f"unknown scalar tag {num_tag}")
+            take(8)
+        elif tag == 5:  # Str
+            take(u32())
+        else:
+            raise NotImplementedError(f"unknown slot tag {tag}")
+
+    version = u8()
+    if version != 3:
+        return chunk
+
+    names = [string() for _ in range(u32())]
+    for _ in range(u32()):  # dep_names
+        string()
+    for _ in range(u32()):  # funcs
+        take(u32())
+
+    for _ in range(u32()):
+        name_idx = u32()
+        task_coord = coord()
+        try:
+            task_name = names[name_idx]
+        except IndexError as exc:
+            raise NotImplementedError("task name index out of range") from exc
+        offset = pos
+        take(8)
+        nbytes = expected(task_name, task_coord)
+        if nbytes:
+            data[offset : offset + 8] = struct.pack("<q", nbytes)
+
+        compute_tag = u8()
+        if compute_tag == 0:
+            u32()
+        elif compute_tag != 2:
+            raise NotImplementedError(f"unknown compute tag {compute_tag}")
+        for _ in range(u8()):
+            skip_slot()
+
+    if pos != len(data):
+        raise NotImplementedError("trailing bytes in binary records chunk")
+    return bytes(data)
+
+
 def _walk_records(roots, seen, records):
     """Depth-first walk over already-lowered ``roots``, appending each node's
     records to ``records`` and deduping every node by ``_name`` against the
@@ -220,6 +365,7 @@ def _walk_record_chunks(roots, seen, chunks, records, chunk_groups):
                 chunk = None
         deps = e.dependencies()
         if chunk is not None:
+            chunk = _stamp_expected_nbytes(chunk, e)
             chunks.append(chunk)
             # Upstream group names = this layer's child exprs' _names (deduped).
             upstream = sorted({c._name for c in deps})

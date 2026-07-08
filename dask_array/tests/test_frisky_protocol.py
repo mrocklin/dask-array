@@ -63,9 +63,11 @@ def _decode_layer_chunk(chunk):
         if tag == 4:
             num_tag = u8()
             return ("scalar", i64() if num_tag == 0 else struct.unpack("<d", take(8))[0])
+        if tag == 5:
+            return ("str", string())
         raise AssertionError(f"unknown slot tag {tag}")
 
-    assert u8() == 2  # RECORDS_PROTOCOL_VERSION (v2 added the Str slot, tag 5)
+    assert u8() == 3  # RECORDS_PROTOCOL_VERSION (v3 adds expected_nbytes)
     names = [string() for _ in range(u32())]
     dep_names = [string() for _ in range(u32())]
     for _ in range(u32()):
@@ -74,6 +76,7 @@ def _decode_layer_chunk(chunk):
     for _ in range(u32()):
         name = names[u32()]
         task_coord = coord()
+        expected_nbytes = i64()
         compute_tag = u8()
         if compute_tag == 0:
             compute = ("call", u32())
@@ -81,9 +84,27 @@ def _decode_layer_chunk(chunk):
             compute = ("alias",)
         else:
             raise AssertionError(f"unknown compute tag {compute_tag}")
-        tasks.append((name, task_coord, compute, tuple(slot(dep_names) for _ in range(u8()))))
+        tasks.append(
+            (
+                name,
+                task_coord,
+                expected_nbytes,
+                compute,
+                tuple(slot(dep_names) for _ in range(u8())),
+            )
+        )
     assert pos == len(chunk)
     return names, dep_names, tasks
+
+
+def _block_nbytes(chunks, coord, dtype):
+    return int(np.prod([chunks[axis][i] for axis, i in enumerate(coord)]) * np.dtype(dtype).itemsize)
+
+
+def _chunk_for_expr(collection, expr):
+    chunks, _records, chunk_groups = collection.__frisky_records_chunks__()
+    by_name = {name: chunk for chunk, (name, _meta, _upstream) in zip(chunks, chunk_groups)}
+    return by_name[expr._name]
 
 
 def _xarray_sliding_window_uses_chunk_manager():
@@ -97,6 +118,101 @@ def _xarray_sliding_window_uses_chunk_manager():
     except OSError:
         return False
     return "get_chunked_array_type" in source and ".array_api" in source
+
+
+def test_creation_binary_chunk_carries_expected_nbytes():
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+
+    x = da.ones((5, 6), chunks=(2, 3), dtype="float32")
+
+    _names, dep_names, tasks = _decode_layer_chunk(_chunk_for_expr(x, x._lowered_expr))
+
+    assert dep_names == []
+    assert {
+        coord: expected_nbytes for _name, coord, expected_nbytes, compute, _slots in tasks if compute[0] == "call"
+    } == {
+        (0, 0): 2 * 3 * 4,
+        (0, 1): 2 * 3 * 4,
+        (1, 0): 2 * 3 * 4,
+        (1, 1): 2 * 3 * 4,
+        (2, 0): 1 * 3 * 4,
+        (2, 1): 1 * 3 * 4,
+    }
+
+
+def test_blockwise_binary_chunk_carries_expected_nbytes():
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+
+    x = da.ones((5, 6), chunks=(2, 3), dtype="float32")
+    y = x + np.float32(1)
+
+    _names, _dep_names, tasks = _decode_layer_chunk(_chunk_for_expr(y, y._lowered_expr))
+
+    assert {
+        coord: expected_nbytes
+        for name, coord, expected_nbytes, _compute, _slots in tasks
+        if name == y._lowered_expr._name
+    } == {
+        (0, 0): 2 * 3 * 4,
+        (0, 1): 2 * 3 * 4,
+        (1, 0): 2 * 3 * 4,
+        (1, 1): 2 * 3 * 4,
+        (2, 0): 1 * 3 * 4,
+        (2, 1): 1 * 3 * 4,
+    }
+
+
+def test_arange_binary_chunk_carries_expected_nbytes():
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+
+    x = da.arange(10, chunks=4, dtype="int32")
+
+    _names, dep_names, tasks = _decode_layer_chunk(_chunk_for_expr(x, x._lowered_expr))
+
+    assert dep_names == []
+    assert {
+        coord: expected_nbytes for _name, coord, expected_nbytes, compute, _slots in tasks if compute[0] == "call"
+    } == {
+        (0,): 4 * 4,
+        (1,): 4 * 4,
+        (2,): 2 * 4,
+    }
+
+
+def test_linspace_binary_chunk_carries_expected_nbytes():
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+
+    x = da.linspace(0, 1, 10, chunks=4, dtype="float32")
+
+    _names, dep_names, tasks = _decode_layer_chunk(_chunk_for_expr(x, x._lowered_expr))
+
+    assert dep_names == []
+    assert {
+        coord: expected_nbytes for _name, coord, expected_nbytes, compute, _slots in tasks if compute[0] == "call"
+    } == {
+        (0,): 4 * 4,
+        (1,): 4 * 4,
+        (2,): 2 * 4,
+    }
+
+
+def test_slicing_binary_chunk_carries_expected_nbytes_without_layer_plumbing():
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+
+    x = da.from_array(np.arange(6 * 7, dtype=np.int16).reshape(6, 7), chunks=(2, 3))
+    y = x[1:6, 2:7]
+
+    expr = y._lowered_expr
+    _names, _dep_names, tasks = _decode_layer_chunk(_chunk_for_expr(y, expr))
+
+    assert {
+        coord: expected_nbytes for name, coord, expected_nbytes, _compute, _slots in tasks if name == expr._name
+    } == {coord: _block_nbytes(expr.chunks, coord, expr.dtype) for coord in np.ndindex(expr.numblocks)}
 
 
 def test_dask_graph_does_not_import_frisky_modules():
@@ -170,8 +286,9 @@ def test_source_backed_fused_blockwise_binary_chunk_tracks_deps():
     source = fused.dependencies()[0]
     assert dep_names == [source._name]
     assert len(tasks) == 16
-    for name, coord, compute, slots in tasks:
+    for name, coord, expected_nbytes, compute, slots in tasks:
         assert name == fused._name
+        assert expected_nbytes == _block_nbytes(fused.chunks, coord, fused.dtype)
         assert compute[0] == "call"
         assert slots == (("dep", source._name, coord),)
 
@@ -196,8 +313,9 @@ def test_transposed_fused_blockwise_binary_chunk_tracks_remapped_deps():
     assert not any(record[0].startswith(f"('{fused._name}',") for record in records)
     assert dep_names == [source._name]
     assert len(tasks) == 10
-    for name, coord, compute, slots in tasks:
+    for name, coord, expected_nbytes, compute, slots in tasks:
         assert name == fused._name
+        assert expected_nbytes == _block_nbytes(fused.chunks, coord, fused.dtype)
         assert compute[0] == "call"
         assert slots == (("dep", source._name, (coord[1], coord[0])),)
 
@@ -227,8 +345,9 @@ def test_contracted_einsum_fused_blockwise_binary_chunk_tracks_remapped_deps():
     assert not any(record[0].startswith(f"('{fused._name}',") for record in records)
     assert set(dep_names) == {a_source, b_source}
     assert len(tasks) == 36
-    for name, coord, compute, slots in tasks:
+    for name, coord, expected_nbytes, compute, slots in tasks:
         assert name == fused._name
+        assert expected_nbytes == _block_nbytes(fused.chunks, coord, fused.dtype)
         assert compute[0] == "call"
         # The slot *order* is a deterministic implementation detail (sites are
         # ordered by (source, coord)); verify the coord remapping as a set.
@@ -327,9 +446,7 @@ def test_fast_path_block_independence_is_tokenize_free(monkeypatch):
     from dask_array._frisky.fused_blockwise import FusedBlockwiseLayer
 
     def fused(coll):
-        return FusedBlockwiseLayer(
-            [e for e in coll._lowered_expr.walk() if type(e).__name__ == "FusedBlockwise"][0]
-        )
+        return FusedBlockwiseLayer([e for e in coll._lowered_expr.walk() if type(e).__name__ == "FusedBlockwise"][0])
 
     a = da.from_array(np.arange(64.0).reshape(8, 8), chunks=(4, 4))
     d = da.ones((12, 12), chunks=(4, 4))
@@ -626,10 +743,17 @@ def test_cumreduction_uses_binary_records_chunk(axis, shape, chunk_spec, expecte
     _names, _dep_names, tasks = _decode_layer_chunk(chunks[0])
     identity_shapes = sorted(
         slots[0][1]
-        for name, _coord, compute, slots in tasks
+        for name, _coord, _expected_nbytes, compute, slots in tasks
         if name.endswith("-extra") and compute[0] == "call" and slots and slots[0][0] == "inttuple"
     )
     assert identity_shapes == sorted(expected_identity_shapes)
+
+    expr = y._lowered_expr
+    assert {
+        coord: expected_nbytes
+        for name, coord, expected_nbytes, _compute, _slots in tasks
+        if name == expr._name and len(coord) == len(expr.chunks)
+    } == {coord: _block_nbytes(expr.chunks, coord, expr.dtype) for coord in np.ndindex(expr.numblocks)}
 
 
 def test_sliding_window_overlap_uses_binary_records():

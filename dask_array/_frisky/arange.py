@@ -3,8 +3,9 @@
 ``Arange._frisky_layer`` computes the per-block ``blockstart``/``blockstop``/
 ``size`` scalars in Python — the exact same ``start + elem_count*step``
 arithmetic the legacy ``_layer`` runs, which preserves the int/float type of
-``start``/``step`` — and passes them to the Rust ``ArangeLayer``. Rust emits one
-``arange(blockstart, blockstop, step, size, dtype)`` task per block.
+``start``/``step`` — and passes them to the Rust ``ArangeLayer``. ``step``,
+``dtype``, and ``like`` are bound into the shared callable, so Rust emits one
+``arange_bound(blockstart, blockstop, size)`` task per block.
 """
 
 from __future__ import annotations
@@ -16,9 +17,13 @@ from dask_array._chunk import arange as _arange
 from dask_array._frisky.base import Layer
 
 
+def _arange_bound(blockstart, blockstop, size, *, step, dtype, like):
+    return _arange(blockstart, blockstop, step, size, dtype, like=like)
+
+
 class ArangeLayer(Layer):
     def __init__(self, name, start, step, dtype, like, chunks):
-        func = partial(_arange, like=like)
+        func = partial(_arange_bound, step=step, dtype=dtype, like=like)
         blockstarts, blockstops, sizes = [], [], []
         elem_count = 0
         for bs in chunks:
@@ -26,4 +31,11 @@ class ArangeLayer(Layer):
             blockstops.append(start + ((elem_count + bs) * step))
             sizes.append(int(bs))
             elem_count += bs
-        self._rust = _rust.ArangeLayer(name, func, {}, step, dtype, blockstarts, blockstops, sizes)
+        self._rust = _rust.ArangeLayer(
+            name,
+            func,
+            {},
+            blockstarts,
+            blockstops,
+            sizes,
+        )
