@@ -18,6 +18,7 @@
 //! below.
 
 use pyo3::prelude::*;
+use pyo3::types::PyBytes;
 
 mod arange;
 mod arg_chunk;
@@ -54,17 +55,33 @@ mod stack;
 /// coordinate on is the binary records grammar (`common::RECORDS_PROTOCOL_VERSION`
 /// ↔ Frisky's `records_proto::CHUNK_GRAMMAR_VERSION`), which only moves when the
 /// chunk byte-grammar changes — not when a layer is added.
-const NATIVE_BUILD_GENERATION: usize = 37;
+const NATIVE_BUILD_GENERATION: usize = 38;
 
 #[pyfunction]
 fn native_build_generation() -> usize {
     NATIVE_BUILD_GENERATION
 }
 
+#[pyfunction]
+fn stamp_expected_nbytes<'py>(
+    py: Python<'py>,
+    chunk: Bound<'py, PyBytes>,
+    output_name: String,
+    chunks: Vec<Vec<i64>>,
+    itemsize: i64,
+) -> PyResult<Bound<'py, PyBytes>> {
+    let data = chunk.as_bytes().to_vec();
+    let stamped = py.detach(move || {
+        common::stamp_expected_nbytes_chunk(data, &output_name, &chunks, itemsize)
+    })?;
+    Ok(PyBytes::new(py, &stamped))
+}
+
 #[pymodule]
 fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("NATIVE_BUILD_GENERATION", NATIVE_BUILD_GENERATION)?;
     m.add_function(wrap_pyfunction!(native_build_generation, m)?)?;
+    m.add_function(wrap_pyfunction!(stamp_expected_nbytes, m)?)?;
     m.add_class::<arange::ArangeLayer>()?;
     m.add_class::<arg_chunk::ArgChunkLayer>()?;
     m.add_class::<blelloch::CumReductionBlellochLayer>()?;

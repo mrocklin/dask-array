@@ -21,7 +21,7 @@
 //! `funcs`, multiple `names`, [`Compute::Alias`]) used by rechunk's
 //! split/merge/alias tasks within one layer.
 
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyNotImplementedError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyString, PyTuple};
 
@@ -595,4 +595,216 @@ pub fn to_records_chunk<'py>(py: Python<'py>, exp: &Expanded) -> PyResult<Bound<
     }
 
     Ok(PyBytes::new(py, &buf))
+}
+
+fn short_chunk() -> PyErr {
+    PyNotImplementedError::new_err("short binary records chunk")
+}
+
+fn take<'a>(data: &'a [u8], pos: &mut usize, n: usize) -> PyResult<&'a [u8]> {
+    let end = pos.checked_add(n).ok_or_else(short_chunk)?;
+    if end > data.len() {
+        return Err(short_chunk());
+    }
+    let out = &data[*pos..end];
+    *pos = end;
+    Ok(out)
+}
+
+fn r_u8(data: &[u8], pos: &mut usize) -> PyResult<u8> {
+    Ok(take(data, pos, 1)?[0])
+}
+
+fn r_u32(data: &[u8], pos: &mut usize) -> PyResult<u32> {
+    let bytes: [u8; 4] = take(data, pos, 4)?.try_into().map_err(|_| short_chunk())?;
+    Ok(u32::from_le_bytes(bytes))
+}
+
+fn skip_i64(data: &[u8], pos: &mut usize) -> PyResult<()> {
+    take(data, pos, 8)?;
+    Ok(())
+}
+
+fn r_coord(data: &[u8], pos: &mut usize) -> PyResult<Vec<u32>> {
+    let ndim = r_u8(data, pos)? as usize;
+    let mut coord = Vec::with_capacity(ndim);
+    for _ in 0..ndim {
+        coord.push(r_u32(data, pos)?);
+    }
+    Ok(coord)
+}
+
+fn r_string(data: &[u8], pos: &mut usize) -> PyResult<String> {
+    let len = r_u32(data, pos)? as usize;
+    let bytes = take(data, pos, len)?;
+    std::str::from_utf8(bytes)
+        .map(|s| s.to_owned())
+        .map_err(|e| {
+            PyNotImplementedError::new_err(format!("invalid utf8 in binary records chunk: {e}"))
+        })
+}
+
+fn skip_opt_i64(data: &[u8], pos: &mut usize) -> PyResult<()> {
+    if r_u8(data, pos)? != 0 {
+        skip_i64(data, pos)?;
+    }
+    Ok(())
+}
+
+fn skip_slot(data: &[u8], pos: &mut usize) -> PyResult<()> {
+    match r_u8(data, pos)? {
+        0 => {
+            // Dep { name_idx, coord }
+            r_u32(data, pos)?;
+            r_coord(data, pos)?;
+        }
+        1 => {
+            // Index
+            for _ in 0..r_u8(data, pos)? {
+                match r_u8(data, pos)? {
+                    0 => {
+                        skip_opt_i64(data, pos)?;
+                        skip_opt_i64(data, pos)?;
+                        skip_opt_i64(data, pos)?;
+                    }
+                    1 => skip_i64(data, pos)?,
+                    tag => {
+                        return Err(PyNotImplementedError::new_err(format!(
+                            "unknown index elem tag {tag}"
+                        )))
+                    }
+                }
+            }
+        }
+        2 => {
+            // IntTuple
+            let n = r_u8(data, pos)? as usize;
+            take(data, pos, 8 * n)?;
+        }
+        3 => {
+            // List
+            for _ in 0..r_u32(data, pos)? {
+                skip_slot(data, pos)?;
+            }
+        }
+        4 => {
+            // Scalar
+            let num_tag = r_u8(data, pos)?;
+            if num_tag != 0 && num_tag != 1 {
+                return Err(PyNotImplementedError::new_err(format!(
+                    "unknown scalar tag {num_tag}"
+                )));
+            }
+            skip_i64(data, pos)?;
+        }
+        5 => {
+            // Str
+            let len = r_u32(data, pos)? as usize;
+            take(data, pos, len)?;
+        }
+        tag => {
+            return Err(PyNotImplementedError::new_err(format!(
+                "unknown slot tag {tag}"
+            )))
+        }
+    }
+    Ok(())
+}
+
+fn expected_nbytes_for(
+    task_name: &str,
+    coord: &[u32],
+    output_name: &str,
+    chunks: &[Vec<i64>],
+    itemsize: i64,
+) -> i64 {
+    if task_name != output_name || coord.len() != chunks.len() || itemsize <= 0 {
+        return 0;
+    }
+
+    let mut nbytes = itemsize as i128;
+    for (axis, &block) in coord.iter().enumerate() {
+        let Some(size) = chunks
+            .get(axis)
+            .and_then(|dim| dim.get(block as usize))
+            .copied()
+        else {
+            return 0;
+        };
+        if size <= 0 {
+            return 0;
+        }
+        nbytes *= size as i128;
+        if nbytes > i64::MAX as i128 {
+            return i64::MAX;
+        }
+    }
+    nbytes as i64
+}
+
+/// Patch the `expected_nbytes` field in a binary records LAYER chunk.
+///
+/// The layer emitters stay array-agnostic and write zero placeholders. Python's
+/// collector owns the expression metadata (`_name`, `chunks`, `dtype`) and calls
+/// this helper once per binary chunk so the O(tasks) byte walk runs in Rust.
+pub fn stamp_expected_nbytes_chunk(
+    mut data: Vec<u8>,
+    output_name: &str,
+    chunks: &[Vec<i64>],
+    itemsize: i64,
+) -> PyResult<Vec<u8>> {
+    let mut pos = 0;
+    let version = r_u8(&data, &mut pos)?;
+    if version != RECORDS_PROTOCOL_VERSION {
+        return Ok(data);
+    }
+
+    let mut names = Vec::new();
+    for _ in 0..r_u32(&data, &mut pos)? {
+        names.push(r_string(&data, &mut pos)?);
+    }
+    for _ in 0..r_u32(&data, &mut pos)? {
+        r_string(&data, &mut pos)?;
+    }
+    for _ in 0..r_u32(&data, &mut pos)? {
+        let len = r_u32(&data, &mut pos)? as usize;
+        take(&data, &mut pos, len)?;
+    }
+
+    for _ in 0..r_u32(&data, &mut pos)? {
+        let name_idx = r_u32(&data, &mut pos)? as usize;
+        let coord = r_coord(&data, &mut pos)?;
+        let task_name = names
+            .get(name_idx)
+            .ok_or_else(|| PyNotImplementedError::new_err("task name index out of range"))?;
+
+        let offset = pos;
+        skip_i64(&data, &mut pos)?;
+        let nbytes = expected_nbytes_for(task_name, &coord, output_name, chunks, itemsize);
+        if nbytes > 0 {
+            data[offset..offset + 8].copy_from_slice(&nbytes.to_le_bytes());
+        }
+
+        match r_u8(&data, &mut pos)? {
+            0 => {
+                r_u32(&data, &mut pos)?;
+            }
+            2 => {}
+            tag => {
+                return Err(PyNotImplementedError::new_err(format!(
+                    "unknown compute tag {tag}"
+                )))
+            }
+        }
+        for _ in 0..r_u8(&data, &mut pos)? {
+            skip_slot(&data, &mut pos)?;
+        }
+    }
+
+    if pos != data.len() {
+        return Err(PyNotImplementedError::new_err(
+            "trailing bytes in binary records chunk",
+        ));
+    }
+    Ok(data)
 }
