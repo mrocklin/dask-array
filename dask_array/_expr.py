@@ -409,10 +409,19 @@ class ArrayExpr(SingletonExpr):
             return None
         result = self._accept_slice(slice_expr)
         result = self._preserve_grid_contract(slice_expr, result, dependents)
-        if result is not None and not others:
-            # ``self``'s only consumer was this slice, so the rewrite fully
-            # replaces ``self``; let the slice keep descending this same pass.
-            # (With other slice consumers ``self`` survives, so its links stay.)
+        if result is not None:
+            # The push only proceeds when every other consumer is itself a slice
+            # (checked above), so ``self`` is normally replaced outright by the
+            # per-window sliced copies -- including the multi-window fan-out where
+            # a warmup-trim slice is shared across many quantities.  Drop
+            # ``self``'s input links so the slice keeps descending this same pass
+            # instead of one layer per fixpoint round.  This unlink is only a
+            # *gate* hint (it never changes computed values): in the rare case
+            # where a sibling slice's own push is later declined -- e.g. by
+            # ``_preserve_grid_contract`` -- ``self`` survives under that sibling
+            # and a transitive push into the shared input may fire eagerly and
+            # lose that sharing.  Worst case is recomputing the input's region
+            # rather than reusing it, never a wrong result.
             self._unlink_pushed_dependency(dependents)
         return result
 
