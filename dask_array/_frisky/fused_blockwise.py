@@ -45,7 +45,7 @@ from __future__ import annotations
 
 from itertools import product
 
-from dask._task_spec import TaskRef, _execute_subgraph
+from dask._task_spec import Task, TaskRef, _execute_subgraph
 
 from dask_array._blockwise import _broadcast_block_id
 
@@ -206,7 +206,7 @@ class FusedBlockwiseLayer:
         dep_names = [d._name for d in e.dependencies()]
         dep_idx_by_name = {name: i for i, name in enumerate(dep_names)}
 
-        canon0 = self._canonical(task0)
+        canon0 = self._canon_fingerprint(task0)
         shared = _FusedSubgraph(subgraph0, outkey0, inkeys0)
 
         broadcast = self._broadcast_spec(inkeys0, dep_idx_by_name)
@@ -227,7 +227,7 @@ class FusedBlockwiseLayer:
         # contractions; the fused subgraph is uniform by construction, the same
         # bet ``_validate_broadcast`` makes on the broadcast path just above.
         for bid in self._probe_blocks(numblocks):
-            if self._canonical(e._task((e._name, *bid), bid)) != canon0:
+            if self._canon_fingerprint(e._task((e._name, *bid), bid)) != canon0:
                 return None
 
         dep_slots = []
@@ -287,13 +287,13 @@ class FusedBlockwiseLayer:
         ref_task = e._task((e._name, *all_bids[0]), all_bids[0])
         if ref_task.func is not _execute_subgraph or len(ref_task.args) < 3:
             return None
-        canon0 = self._canonical(ref_task)
+        canon0 = self._canon_fingerprint(ref_task)
         n_sites = None
         for bid in self._probe_blocks(numblocks):
             task = e._task((e._name, *bid), bid)
             if task.func is not _execute_subgraph or len(task.args) < 3:
                 return None
-            if self._canonical(task) != canon0:
+            if self._canon_fingerprint(task) != canon0:
                 return None
             sites = self._walk_sites(task.args[0], task.args[1], set(task.args[2]))
             if sites is None:
@@ -376,7 +376,7 @@ class FusedBlockwiseLayer:
         site_src = [k[0] for k in sites0]
         if any(s not in dep_idx for s in site_src):
             return None
-        canon0 = self._canonical(t0)
+        canon0 = self._canon_fingerprint(t0)
         proj = [[("const", int(c)) for c in k[1:]] for k in sites0]
 
         # Infer each site's projection by bumping one output dim at a time and
@@ -420,7 +420,7 @@ class FusedBlockwiseLayer:
         # can emit a wrong graph.
         for bid in self._probe_blocks(nb):
             t = e._task((e._name, *bid), bid)
-            if t.func is not _execute_subgraph or self._canonical(t) != canon0:
+            if t.func is not _execute_subgraph or self._canon_fingerprint(t) != canon0:
                 return None
             sites = self._walk_sites(t.args[0], t.args[1], set(t.args[2]))
             if sites is None:
@@ -573,13 +573,13 @@ class FusedBlockwiseLayer:
         # that the inferred source-coord and seed projections reproduce each block's
         # exact reads and literal values.
         hole = "__seed_hole__"
-        canon0_holed = self._hole_canonical(canon0, seeds, hole)
+        canon0_holed = self._hole_fingerprint(canon0, seeds, hole)
         for bid in self._probe_blocks(nb):
             t = e._task((e._name, *bid), bid)
             if t.func is not _execute_subgraph or len(t.args) < 3:
                 return None
             canon = self._canonical(t)
-            if self._hole_canonical(canon, seeds, hole) != canon0_holed:
+            if self._hole_fingerprint(canon, seeds, hole) != canon0_holed:
                 return None
             sites = self._walk_sites(t.args[0], t.args[1], set(t.args[2]))
             if sites is None:
@@ -701,7 +701,7 @@ class FusedBlockwiseLayer:
             expected = {(name, *_broadcast_block_id(source_numblocks, bid)) for _, name, source_numblocks in sources}
             if expected != set(task.dependencies):
                 return False
-            if self._canonical(task) != canon0:
+            if self._canon_fingerprint(task) != canon0:
                 return False
         return True
 
@@ -710,7 +710,13 @@ class FusedBlockwiseLayer:
         """Key-independent form of a fused ``_execute_subgraph`` task: rename
         internal subgraph keys to their expr name and external input keys to their
         source name, so two blocks' subgraphs compare equal iff they differ only
-        in block ids."""
+        in block ids.
+
+        Returns Tasks (``_seed_spec`` rewrites their args to lift block-id
+        literals). The fast-path block-independence checks don't need the Task
+        structure and use :meth:`_canon_fingerprint` instead — comparing these
+        Tasks goes through ``Task.__eq__`` -> ``tokenize`` -> cloudpickle of each
+        inner func, which dominated graph build ~10x on large contractions."""
         subgraph, outkey, inkeys = task.args[0], task.args[1], task.args[2]
         rename = {}
         for k in subgraph:
@@ -720,6 +726,63 @@ class FusedBlockwiseLayer:
         canon = {rename[k]: t.substitute(rename, key=rename[k]) for k, t in subgraph.items()}
         canon_out = rename.get(outkey, outkey)
         return canon, canon_out
+
+    @staticmethod
+    def _canon_fingerprint(task):
+        """Cheap block-independence fingerprint of a fused ``_execute_subgraph``
+        task: two blocks fingerprint equal iff their subgraphs differ only in block
+        ids — same intent as :meth:`_canonical`, but it compares each inner task's
+        func by *identity* and its args/kwargs structurally instead of tokenizing
+        (== cloudpickling) them.
+
+        The inner funcs are shared by identity across every output block (they are
+        attributes of the fixed fused exprs), so ``id(func)`` is stable and this
+        is strictly *finer* than the tokenize form: fingerprint-equal implies
+        token-equal, never the reverse. So it can only ever *decline* the fast
+        path where tokenize would have accepted (falling back to correct per-block
+        records) — never wrongly accept a block-dependent subgraph."""
+        subgraph, outkey, inkeys = task.args[0], task.args[1], task.args[2]
+        rename = {}
+        for k in subgraph:
+            rename[k] = (k[0],) if isinstance(k, tuple) else (k,)
+        for ik in inkeys:
+            rename[ik] = FusedBlockwiseLayer._input_label(ik)
+        canon = {rename[k]: FusedBlockwiseLayer._node_fingerprint(t, rename) for k, t in subgraph.items()}
+        return canon, rename.get(outkey, outkey)
+
+    @staticmethod
+    def _node_fingerprint(node, rename):
+        """Fingerprint one fused-subgraph node: a ``Task`` as (func identity, args,
+        kwargs); anything else (a ``DataNode``/``Alias`` — not built into a fused
+        subgraph today, but ``_canonical`` handled them via ``substitute``, so mirror
+        that rather than raising) by identity, the same finer-than-tokenize contract
+        as the funcs."""
+        if isinstance(node, Task):
+            return (
+                id(node.func),
+                FusedBlockwiseLayer._canon_arg(node.args, rename),
+                FusedBlockwiseLayer._canon_arg(node.kwargs, rename),
+            )
+        return FusedBlockwiseLayer._canon_arg(node, rename)
+
+    @staticmethod
+    def _canon_arg(a, rename):
+        """A structural, ``==``-comparable key for a fused inner task's arg, with
+        internal/external key references renamed to their block-independent labels
+        (so block coords drop out). Simple data leaves compare by value; any other
+        object (an ndarray, a callable baked into args) compares by identity —
+        stricter than tokenize, and never tokenizes."""
+        if isinstance(a, TaskRef):
+            return "ref", rename.get(a.key, a.key)
+        if isinstance(a, tuple):
+            return "tuple", tuple(FusedBlockwiseLayer._canon_arg(x, rename) for x in a)
+        if isinstance(a, list):
+            return "list", tuple(FusedBlockwiseLayer._canon_arg(x, rename) for x in a)
+        if isinstance(a, dict):
+            return "dict", tuple((k, FusedBlockwiseLayer._canon_arg(v, rename)) for k, v in a.items())
+        if isinstance(a, (bool, int, float, str, bytes)) or a is None:
+            return "val", type(a), a
+        return "id", id(a)
 
     @staticmethod
     def _input_label(key):
@@ -841,15 +904,19 @@ class FusedBlockwiseLayer:
         """A copy of ``task`` with its positional args replaced (func, key and
         kwargs preserved). Embedded ``TaskRef``s in ``new_args`` register as
         dependencies, so a holed literal becomes a real seed reference."""
-        from dask._task_spec import Task
-
         return Task(task.key, task.func, *new_args, **(task.kwargs or {}))
 
     @staticmethod
-    def _hole_canonical(canon, seeds, hole):
-        """``canon`` (a ``_canonical`` result) with the lifted-literal positions
-        blanked to a fixed sentinel, so two blocks compare equal iff they differ
-        *only* in those lifted literals (plus keys, already normalized)."""
+    def _hole_fingerprint(canon, seeds, hole):
+        """The cheap :meth:`_canon_fingerprint`-style form of a ``_canonical``
+        result with the lifted-literal positions blanked to ``hole``, so two
+        blocks fingerprint equal iff they differ *only* in those lifted literals
+        (keys already normalized). Same role as the tokenizing dict-of-Tasks
+        comparison it replaces — funcs by identity, args structurally, no
+        cloudpickle — and strictly finer than it, so it only ever declines the
+        seed fast path where tokenize would have accepted (falling back to correct
+        per-block records). The ``canon`` Tasks already carry renamed refs, so
+        ``_canon_arg`` runs with an empty rename."""
         cdict, cout = canon
         by_key = {}
         for ck, ai in seeds:
@@ -857,11 +924,14 @@ class FusedBlockwiseLayer:
         holed = {}
         for ck, task in cdict.items():
             ais = by_key.get(ck)
-            if ais is None:
-                holed[ck] = task
+            if ais and isinstance(task, Task):
+                args_fp = tuple(
+                    hole if i in ais else FusedBlockwiseLayer._canon_arg(a, {})
+                    for i, a in enumerate(task.args)
+                )
+                holed[ck] = (id(task.func), args_fp, FusedBlockwiseLayer._canon_arg(task.kwargs, {}))
             else:
-                new_args = [hole if i in ais else a for i, a in enumerate(task.args)]
-                holed[ck] = FusedBlockwiseLayer._rebuild_task(task, new_args)
+                holed[ck] = FusedBlockwiseLayer._node_fingerprint(task, {})
         return holed, cout
 
     @staticmethod

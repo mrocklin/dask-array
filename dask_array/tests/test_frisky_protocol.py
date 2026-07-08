@@ -314,6 +314,49 @@ def test_contractions_use_analytical_derivation():
     assert fbc and FusedBlockwiseLayer(fbc[0])._analytical_site_spec() is None
 
 
+def test_fast_path_block_independence_is_tokenize_free(monkeypatch):
+    """The fused-block block-independence check must not tokenize (== cloudpickle)
+    the shared subgraph func. Doing so once per probe block — via ``Task.__eq__``
+    on canonicalized subgraphs — dominated scheduler-side graph build ~10x on large
+    contractions (the shared func is a closure cloudpickle serializes by value,
+    scanning ``sys.modules``). ``_canon_fingerprint`` / ``_hole_fingerprint``
+    compare funcs by identity instead; this guards against a silent regression back
+    onto ``tokenize``. Pure-Python (``_fast_spec``), so it needs no Rust extension."""
+    import dask.tokenize
+
+    from dask_array._frisky.fused_blockwise import FusedBlockwiseLayer
+
+    def fused(coll):
+        return FusedBlockwiseLayer(
+            [e for e in coll._lowered_expr.walk() if type(e).__name__ == "FusedBlockwise"][0]
+        )
+
+    a = da.from_array(np.arange(64.0).reshape(8, 8), chunks=(4, 4))
+    d = da.ones((12, 12), chunks=(4, 4))
+    layers = {
+        "contraction (Gram A@A.T)": fused(a @ a.T),  # analytical / exact fast paths
+        "seed (map_overlap block_id)": fused(d.map_overlap(lambda b: b + 1, depth=1, boundary="none")),
+    }
+
+    calls = {"n": 0}
+    real = dask.tokenize.tokenize
+
+    def counting_tokenize(*args, **kwargs):
+        calls["n"] += 1
+        return real(*args, **kwargs)
+
+    # ``Task.__eq__`` and ``Task._get_token`` both re-resolve ``tokenize`` off these
+    # modules at call time, so patching here intercepts every Task tokenization.
+    monkeypatch.setattr(dask.tokenize, "tokenize", counting_tokenize)
+    monkeypatch.setattr("dask.base.tokenize", counting_tokenize)
+
+    for label, layer in layers.items():
+        calls["n"] = 0
+        spec = layer._fast_spec()
+        assert spec is not None, f"{label} should take a binary fast path"
+        assert calls["n"] == 0, f"{label}: block-independence check tokenized {calls['n']}x"
+
+
 def test_cumulative_over_unknown_chunks_uses_binary_records():
     """A cumulative reduction over unknown (nan) chunk sizes generates a complete
     binary records graph rather than declining. The sequential plan is fixed by
