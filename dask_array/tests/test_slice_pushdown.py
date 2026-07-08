@@ -1170,3 +1170,32 @@ def test_multi_window_slices_still_push():
     xn = np.arange(10000.0).reshape(100, 100)
     yn = (xn + 1) * 2
     assert_eq(z, yn[:5] + yn[10:15])
+
+
+def test_multi_window_slices_with_grid_sensitive_consumer():
+    """A node fanned out to two different-window slices where one slice feeds a
+    grid-sensitive op (``map_overlap``).  The multi-window unlink drops the
+    shared node's input links when the first sibling pushes, before the
+    grid-sensitive sibling's push is declined by ``_preserve_grid_contract`` --
+    so the shared node survives under that sibling with a stale gate.  That is a
+    lost-sharing pessimization at most; the computed values must still match
+    numpy.  (Regression guard for the one non-output-neutral path of the
+    multi-window slice-unlink.)"""
+    arr = np.arange(400.0).reshape(20, 20)
+    n = da.from_array(arr, chunks=(5, 20)) + 1.0  # shared node, two slice consumers
+
+    # window 1 -> grid-sensitive map_overlap (its halo'd input resists slice pushdown)
+    w1 = n[2:18, :].map_overlap(lambda b: b * 2.0, depth={0: 1, 1: 0}, boundary="none")
+    # window 2 -> plain elemwise (this slice fires + unlinks first)
+    w2 = n[5:15, :] * 3.0
+
+    base = arr + 1.0
+    assert_eq(w1, base[2:18, :] * 2.0)
+    assert_eq(w2, base[5:15, :] * 3.0)
+
+    # both windows in one graph over the shared node
+    combined = da.concatenate([w1[:6], w2[:6]], axis=0)
+    assert_eq(
+        combined,
+        np.concatenate([base[2:18, :][:6] * 2.0, base[5:15, :][:6] * 3.0], axis=0),
+    )
