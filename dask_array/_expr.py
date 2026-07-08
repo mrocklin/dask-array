@@ -339,6 +339,30 @@ class ArrayExpr(SingletonExpr):
                 others[node._name] = node
         return others
 
+    def _unlink_pushed_dependency(self, dependents):
+        """Drop ``self``'s now-stale consumer links after a pushdown replaced it.
+
+        A slice/rechunk/shuffle pushdown replaces ``self`` (a single-consumer
+        node) with a rewrite whose inputs are ``self``'s inputs wrapped in the
+        pushed op, so ``self`` stops consuming those inputs.  But ``dependents``
+        was collected once at the start of the simplify pass and still lists
+        ``self`` as their consumer, which makes the gate on a *transitive*
+        pushdown into the same inputs -- deeper in this SAME pass -- wrongly see
+        them as shared and decline.  That is why an un-patched pushdown advances
+        only one layer per fixpoint round (O(depth) rounds).  Removing only
+        ``self``'s own link here lets the push keep descending in one pass; a
+        genuinely shared input keeps its other consumers and still declines.
+        """
+        for dep in self.dependencies():
+            refs = dependents.get(dep._name)
+            if not refs:
+                continue
+            dependents[dep._name] = [
+                ref
+                for ref in refs
+                if (node := ref()) is not None and node._name != self._name
+            ]
+
     def _requires_grid_preservation(self, dependency):
         """Whether this node observes a dependency's block grid."""
         return False
@@ -384,7 +408,13 @@ class ArrayExpr(SingletonExpr):
         if any(not isinstance(node, SliceSlicesIntegers) for node in others.values()):
             return None
         result = self._accept_slice(slice_expr)
-        return self._preserve_grid_contract(slice_expr, result, dependents)
+        result = self._preserve_grid_contract(slice_expr, result, dependents)
+        if result is not None and not others:
+            # ``self``'s only consumer was this slice, so the rewrite fully
+            # replaces ``self``; let the slice keep descending this same pass.
+            # (With other slice consumers ``self`` survives, so its links stay.)
+            self._unlink_pushed_dependency(dependents)
+        return result
 
     def _rechunk_pushdown(self, rechunk_expr, dependents):
         """Push ``rechunk_expr`` into ``self`` unless anything else depends
@@ -399,7 +429,12 @@ class ArrayExpr(SingletonExpr):
         if self._other_dependents(rechunk_expr, dependents):
             return None
         result = rechunk_expr._pushdown()
-        return self._preserve_grid_contract(rechunk_expr, result, dependents)
+        result = self._preserve_grid_contract(rechunk_expr, result, dependents)
+        if result is not None:
+            # No other dependents (checked above), so ``self`` is fully
+            # replaced: unlink so a transitive rechunk descends this same pass.
+            self._unlink_pushed_dependency(dependents)
+        return result
 
     def _shuffle_pushdown(self, shuffle_expr, dependents):
         """Push ``shuffle_expr`` into ``self`` unless anything else depends
@@ -410,7 +445,12 @@ class ArrayExpr(SingletonExpr):
         if self._other_dependents(shuffle_expr, dependents):
             return None
         result = self._accept_shuffle(shuffle_expr)
-        return self._preserve_grid_contract(shuffle_expr, result, dependents)
+        result = self._preserve_grid_contract(shuffle_expr, result, dependents)
+        if result is not None:
+            # No other dependents (checked above), so ``self`` is fully
+            # replaced: unlink so a transitive shuffle descends this same pass.
+            self._unlink_pushed_dependency(dependents)
+        return result
 
     def optimize(self, fuse: bool = True):
         expr = self.simplify().lower_completely()
