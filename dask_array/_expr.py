@@ -984,18 +984,33 @@ class ChunksFreeze(ArrayExpr):
         # mismatch case is that rewrite's cost, not this node's.
         return TransferBytes(0.0, 0.0)
 
-    def _lower(self):
-        if _chunks_match(self.array.chunks, self._chunks):
-            return self.array
+    def lower_once(self, lowered):
+        try:
+            return lowered[self._name]
+        except KeyError:
+            pass
+
+        # ``Expr.lower_once`` calls ``_lower`` before lowering children, but
+        # this barrier must compare against the child's settled lowered layout.
+        array = self.array
+        while True:
+            new = array.lower_once(lowered)
+            if new._name == array._name:
+                break
+            array = new
+
+        if _chunks_match(array.chunks, self._chunks):
+            return lowered.setdefault(self._name, array)
         if any(math.isnan(s) for dim in self._chunks for s in dim):
             raise RuntimeError(
                 f"optimization changed the block structure under a frozen "
-                f"chunk layout ({self._chunks} -> {self.array.chunks}) and "
+                f"chunk layout ({self._chunks} -> {array.chunks}) and "
                 "the frozen chunks are unknown, so they cannot be restored"
             )
         from dask_array._new_collection import new_collection
 
-        return new_collection(self.array).rechunk(self._chunks).expr
+        out = new_collection(array).rechunk(self._chunks).expr
+        return lowered.setdefault(self._name, out)
 
 
 class RootAlias(ArrayExpr):

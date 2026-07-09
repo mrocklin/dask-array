@@ -1,8 +1,31 @@
+from functools import cached_property
+
 import dask
 import numpy as np
 import pytest
 
 import dask_array as da
+from dask_array._expr import ArrayExpr
+from dask_array._new_collection import new_collection
+
+
+class _LowerOnlyDrift(ArrayExpr):
+    _parameters = ["array"]
+
+    @cached_property
+    def _name(self):
+        return f"lower-only-drift-{self.array._name}"
+
+    @cached_property
+    def _meta(self):
+        return self.array._meta
+
+    @cached_property
+    def chunks(self):
+        return self.array.chunks
+
+    def _lower(self):
+        return self.array.rechunk(((2, 2, 2, 2),))
 
 
 def test_map_blocks_explicit_chunks_preserves_rechunked_slice_block():
@@ -128,7 +151,17 @@ def test_map_blocks_block_info_stable_through_sliding_window_rewrite():
 
     def sentinel(block, block_info=None):
         info = block_info[None]
-        calls.append((info["chunk-location"], block.shape, info["num-chunks"]))
+        input_info = block_info[0]
+        calls.append(
+            (
+                info["chunk-location"],
+                block.shape,
+                info["num-chunks"],
+                input_info["chunk-location"],
+                input_info["array-location"],
+                input_info["num-chunks"],
+            )
+        )
         return np.zeros((1, 1), dtype="uint8")
 
     out = r.map_blocks(sentinel, dtype="uint8", chunks=(1, 1), meta=np.array((), dtype="uint8"))
@@ -138,9 +171,13 @@ def test_map_blocks_block_info_stable_through_sliding_window_rewrite():
     result = out.compute(scheduler="sync")
     assert result.shape == numblocks
     assert len(calls) == np.prod(numblocks)
-    for loc, shape, num_chunks in calls:
+    starts = [np.cumsum((0,) + c) for c in advertised]
+    for loc, shape, num_chunks, input_loc, input_array_location, input_num_chunks in calls:
         assert num_chunks == numblocks
         assert shape == tuple(c[i] for c, i in zip(advertised, loc))
+        assert input_loc == loc
+        assert input_num_chunks == numblocks
+        assert input_array_location == [(starts[axis][i], starts[axis][i + 1]) for axis, i in enumerate(loc)]
 
 
 def test_map_blocks_block_info_one_task_per_day_through_rolling_slice_rechunk():
@@ -215,6 +252,27 @@ def test_freeze_chunks_pins_layout_without_materializing():
     # The layout promise survives optimization; the raw expression's doesn't.
     assert frozen.optimize().chunks == advertised
     np.testing.assert_array_equal(frozen.compute(), r.compute())
+
+
+def test_map_blocks_block_info_stable_through_lower_time_chunk_drift():
+    x = da.from_array(np.arange(8), chunks=(4,))
+    arr = new_collection(_LowerOnlyDrift(x.expr))
+    assert arr.chunks == ((4, 4),)
+
+    calls = []
+
+    def sentinel(block, block_info=None):
+        input_info = block_info[0]
+        calls.append((block.shape, input_info["chunk-location"], input_info["array-location"]))
+        return np.array([block.shape[0]], dtype="int64")
+
+    out = arr.map_blocks(sentinel, dtype="int64", chunks=(1,), meta=np.array((), dtype="int64"))
+
+    np.testing.assert_array_equal(out.compute(scheduler="sync"), np.array([4, 4]))
+    assert sorted(calls) == [
+        ((4,), (0,), [(0, 4)]),
+        ((4,), (1,), [(4, 8)]),
+    ]
 
 
 def test_map_blocks_auto_freeze_leaves_no_graph_residue_without_drift():
