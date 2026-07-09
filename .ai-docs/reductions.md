@@ -183,6 +183,26 @@ def arg_chunk(func, argfunc, x, axis, offset_info):
     return result
 ```
 
+## Sliding-Window Reductions
+
+`reduction(sliding_window_view(x, W), axis=window_axis)` fuses into a single
+kernel (`SlidingWindowView._simplify_up` in `_overlap.py`) — windows are never
+materialized. When the window exceeds the chunk size, the fusion emits
+`SlidingWindowReduction` (`reductions/_sliding_window.py`), which keeps the
+input's **native chunks**: each output block combines a suffix scan of its own
+block, keepdims totals of fully covered blocks, and a prefix scan of the
+right-edge band. `MapOverlap` similarly recognizes `bottleneck.move_*`
+(xarray's rolling path) and rewrites to `MovingWindowReduction` — same-length
+trailing-window semantics with `min_count` NaN masking, chunks == input
+chunks. Both rewrites happen during simplify so downstream elemwise
+unification sees native chunks; `MapOverlap.chunks` advertises them up front.
+Supported reducers live in `NATIVE_SLIDING_REDUCERS`; `var`/`nanvar` and
+oversized chunks fall back to the overlap path. Both expressions have
+binary-records Frisky layers (`crates/dask-array-python/src/sliding_window.rs`,
+wrappers in `_frisky/sliding_window.py`): the banded plan is computed in
+Python (`_block_plan`), Rust walks the grid; per-block ints ride as positional
+`Scalar` slots so nothing declines to the adapter tier.
+
 ## Cumulative Reductions
 
 Sequential pattern for `cumsum`, `cumprod`:

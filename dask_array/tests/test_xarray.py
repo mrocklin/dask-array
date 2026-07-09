@@ -93,6 +93,35 @@ def test_xarray_rolling_bottleneck_short_first_chunk():
     np.testing.assert_allclose(result.values, expected.values)
 
 
+@pytest.mark.parametrize("op", ["sum", "mean", "min", "max"])
+@pytest.mark.parametrize("center", [False, True])
+def test_xarray_rolling_long_window_keeps_native_chunks(op, center):
+    # DataArray.rolling on dask data takes the bottleneck map_overlap path;
+    # a window several times the time chunk must keep the input's native
+    # chunking instead of rechunking up to the window.
+    pytest.importorskip("bottleneck")
+    from dask_array.reductions._sliding_window import MovingWindowReduction
+
+    da.xarray.register()
+    rng = np.random.default_rng(0)
+    data = rng.normal(size=(13 * 96, 4))
+    data[rng.random(data.shape) < 0.15] = np.nan
+    x = da.from_array(data, chunks=(96, 4))
+    window = 480  # five 96-element chunks
+
+    lazy = getattr(xr.DataArray(x, dims=["time", "asset"]).rolling(time=window, center=center), op)()
+    eager = getattr(xr.DataArray(data, dims=["time", "asset"]).rolling(time=window, center=center), op)()
+
+    optimized = lazy.data.expr.optimize()
+    assert _contains_expr_type(optimized, MovingWindowReduction)
+    assert not _contains_expr_type(optimized, TasksRechunk)
+    if not center:  # centered rolling pads, then slices the result back
+        assert optimized.chunks == x.chunks
+    got = lazy.compute().values
+    np.testing.assert_allclose(got, eager.values, rtol=1e-13, atol=1e-13, equal_nan=True)
+    np.testing.assert_array_equal(np.isnan(got), np.isnan(eager.values))
+
+
 def test_xarray_rolling_head_slice_inside_first_window():
     # Slice pushdown used to shrink the rolling's input to window - 1 rows
     # (expanded extent == depth exactly), handing bottleneck a block it must

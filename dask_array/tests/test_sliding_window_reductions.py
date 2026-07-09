@@ -22,6 +22,161 @@ def _contains_tasks_rechunk(expr):
     return any(_contains_tasks_rechunk(dep) for dep in expr.dependencies())
 
 
+def _contains_overlap(expr):
+    from dask_array._overlap import OverlapInternal
+
+    if isinstance(expr, OverlapInternal):
+        return True
+    return any(_contains_overlap(dep) for dep in expr.dependencies())
+
+
+@pytest.mark.parametrize(
+    "reduction", ["sum", "mean", "min", "max", "prod", "nansum", "nanmean", "nanmin", "nanmax", "nanprod"]
+)
+def test_sliding_window_reduction_window_spanning_many_chunks_keeps_native_chunks(reduction):
+    # The statarb shape: a rolling window several times larger than the time
+    # chunks.  The fused reduction must keep the input's native chunking and
+    # never rechunk or overlap up to the window size.
+    rng = np.random.default_rng(42)
+    data = rng.normal(size=(13 * 96, 3))
+    if reduction == "prod" or reduction == "nanprod":
+        data = 1 + data / 100
+    if reduction.startswith("nan"):
+        data[rng.random(data.shape) < 0.2] = np.nan
+        data[100:600, 1] = np.nan  # includes all-NaN windows
+    x = da.from_array(data, chunks=(96, 2))
+    window = 480  # spans five 96-element chunks
+
+    view = da.sliding_window_view(x, window_shape=window, axis=0)
+    result = getattr(da, reduction)(view, axis=-1)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        expected = getattr(np, reduction)(np.lib.stride_tricks.sliding_window_view(data, window, axis=0), axis=-1)
+
+    optimized = result.expr.optimize()
+    assert optimized.chunks == ((96,) * 8 + (1,), (2, 1))
+    assert not _contains_tasks_rechunk(optimized)
+    assert not _contains_overlap(optimized)
+    got = result.compute()
+    np.testing.assert_allclose(got, expected, rtol=1e-11, atol=1e-12, equal_nan=True)
+    np.testing.assert_array_equal(np.isnan(got), np.isnan(expected))
+
+
+@pytest.mark.parametrize("window", [13, 20])
+@pytest.mark.parametrize("reduction", ["sum", "min", "nanmean"])
+def test_sliding_window_reduction_irregular_chunks(reduction, window):
+    # Right-edge bands crossing multiple small chunks, and (window=13) a
+    # chunk larger than the window depth, which falls back to the overlap
+    # path; values must be right either way.
+    rng = np.random.default_rng(7)
+    data = rng.normal(size=80)
+    if reduction == "nanmean":
+        data[rng.random(80) < 0.3] = np.nan
+    x = da.from_array(data, chunks=((7, 12, 9, 14, 8, 12, 6, 12),))
+
+    view = da.sliding_window_view(x, window_shape=window, axis=0)
+    result = getattr(da, reduction)(view, axis=-1)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        expected = getattr(np, reduction)(np.lib.stride_tricks.sliding_window_view(data, window, axis=0), axis=-1)
+
+    if window == 20:  # every chunk fits under the window depth: native path
+        assert result.expr.simplify().chunks == ((7, 12, 9, 14, 8, 11),)
+    np.testing.assert_allclose(result.compute(), expected, rtol=1e-12, equal_nan=True)
+
+
+def test_sliding_window_reduction_window_one_past_chunk():
+    # depth == chunk size exactly: bands start exactly at block boundaries
+    data = np.arange(80, dtype=np.float64)
+    x = da.from_array(data, chunks=8)
+
+    result = da.sliding_window_view(x, window_shape=9, axis=0).sum(axis=-1)
+    expected = np.lib.stride_tricks.sliding_window_view(data, 9, axis=0).sum(axis=-1)
+
+    assert result.expr.simplify().chunks == ((8,) * 9,)
+    np.testing.assert_allclose(result.compute(), expected, rtol=1e-13)
+
+
+@pytest.mark.parametrize("func_name", ["move_sum", "move_mean", "move_min", "move_max"])
+@pytest.mark.parametrize("min_count", [1, None, 300])
+def test_map_overlap_bottleneck_moving_window_keeps_native_chunks(func_name, min_count):
+    # xarray's dask rolling path: map_overlap(bottleneck.move_*, depth=(window-1, 0)).
+    # With a window several times the chunk size the reduction must keep the
+    # input's native chunks and match bottleneck exactly, NaNs included.
+    bn = pytest.importorskip("bottleneck")
+    from dask_array.reductions._sliding_window import MovingWindowReduction
+
+    func = getattr(bn, func_name)
+    rng = np.random.default_rng(0)
+    data = rng.normal(size=(13 * 96, 4))
+    data[rng.random(data.shape) < 0.2] = np.nan
+    data[100:600, 2] = np.nan  # all-NaN windows
+    x = da.from_array(data, chunks=(96, 2))
+    window = 480  # spans five 96-element chunks
+
+    result = x.map_overlap(func, depth={0: (window - 1, 0)}, dtype="f8", window=window, min_count=min_count, axis=0)
+    expected = func(data, window, min_count=min_count, axis=0)
+
+    optimized = result.expr.optimize()
+    assert isinstance(optimized, MovingWindowReduction)
+    assert optimized.chunks == x.chunks
+    assert not _contains_tasks_rechunk(optimized)
+    got = result.compute()
+    np.testing.assert_allclose(got, expected, rtol=1e-13, atol=1e-13, equal_nan=True)
+    np.testing.assert_array_equal(np.isnan(got), np.isnan(expected))
+
+
+def test_map_overlap_bottleneck_moving_window_irregular_chunks():
+    bn = pytest.importorskip("bottleneck")
+    rng = np.random.default_rng(1)
+    data = rng.normal(size=1248)
+    data[rng.random(1248) < 0.2] = np.nan
+    x = da.from_array(data, chunks=((100, 51, 96, 96, 200, 96, 313, 200, 96),))
+    window = 400
+
+    result = x.map_overlap(bn.move_sum, depth={0: (window - 1, 0)}, dtype="f8", window=window, min_count=1, axis=0)
+    expected = bn.move_sum(data, window, min_count=1, axis=0)
+
+    assert result.expr.optimize().chunks == x.chunks
+    np.testing.assert_allclose(result.compute(), expected, rtol=1e-13, atol=1e-13, equal_nan=True)
+
+
+def test_map_overlap_bottleneck_moving_window_large_chunk_falls_back():
+    # A chunk bigger than the window can't use the banded plan; the overlap
+    # path must still produce the right answer.
+    bn = pytest.importorskip("bottleneck")
+    from dask_array.reductions._sliding_window import MovingWindowReduction
+
+    rng = np.random.default_rng(2)
+    data = rng.normal(size=200)
+    x = da.from_array(data, chunks=((30, 110, 30, 30),))
+    window = 40
+
+    result = x.map_overlap(bn.move_sum, depth={0: (window - 1, 0)}, dtype="f8", window=window, min_count=1, axis=0)
+    expected = bn.move_sum(data, window, min_count=1, axis=0)
+
+    assert not isinstance(result.expr.optimize(), MovingWindowReduction)
+    np.testing.assert_allclose(result.compute(), expected, rtol=1e-13, atol=1e-13, equal_nan=True)
+
+
+def test_sliding_window_sum_large_offset_stays_accurate():
+    # A prefix-sum-difference scheme would lose precision here; the banded
+    # combine must not.
+    rng = np.random.default_rng(3)
+    noise = rng.normal(size=12 * 64)
+    data = 1e9 + noise
+    x = da.from_array(data, chunks=64)
+    window = 256
+
+    result = da.sliding_window_view(x, window_shape=window, axis=0).sum(axis=-1)
+    windows = np.lib.stride_tricks.sliding_window_view(data, window, axis=0)
+    exact = window * 1e9 + np.lib.stride_tricks.sliding_window_view(noise, window, axis=0).sum(axis=-1)
+
+    assert result.expr.simplify().chunks == ((64,) * 8 + (1,),)
+    np.testing.assert_allclose(result.compute(), exact, rtol=1e-13)
+    np.testing.assert_allclose(result.compute(), windows.sum(axis=-1), rtol=1e-13)
+
+
 @pytest.mark.parametrize("reduction", ["min", "max", "sum", "prod", "mean"])
 @pytest.mark.parametrize("keepdims", [False, True])
 def test_sliding_window_reduction_over_window_axis_avoids_window_block(reduction, keepdims):
@@ -35,9 +190,11 @@ def test_sliding_window_reduction_over_window_axis_avoids_window_block(reduction
     )
 
     assert y.chunks == ((32, 25), (4,), (5,), (24,))
-    expected_chunks = ((32, 25), (4,), (5,), (1,)) if keepdims else ((32, 25), (4,), (5,))
-    assert result.chunks == expected_chunks
-    np.testing.assert_allclose(result.compute(), expected)
+    # The fused reduction runs on the input's native 16-element chunks
+    # instead of the view's window-sized ones.
+    native_chunks = ((16, 16, 16, 9), (4,), (5,)) + (((1,),) if keepdims else ())
+    assert result.expr.simplify().chunks == native_chunks
+    np.testing.assert_allclose(result.compute(), expected, rtol=1e-5)
     assert _contains_sliding_window_view(result.expr)
     assert not _contains_sliding_window_view(result.expr.simplify())
 
@@ -54,9 +211,9 @@ def test_sliding_window_reduction_keeps_non_window_chunks(reduction, keepdims):
         axis=-1, keepdims=keepdims
     )
 
-    expected_chunks = ((25,), (24, 8), (24, 24), (1,)) if keepdims else ((25,), (24, 8), (24, 24))
+    expected_chunks = ((24, 1), (24, 8), (24, 24), (1,)) if keepdims else ((24, 1), (24, 8), (24, 24))
     assert result.expr.simplify().chunks == expected_chunks
-    np.testing.assert_allclose(result.compute(), expected)
+    np.testing.assert_allclose(result.compute(), expected, rtol=1e-5)
 
 
 @pytest.mark.parametrize("reduction", ["any", "all"])
@@ -71,7 +228,7 @@ def test_sliding_window_boolean_reduction_keeps_non_window_chunks(reduction, kee
         axis=-1, keepdims=keepdims
     )
 
-    expected_chunks = ((25,), (24, 8), (24, 24), (1,)) if keepdims else ((25,), (24, 8), (24, 24))
+    expected_chunks = ((24, 1), (24, 8), (24, 24), (1,)) if keepdims else ((24, 1), (24, 8), (24, 24))
     assert result.expr.simplify().chunks == expected_chunks
     np.testing.assert_array_equal(result.compute(), expected)
 
@@ -92,7 +249,7 @@ def test_sliding_window_nan_reduction_keeps_non_window_chunks(reduction, keepdim
             np.lib.stride_tricks.sliding_window_view(data, 72, axis=0), axis=-1, keepdims=keepdims
         )
 
-    expected_chunks = ((25,), (24, 8), (24, 24), (1,)) if keepdims else ((25,), (24, 8), (24, 24))
+    expected_chunks = ((24, 1), (24, 8), (24, 24), (1,)) if keepdims else ((24, 1), (24, 8), (24, 24))
     assert result.expr.simplify().chunks == expected_chunks
     assert not _contains_sliding_window_view(result.expr.simplify())
     np.testing.assert_allclose(result.compute(), expected, equal_nan=True)

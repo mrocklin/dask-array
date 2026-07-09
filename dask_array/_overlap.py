@@ -217,6 +217,12 @@ class MapOverlap(ArrayExpr):
 
     @functools.cached_property
     def chunks(self):
+        # A recognized moving-window reduction keeps the input's native chunks
+        # (see _native_moving_window); advertising them here keeps chunk-based
+        # decisions made at construction time (rechunk elision, map_blocks
+        # adjust_chunks) consistent with the simplified expression.
+        if self._native_moving_window is not None:
+            return self._native_moving_window.chunks
         # If allow_rechunk, the input is rechunked to ensure minimum chunk size >= depth
         primary = self._get_primary_array()
         primary_idx = self._get_primary_index()
@@ -357,11 +363,70 @@ class MapOverlap(ArrayExpr):
         else:
             return new_expr
 
+    def _simplify_down(self):
+        """Rewrite ``map_overlap(bottleneck.move_*)`` onto the input's native
+        chunks.  This must happen during simplify, before elemwise chunk
+        unification would bake in coarsened chunks."""
+        return self._native_moving_window
+
+    @functools.cached_property
+    def _native_moving_window(self):
+        """The ``MovingWindowReduction`` replacing this
+        ``map_overlap(bottleneck.move_*)`` — xarray's dask rolling path — when
+        the overlap path would rechunk the input's native chunks up to the
+        window size.  None when the pattern or chunking doesn't fit."""
+        from dask_array.reductions._sliding_window import (
+            MOVING_WINDOW_REDUCERS,
+            MovingWindowReduction,
+            supports_native_moving_window,
+        )
+
+        reducer = MOVING_WINDOW_REDUCERS.get(getattr(self.func, "__name__", ""))
+        if reducer is None or (getattr(self.func, "__module__", None) or "").split(".")[0] != "bottleneck":
+            return None
+        if len(self.arrays) != 1 or not self.trim_output:
+            return None
+        kwargs = self._kwargs
+        if set(kwargs) - {"axis", "window", "min_count", "dtype", "meta"}:
+            return None
+        window = kwargs.get("window")
+        min_count = kwargs.get("min_count")
+        axis = kwargs.get("axis", -1)
+        if not isinstance(window, Integral) or window < 1 or not isinstance(axis, Integral):
+            return None
+        if min_count is not None and (not isinstance(min_count, Integral) or not 1 <= min_count <= window):
+            return None
+        x = self.array
+        axis = validate_axis(int(axis), x.ndim)
+        depth = self.depth[0]
+        boundary = self.boundary[0]
+        for ax in range(x.ndim):
+            d = depth.get(ax, 0)
+            if ax == axis:
+                if d != (window - 1, 0):
+                    return None
+                if boundary.get(ax, "none") != "none":
+                    return None
+            elif d not in (0, (0, 0)):
+                return None
+        dtype = self._meta.dtype
+        if not np.issubdtype(dtype, np.floating):
+            return None
+        if not supports_native_moving_window(x.chunks[axis], int(window)):
+            return None
+        return MovingWindowReduction(
+            x, int(window), None if min_count is None else int(min_count), axis, reducer, dtype
+        )
+
     def _lower(self):
         """Expand to the full overlap pipeline.
 
         This expands to: rechunk -> boundaries -> overlap_internal -> map_blocks -> trim
         """
+        # Normally handled during simplify; direct lowering must match.
+        if self._native_moving_window is not None:
+            return self._native_moving_window
+
         # Apply overlap to each input array
         overlapped = []
         for arr, d, b in zip(self.arrays, self.depth, self.boundary):
@@ -472,6 +537,27 @@ class SlidingWindowView(Blockwise):
                     matches_generated_overlap &= value == 0 or value == (0, 0)
 
             if matches_generated_overlap:
+                from dask_array.reductions._sliding_window import (
+                    SlidingWindowReduction,
+                    NATIVE_SLIDING_REDUCERS,
+                    supports_native_sliding_window,
+                )
+
+                if reducer in NATIVE_SLIDING_REDUCERS and supports_native_sliding_window(
+                    rechunk.array.chunks[sliding_axis], window
+                ):
+                    # The overlap path would coarsen chunks up to the window;
+                    # compute on the input's native chunks instead.
+                    return SlidingWindowReduction(
+                        rechunk.array,
+                        window,
+                        sliding_axis,
+                        window_axis,
+                        parent.keepdims,
+                        reducer,
+                        parent.dtype,
+                    )
+
                 # The parent reduction removes the materialized window axis, so
                 # keep automatic rechunking limited to the rolling axis.
                 reduced_input_chunks = list(rechunk.array.chunks)

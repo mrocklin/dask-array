@@ -563,6 +563,121 @@ def test_from_array_getter_uses_binary_records_chunk():
     assert holder[1].__name__ == "identity" and holder[2][0] is src and holder[4] == []
 
 
+@pytest.mark.parametrize("reduction, keepdims", [("sum", False), ("nanmean", False), ("min", True)])
+def test_sliding_window_reduction_uses_binary_records(reduction, keepdims):
+    """The native-chunk banded sliding-window reduction (long rolling windows)
+    emits one binary chunk — per output block a reduce task over its own block,
+    a list of middle-block totals, the right-edge band blocks, and two scalar
+    slots — instead of falling to the legacy-graph adapter."""
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    rng = np.random.default_rng(0)
+    data = rng.normal(size=(96, 6))
+    data[rng.random(data.shape) < 0.2] = np.nan
+    x = da.from_array(data, chunks=((7, 12, 9, 14, 8, 12, 6, 12, 16), (4, 2)))
+    view = da.sliding_window_view(x, window_shape=20, axis=0)
+    y = getattr(da, reduction)(view, axis=-1, keepdims=keepdims)
+
+    expr = [e for e in y._lowered_expr.walk() if type(e).__name__ == "SlidingWindowReduction"][0]
+    assert expr._frisky_layer().to_records_chunk()  # binary, not the adapter
+
+    chunks, records, chunk_groups = y.__frisky_records_chunks__()
+    assert expr._name in {name for name, _meta, _up in chunk_groups}
+    assert not any(r[0].startswith(f"('{expr._name}'") for r in records)
+
+    # binary chunk decodes to the banded task shape: per output block
+    # (block, [middle totals], [band blocks], out_len, band_offset)
+    _names, _dep_names, tasks = _decode_layer_chunk(_chunk_for_expr(y, expr))
+    out_tasks = [t for t in tasks if t[0] == expr._name]
+    assert len(out_tasks) == len(list(flatten(expr.__dask_keys__())))
+    assert any(t[0] == f"{expr._name}-total" for t in tasks)  # window spans middle blocks
+    for _name, _coord, _nbytes, compute, slots in out_tasks:
+        assert compute == ("call", 0)
+        dep, mids, band, out_len, band_offset = slots
+        assert dep[:2] == ("dep", expr.array._name)
+        assert mids[0] == "list" and all(s[:2] == ("dep", f"{expr._name}-total") for s in mids[1])
+        assert band[0] == "list" and band[1] and all(s[:2] == ("dep", expr.array._name) for s in band[1])
+        assert out_len[0] == "scalar" and band_offset[0] == "scalar"
+
+    # native records graph is value-identical to the legacy graph
+    dep_graph = {}
+    for dep in expr.dependencies():
+        dep_graph.update(dict(dep.__dask_graph__()))
+    legacy_graph = expr._layer()
+    native_graph = expr._frisky_layer().to_dask_graph()
+    for key in flatten(expr.__dask_keys__()):
+        expected = get_sync({**dep_graph, **legacy_graph}, key)
+        actual = get_sync({**dep_graph, **native_graph}, key)
+        np.testing.assert_array_equal(actual, expected)
+
+
+@pytest.mark.parametrize("min_count", [1, None])
+def test_moving_window_reduction_uses_binary_records(min_count):
+    """The native-chunk trailing-window reduction (xarray's bottleneck rolling
+    path) emits one binary chunk, including the array-start block with no band
+    (empty list slots) and truncated leading windows."""
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    bn = pytest.importorskip("bottleneck")
+    rng = np.random.default_rng(0)
+    data = rng.normal(size=(96, 4))
+    data[rng.random(data.shape) < 0.2] = np.nan
+    x = da.from_array(data, chunks=((7, 12, 9, 14, 8, 12, 6, 12, 16), (4,)))
+    y = x.map_overlap(bn.move_sum, depth={0: (19, 0)}, dtype="f8", window=20, min_count=min_count, axis=0)
+
+    expr = [e for e in y._lowered_expr.walk() if type(e).__name__ == "MovingWindowReduction"][0]
+    assert expr._frisky_layer().to_records_chunk()  # binary, not the adapter
+
+    chunks, records, chunk_groups = y.__frisky_records_chunks__()
+    assert expr._name in {name for name, _meta, _up in chunk_groups}
+    assert not any(r[0].startswith(f"('{expr._name}'") for r in records)
+
+    # binary chunk decodes to the banded task shape; the array-start block has
+    # no band and no middles (empty list slots)
+    _names, _dep_names, tasks = _decode_layer_chunk(_chunk_for_expr(y, expr))
+    out_tasks = [t for t in tasks if t[0] == expr._name]
+    assert len(out_tasks) == len(list(flatten(expr.__dask_keys__())))
+    for _name, coord, _nbytes, compute, slots in out_tasks:
+        assert compute == ("call", 0)
+        dep, mids, band, n_trunc, band_offset = slots
+        assert dep[:2] == ("dep", expr.array._name)
+        assert mids[0] == "list" and band[0] == "list"
+        assert n_trunc[0] == "scalar" and band_offset[0] == "scalar"
+        if coord[0] == 0:
+            assert mids[1] == () and band[1] == ()
+        else:
+            assert band[1] and all(s[:2] == ("dep", expr.array._name) for s in band[1])
+
+    dep_graph = {}
+    for dep in expr.dependencies():
+        dep_graph.update(dict(dep.__dask_graph__()))
+    legacy_graph = expr._layer()
+    native_graph = expr._frisky_layer().to_dask_graph()
+    for key in flatten(expr.__dask_keys__()):
+        expected = get_sync({**dep_graph, **legacy_graph}, key)
+        actual = get_sync({**dep_graph, **native_graph}, key)
+        np.testing.assert_array_equal(actual, expected)
+
+
+def test_banded_layer_gate_drift_degrades_instead_of_panicking():
+    """The Rust banded layers validate the plan invariants the Python gates
+    guarantee (band past the block's own start/end).  If gate and layer ever
+    drift, the constructor raises NotImplementedError — which the collect walk
+    turns into the adapter tier — rather than panicking mid-emission."""
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    from dask_array.reductions._sliding_window import MovingWindowReduction, SlidingWindowReduction
+
+    x = da.from_array(np.arange(36.0), chunks=((3, 30, 3),))
+    # both violate the gates: a chunk larger than the window
+    moving = MovingWindowReduction(x.expr, 5, 1, 0, "nansum", np.dtype("f8"))
+    with pytest.raises(NotImplementedError):
+        moving._frisky_layer()
+    sliding = SlidingWindowReduction(x.expr, 10, 0, 1, False, "sum", np.dtype("f8"))
+    with pytest.raises(NotImplementedError):
+        sliding._frisky_layer()
+
+
 def test_arg_reduction_chunk_uses_binary_records():
     """The per-block chunk step of an arg reduction (argmax/argmin) goes binary.
     It carries the shared reduction ``axis`` as an int-tuple slot rather than a

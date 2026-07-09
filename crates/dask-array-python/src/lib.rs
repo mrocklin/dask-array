@@ -45,6 +45,7 @@ mod reduction;
 mod reshape;
 mod shuffle;
 mod slicing;
+mod sliding_window;
 mod squeeze;
 mod stack;
 
@@ -55,7 +56,7 @@ mod stack;
 /// coordinate on is the binary records grammar (`common::RECORDS_PROTOCOL_VERSION`
 /// ↔ Frisky's `records_proto::CHUNK_GRAMMAR_VERSION`), which only moves when the
 /// chunk byte-grammar changes — not when a layer is added.
-const NATIVE_BUILD_GENERATION: usize = 38;
+const NATIVE_BUILD_GENERATION: usize = 39;
 
 #[pyfunction]
 fn native_build_generation() -> usize {
@@ -108,6 +109,8 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<reshape::ReshapeLayer>()?;
     m.add_class::<shuffle::ShuffleLayer>()?;
     m.add_class::<slicing::SliceLayer>()?;
+    m.add_class::<sliding_window::SlidingWindowReductionLayer>()?;
+    m.add_class::<sliding_window::MovingWindowReductionLayer>()?;
     m.add_class::<squeeze::SqueezeLayer>()?;
     m.add_class::<stack::StackLayer>()?;
     Ok(())
