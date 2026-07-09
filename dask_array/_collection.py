@@ -11,7 +11,7 @@ import numpy as np
 from dask import config
 from dask_array import _chunk as chunk
 from dask_array._new_collection import new_collection
-from dask_array._expr import ArrayExpr, RootAlias
+from dask_array._expr import ArrayExpr, ChunksFreeze, RootAlias, _chunks_match
 from dask_array.manipulation._transpose import Transpose
 from dask_array._chunk_types import is_valid_chunk_type
 from dask.base import DaskMethodsMixin, is_dask_collection, named_schedulers
@@ -194,16 +194,6 @@ def _materialize(expr, optimize_graph=None):
             )
         expr = RootAlias(expr, name)
     return expr
-
-
-def _chunks_match(a, b):
-    """Chunk equality, treating unknown (nan) sizes as matching."""
-    if len(a) != len(b):
-        return False
-    return all(
-        len(da) == len(db) and all(sa == sb or (math.isnan(sa) and math.isnan(sb)) for sa, sb in zip(da, db))
-        for da, db in zip(a, b)
-    )
 
 
 class Array(DaskMethodsMixin):
@@ -395,6 +385,21 @@ class Array(DaskMethodsMixin):
         exactly ``__dask_graph__``/``__dask_keys__``, on every entry point.
         """
         return new_collection(self._lowered_expr)
+
+    def freeze_chunks(self):
+        """This collection with its advertised chunk layout pinned through
+        optimization.
+
+        The cheap alternative to ``_pinned()`` when only the *layout* needs
+        freezing (e.g. before a ``map_blocks`` whose function consumes
+        ``block_info``): wrapping costs one expression node and runs no
+        simplify/lower/fuse now. At materialization the wrapper vanishes if
+        the optimized layout already matches, or rechunks back to the frozen
+        layout if a rewrite changed it.
+        """
+        if isinstance(self.expr, (ChunksFreeze, RootAlias)):
+            return self
+        return new_collection(ChunksFreeze(self.expr, self.chunks))
 
     def optimize(self):
         if self.__dict__.get("_optimized", False):

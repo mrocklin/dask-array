@@ -11,7 +11,7 @@ from toolz import concat
 from dask_array._collection import Array, blockwise
 from dask_array._core_utils import _pass_extra_kwargs, apply_and_enforce, apply_infer_dtype
 from dask_array._utils import compute_meta
-from dask_array._expr import ArrayExpr
+from dask_array._expr import ArrayExpr, ChunksFreeze, RootAlias
 from dask_array._new_collection import new_collection
 from dask._task_spec import Task, TaskRef
 from dask.layers import ArrayBlockIdDep, ArrayBlockwiseDep, ArrayValuesDep
@@ -292,6 +292,22 @@ def map_blocks(
         drop_axis = [drop_axis]
     if isinstance(new_axis, Number):
         new_axis = [new_axis]  # TODO: handle new_axis
+
+    if has_keyword(func, "block_id") or has_keyword(func, "block_info"):
+        # The block_id/block_info payloads built below are literals frozen to
+        # the inputs' advertised chunk layout at construction time, but a
+        # later simplify rewrite may put an input onto a different layout
+        # (e.g. the native sliding-window reductions trade the advertised
+        # coarsened chunks for the input's native ones), silently
+        # desynchronizing the frozen payloads from the tasks that feed them.
+        # Freeze each array input's layout so the lowered graph provably
+        # matches what the payloads describe.
+        args = [
+            Array(ChunksFreeze(a.expr, a.chunks))
+            if isinstance(a, Array) and not isinstance(a.expr, (ChunksFreeze, RootAlias))
+            else a
+            for a in args
+        ]
 
     arrs = [a for a in args if isinstance(a, Array)]
 

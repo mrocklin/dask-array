@@ -935,6 +935,69 @@ class ChunksOverride(ArrayExpr):
         return dsk
 
 
+def _chunks_match(a, b):
+    """Chunk equality, treating unknown (nan) sizes as matching."""
+    if len(a) != len(b):
+        return False
+    return all(
+        len(da) == len(db) and all(sa == sb or (math.isnan(sa) and math.isnan(sb)) for sa, sb in zip(da, db))
+        for da, db in zip(a, b)
+    )
+
+
+class ChunksFreeze(ArrayExpr):
+    """Pin an expression's advertised chunk layout through optimization.
+
+    Some graphs freeze layout-derived metadata at construction time — most
+    importantly ``map_blocks`` with a ``block_info``/``block_id`` consumer,
+    whose per-block dictionaries are literals keyed by block id.  But
+    simplification may legitimately rewrite the underlying expression onto a
+    different chunk layout (e.g. the native sliding-window reductions trade
+    the advertised coarsened chunks for the input's native ones), silently
+    desynchronizing that frozen metadata from the tasks that feed it.
+
+    This node re-asserts the layout advertised at construction: it is inert
+    during simplify (no rewrite pattern crosses it, and it never rewrites
+    itself), and at lowering time — after simplify has settled — it vanishes
+    when the layout already matches, or becomes a rechunk back to the frozen
+    layout when it does not.  Wrapping costs one node; nothing is simplified,
+    lowered, or fused until the graph is actually materialized.
+    """
+
+    _parameters = ["array", "_chunks"]
+
+    @functools.cached_property
+    def _name(self):
+        return f"chunks-freeze-{self.deterministic_token}"
+
+    @functools.cached_property
+    def _meta(self):
+        return self.array._meta
+
+    @functools.cached_property
+    def chunks(self):
+        return self._chunks
+
+    @functools.cached_property
+    def transfer_bytes(self):
+        # Vanishes at lowering when the layout holds; the rechunk in the
+        # mismatch case is that rewrite's cost, not this node's.
+        return TransferBytes(0.0, 0.0)
+
+    def _lower(self):
+        if _chunks_match(self.array.chunks, self._chunks):
+            return self.array
+        if any(math.isnan(s) for dim in self._chunks for s in dim):
+            raise RuntimeError(
+                f"optimization changed the block structure under a frozen "
+                f"chunk layout ({self._chunks} -> {self.array.chunks}) and "
+                "the frozen chunks are unknown, so they cannot be restored"
+            )
+        from dask_array._new_collection import new_collection
+
+        return new_collection(self.array).rechunk(self._chunks).expr
+
+
 class RootAlias(ArrayExpr):
     """Pin an optimized expression's output keys to a stable public name.
 
