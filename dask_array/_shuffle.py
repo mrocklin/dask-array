@@ -393,6 +393,7 @@ class Shuffle(ArrayExpr):
             self.array.chunks,
             self.axis,
             self._new_chunks,
+            self.dtype,
         )
 
     def _layer(self) -> dict:

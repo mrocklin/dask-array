@@ -67,6 +67,7 @@ impl ArangeLayer {
     fn expand(&self) -> Expanded<'_> {
         let tasks = (0..self.sizes.len())
             .map(|i| NeutralTask {
+                nbytes: 0,
                 name_idx: 0,
                 coord: vec![i as u32],
                 compute: Compute::Call { func_idx: 0 },

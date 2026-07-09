@@ -83,6 +83,7 @@ impl CoarsenLayer {
 
         for _ in 0..total {
             tasks.push(NeutralTask {
+                nbytes: 0,
                 name_idx: 0,
                 coord: coord.clone(),
                 compute: Compute::Call { func_idx: 0 },

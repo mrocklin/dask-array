@@ -130,7 +130,14 @@ class OverlapInternal(ArrayExpr):
     def _frisky_layer(self):
         from dask_array._frisky import OverlapLayer
 
-        return OverlapLayer(self._name, self.array._name, self.array.numblocks, self.axes)
+        return OverlapLayer(
+            self._name,
+            self.array._name,
+            self.array.numblocks,
+            self.axes,
+            self.array.chunks,
+            self.dtype,
+        )
 
 
 class MapOverlap(ArrayExpr):

@@ -15,8 +15,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
 
 use crate::common::{
-    to_dask_graph, to_records_chunk, to_task_records, ArgSlot, Compute, Expanded, IndexElem,
-    NeutralTask,
+    grid_nbytes, to_dask_graph, to_records_chunk, to_task_records, ArgSlot, Compute, Expanded,
+    IndexElem, NeutralTask,
 };
 
 #[derive(Clone, Copy)]
@@ -34,12 +34,17 @@ pub struct OverlapLayer {
     kwargs: Py<PyAny>,
     numblocks: Vec<u32>,
     depths: Vec<Depth>,
+    /// Per-dimension source chunk sizes — only for expected-nbytes stamps.
+    chunks: Vec<Vec<i64>>,
+    /// Source/output dtype itemsize for stamps; 0 disables stamping.
+    itemsize: i64,
 }
 
 #[pymethods]
 impl OverlapLayer {
     /// `axis_depths`: `(axis, left_depth, right_depth)` for axes with overlap.
     #[new]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         name: String,
         dep_name: String,
@@ -48,6 +53,8 @@ impl OverlapLayer {
         kwargs: Py<PyAny>,
         numblocks: Vec<u32>,
         axis_depths: Vec<(usize, i64, i64)>,
+        chunks: Vec<Vec<i64>>,
+        itemsize: i64,
     ) -> PyResult<Self> {
         if numblocks.iter().any(|n| *n == 0) {
             return Err(PyValueError::new_err(
@@ -67,6 +74,11 @@ impl OverlapLayer {
         }
 
         let getitem_name = format!("{name}-getitem");
+        let itemsize = if chunks.len() == numblocks.len() {
+            itemsize
+        } else {
+            0
+        };
         Ok(Self {
             names: vec![name, getitem_name.clone()],
             dep_names: vec![dep_name, getitem_name],
@@ -75,6 +87,8 @@ impl OverlapLayer {
             kwargs,
             numblocks,
             depths,
+            chunks,
+            itemsize,
         })
     }
 
@@ -165,6 +179,24 @@ impl OverlapLayer {
         (source, index)
     }
 
+    /// Expected output size of a `name-getitem` task: per axis, the slice taken
+    /// from the source block is its full extent (side 1) or the depth-sized edge
+    /// (sides 0/2, clamped to the block).
+    fn getitem_nbytes(&self, coord: &[u32]) -> i64 {
+        let ndim = self.numblocks.len();
+        grid_nbytes(
+            self.itemsize,
+            (0..ndim).map(|d| {
+                let chunk = self.chunks[d][coord[d] as usize];
+                match coord[ndim + d] {
+                    0 => self.depths[d].left.min(chunk),
+                    1 => chunk,
+                    _ => self.depths[d].right.min(chunk),
+                }
+            }),
+        )
+    }
+
     fn expand(&self) -> Expanded<'_> {
         let ndim = self.numblocks.len();
         let total_outputs = product_u32(&self.numblocks);
@@ -191,6 +223,7 @@ impl OverlapLayer {
             }
 
             finals.push(NeutralTask {
+                nbytes: 0,
                 name_idx: 0,
                 coord: center.clone(),
                 compute: Compute::Call { func_idx: 1 },
@@ -217,6 +250,7 @@ impl OverlapLayer {
 
             if all_full {
                 tasks.push(NeutralTask {
+                    nbytes: self.getitem_nbytes(&coord),
                     name_idx: 1,
                     coord,
                     compute: Compute::Alias,
@@ -227,6 +261,7 @@ impl OverlapLayer {
                 });
             } else {
                 tasks.push(NeutralTask {
+                    nbytes: self.getitem_nbytes(&coord),
                     name_idx: 1,
                     coord,
                     compute: Compute::Call { func_idx: 0 },

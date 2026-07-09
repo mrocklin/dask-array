@@ -9,6 +9,10 @@ and shaped concatenate tasks without materializing Dask's old-style
 
 from __future__ import annotations
 
+import math
+
+import numpy as np
+
 from dask.array.core import concatenate_shaped
 
 from dask_array import _rust
@@ -17,7 +21,7 @@ from dask_array._frisky.base import Layer
 
 
 class OverlapLayer(Layer):
-    def __init__(self, name, dep_name, numblocks, axes):
+    def __init__(self, name, dep_name, numblocks, axes, chunks, dtype):
         axis_depths = []
         for axis, depth in axes.items():
             if isinstance(depth, tuple):
@@ -25,6 +29,11 @@ class OverlapLayer(Layer):
             else:
                 left = right = depth
             axis_depths.append((int(axis), int(left), int(right)))
+
+        # Source chunk sizes feed only the halo-getitem expected-nbytes stamps;
+        # unknown (nan) sizes disable stamping via itemsize=0.
+        known = all(not math.isnan(c) for dim in chunks for c in dim)
+        itemsize = int(np.dtype(dtype).itemsize) if known else 0
 
         self._rust = _rust.OverlapLayer(
             name,
@@ -38,4 +47,6 @@ class OverlapLayer(Layer):
             {},
             [int(n) for n in numblocks],
             axis_depths,
+            [[0 if math.isnan(c) else int(c) for c in dim] for dim in chunks],
+            itemsize,
         )

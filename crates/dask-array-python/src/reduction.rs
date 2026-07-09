@@ -101,6 +101,7 @@ impl PartialReduceLayer {
             let mut leaf = vec![0u32; ndim];
             let arg = self.build_lol(0, &parts, &oi, &mut leaf);
             tasks.push(NeutralTask {
+                nbytes: 0,
                 name_idx: 0,
                 coord,
                 compute: Compute::Call { func_idx: 0 },

@@ -124,6 +124,7 @@ impl SliceLayer {
 
             if self.allow_opt && all_full {
                 tasks.push(NeutralTask {
+                    nbytes: 0,
                     name_idx: 0,
                     coord: out_coord,
                     compute: Compute::Alias,
@@ -134,6 +135,7 @@ impl SliceLayer {
                 });
             } else {
                 tasks.push(NeutralTask {
+                    nbytes: 0,
                     name_idx: 0,
                     coord: out_coord,
                     compute: Compute::Call { func_idx: 0 },

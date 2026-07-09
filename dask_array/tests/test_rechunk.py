@@ -149,9 +149,9 @@ def test_rechunk_split_tasks_copy_small_selections():
     real_layer = frisky_mod.RechunkLayer
 
     class RecordingLayer:
-        def __init__(self, getitem, concatenate3, steps):
+        def __init__(self, getitem, concatenate3, steps, dtype):
             captured["getitem"] = getitem
-            self._wrapped = real_layer(getitem, concatenate3, steps)
+            self._wrapped = real_layer(getitem, concatenate3, steps, dtype)
 
         def __getattr__(self, name):
             return getattr(self._wrapped, name)

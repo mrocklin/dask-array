@@ -73,7 +73,10 @@ fn seed_to_slot(obj: &Bound<'_, PyAny>) -> PyResult<ArgSlot> {
         .iter()
         .all(|it| !it.is_instance_of::<pyo3::types::PyBool>() && it.extract::<i64>().is_ok());
     if all_int {
-        let ints: Vec<i64> = items.iter().map(|it| it.extract::<i64>().unwrap()).collect();
+        let ints: Vec<i64> = items
+            .iter()
+            .map(|it| it.extract::<i64>().unwrap())
+            .collect();
         return Ok(ArgSlot::IntTuple(ints));
     }
     let mut nested: Vec<ArgSlot> = Vec::with_capacity(items.len());
@@ -177,6 +180,7 @@ impl FusedBlockwiseLayer {
                 slots.extend(seeds.iter().cloned());
             }
             tasks.push(NeutralTask {
+                nbytes: 0,
                 name_idx: 0,
                 coord: coord.clone(),
                 compute: Compute::Call { func_idx: 0 },

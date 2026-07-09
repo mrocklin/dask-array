@@ -313,16 +313,19 @@ class CumReductionBlelloch(ArrayExpr):
         from dask_array._frisky.blelloch import CumReductionBlellochLayer
 
         # The Blelloch plan is fixed by the block count along the axis; it never
-        # uses chunk sizes, so unknown (nan) sizes are fine.
+        # uses chunk sizes, so unknown (nan) sizes are fine. Sizes feed only the
+        # expected-nbytes stamps.
         return CumReductionBlellochLayer(
             self._name,
             self.func,
             self.preop,
             self.binop,
             self.axis,
+            self.array.dtype,
             self.dtype,
             self.array._name,
             self.array.numblocks,
+            self.array.chunks,
         )
 
     def _layer(self):

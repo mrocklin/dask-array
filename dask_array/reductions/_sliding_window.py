@@ -387,6 +387,8 @@ class MovingWindowReduction(ArrayExpr):
             band_lo = -1 if g is None else g
             band_hi = -1 if h is None else h
             plan.append([n_trunc, band_offset, band_lo, band_hi])
+        # A `-total` task is one keepdims hyperplane of running totals plus
+        # (always, for the moving variant) a same-shaped count plane.
         return MovingWindowReductionLayer(
             self._name,
             self.array._name,
@@ -395,6 +397,8 @@ class MovingWindowReduction(ArrayExpr):
             self.sliding_axis,
             self.array.numblocks,
             plan,
+            self.array.chunks,
+            np.dtype(self.dtype).itemsize + np.dtype(np.int64).itemsize,
         )
 
 
@@ -551,6 +555,10 @@ class SlidingWindowReduction(ArrayExpr):
     def _frisky_layer(self):
         from dask_array._frisky.sliding_window import SlidingWindowReductionLayer
 
+        # A `-total` task is one keepdims hyperplane of running totals, plus a
+        # same-shaped count plane for reducers that track counts.
+        with_count = NATIVE_SLIDING_REDUCERS[self.reducer][2]
+        total_itemsize = np.dtype(self.dtype).itemsize + (np.dtype(np.int64).itemsize if with_count else 0)
         return SlidingWindowReductionLayer(
             self._name,
             self.array._name,
@@ -561,4 +569,6 @@ class SlidingWindowReduction(ArrayExpr):
             self.keepdims,
             self.window_axis,
             [list(row) for row in self._block_plan],
+            self.array.chunks,
+            total_itemsize,
         )

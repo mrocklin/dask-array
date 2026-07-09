@@ -9,10 +9,15 @@ the 1-D chunk intersection and the split (``getitem``) / merge
 
 from __future__ import annotations
 
+import numpy as np
+
 from dask_array import _rust
 from dask_array._frisky.base import Layer
 
 
 class RechunkLayer(Layer):
-    def __init__(self, getitem, concatenate3, steps):
-        self._rust = _rust.RechunkLayer(getitem, concatenate3, {}, steps)
+    def __init__(self, getitem, concatenate3, steps, dtype):
+        # itemsize feeds the expected-nbytes stamps (split = slice extents,
+        # merge = new chunk); the caller guarantees known chunk sizes.
+        itemsize = int(np.dtype(dtype).itemsize)
+        self._rust = _rust.RechunkLayer(getitem, concatenate3, {}, steps, itemsize)

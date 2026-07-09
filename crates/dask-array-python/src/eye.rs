@@ -112,6 +112,7 @@ impl EyeLayer {
                     )
                 };
                 tasks.push(NeutralTask {
+                    nbytes: 0,
                     name_idx: 0,
                     coord: vec![i as u32, j as u32],
                     compute: Compute::Call { func_idx },

@@ -107,14 +107,15 @@ impl FromMapLayer {
                 .map(|d| self.chunks[d][coord[d] as usize])
                 .collect();
             tasks.push(NeutralTask {
+                nbytes: 0,
                 name_idx: 0,
                 coord: coord.clone(),
                 compute: Compute::Call { func_idx: 0 },
                 slots: vec![
-                    ArgSlot::Literal(0),       // func
-                    ArgSlot::Literal(2 + i),   // value for this block (C order)
-                    ArgSlot::IntTuple(shape),  // block (chunk) shape
-                    ArgSlot::Literal(1),       // kwargs
+                    ArgSlot::Literal(0),      // func
+                    ArgSlot::Literal(2 + i),  // value for this block (C order)
+                    ArgSlot::IntTuple(shape), // block (chunk) shape
+                    ArgSlot::Literal(1),      // kwargs
                 ],
             });
 
@@ -145,9 +146,9 @@ impl FromMapLayer {
 ///   `"i"` int scalar · `"f"` float scalar · `"s"` string · `"t"` int-tuple
 ///   (rebuilds a Python tuple) · `"l"` list (recursive; rebuilds a Python list).
 fn parse_slot(d: &Bound<'_, PyAny>) -> PyResult<ArgSlot> {
-    let tup = d
-        .cast::<PyTuple>()
-        .map_err(|_| PyValueError::new_err("from_map arg descriptor must be a (tag, payload) tuple"))?;
+    let tup = d.cast::<PyTuple>().map_err(|_| {
+        PyValueError::new_err("from_map arg descriptor must be a (tag, payload) tuple")
+    })?;
     let tag: String = tup.get_item(0)?.extract()?;
     let payload = tup.get_item(1)?;
     match tag.as_str() {
@@ -156,10 +157,13 @@ fn parse_slot(d: &Bound<'_, PyAny>) -> PyResult<ArgSlot> {
         "s" => Ok(ArgSlot::Str(payload.extract()?)),
         "t" => Ok(ArgSlot::IntTuple(payload.extract()?)),
         "l" => {
-            let items = payload
-                .cast::<PyList>()
-                .map_err(|_| PyValueError::new_err("from_map 'l' descriptor payload must be a list"))?;
-            let slots = items.iter().map(|x| parse_slot(&x)).collect::<PyResult<Vec<_>>>()?;
+            let items = payload.cast::<PyList>().map_err(|_| {
+                PyValueError::new_err("from_map 'l' descriptor payload must be a list")
+            })?;
+            let slots = items
+                .iter()
+                .map(|x| parse_slot(&x))
+                .collect::<PyResult<Vec<_>>>()?;
             Ok(ArgSlot::List(slots))
         }
         other => Err(PyValueError::new_err(format!(
@@ -219,7 +223,10 @@ impl FromMapBinaryLayer {
             let lst = obj.bind(py).cast::<PyList>().map_err(|_| {
                 PyValueError::new_err("from_map per-block args must be a list of descriptors")
             })?;
-            let slots = lst.iter().map(|d| parse_slot(&d)).collect::<PyResult<Vec<_>>>()?;
+            let slots = lst
+                .iter()
+                .map(|d| parse_slot(&d))
+                .collect::<PyResult<Vec<_>>>()?;
             parsed.push(slots);
         }
         Ok(Self {
@@ -248,13 +255,20 @@ impl FromMapBinaryLayer {
     fn expand(&self) -> Expanded<'_> {
         let ndim = self.chunks.len();
         let numblocks: Vec<usize> = self.chunks.iter().map(|c| c.len()).collect();
-        let total: usize = if ndim == 0 { 1 } else { numblocks.iter().product() };
+        let total: usize = if ndim == 0 {
+            1
+        } else {
+            numblocks.iter().product()
+        };
         let mut tasks = Vec::with_capacity(total);
         let mut coord = vec![0u32; ndim];
 
         for i in 0..total {
-            let shape: Vec<i64> = (0..ndim).map(|d| self.chunks[d][coord[d] as usize]).collect();
+            let shape: Vec<i64> = (0..ndim)
+                .map(|d| self.chunks[d][coord[d] as usize])
+                .collect();
             tasks.push(NeutralTask {
+                nbytes: 0,
                 name_idx: 0,
                 coord: coord.clone(),
                 compute: Compute::Call { func_idx: 0 },

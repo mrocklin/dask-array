@@ -78,7 +78,11 @@ impl GUfuncLeafLayer {
 impl GUfuncLeafLayer {
     fn expand(&self) -> Expanded<'_> {
         let ndim = self.numblocks.len();
-        let total: usize = if ndim == 0 { 1 } else { self.numblocks.iter().product() };
+        let total: usize = if ndim == 0 {
+            1
+        } else {
+            self.numblocks.iter().product()
+        };
         let mut tasks = Vec::with_capacity(total);
         let mut coord = vec![0u32; ndim];
 
@@ -94,6 +98,7 @@ impl GUfuncLeafLayer {
             let task = if self.nout {
                 // getitem(array_block, i)
                 NeutralTask {
+                    nbytes: 0,
                     name_idx: 0,
                     coord: out_coord,
                     compute: Compute::Call { func_idx: 0 },
@@ -102,6 +107,7 @@ impl GUfuncLeafLayer {
             } else {
                 // leaf block aliases the source block
                 NeutralTask {
+                    nbytes: 0,
                     name_idx: 0,
                     coord: out_coord,
                     compute: Compute::Alias,

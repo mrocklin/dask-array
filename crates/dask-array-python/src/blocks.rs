@@ -92,6 +92,7 @@ impl BlocksLayer {
                 .collect();
 
             tasks.push(NeutralTask {
+                nbytes: 0,
                 name_idx: 0,
                 coord: coord.clone(),
                 compute: Compute::Alias,

@@ -27,7 +27,9 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use crate::common::{to_dask_graph, to_task_records, ArgSlot, Compute, Expanded, NeutralTask};
+use crate::common::{
+    grid_nbytes, to_dask_graph, to_task_records, ArgSlot, Compute, Expanded, NeutralTask,
+};
 
 // Name indices into the interned `names` list (also used as `Dep` name_idx).
 const N_OUT: usize = 0;
@@ -54,6 +56,10 @@ pub struct CumReductionLayer {
     numblocks: Vec<usize>,
     /// Per-dimension chunk sizes (for the identity block shapes).
     chunks: Vec<Vec<i64>>,
+    /// Output dtype itemsize for expected-nbytes stamps; 0 disables stamping
+    /// (the wrapper passes 0 when chunk sizes are unknown, since `chunks` then
+    /// carries placeholder 1s that are only valid for the identity shapes).
+    itemsize: i64,
 }
 
 #[pymethods]
@@ -71,6 +77,7 @@ impl CumReductionLayer {
         axis: usize,
         numblocks: Vec<usize>,
         chunks: Vec<Vec<i64>>,
+        itemsize: i64,
     ) -> Self {
         let names = vec![
             name.clone(),
@@ -86,6 +93,7 @@ impl CumReductionLayer {
             axis,
             numblocks,
             chunks,
+            itemsize,
         }
     }
 
@@ -108,11 +116,33 @@ impl CumReductionLayer {
         let n = self.numblocks[self.axis];
         let mut tasks: Vec<NeutralTask> = Vec::new();
 
+        // Expected output sizes: chunk/output tasks produce a whole block; the
+        // extra/tail carries are one hyperplane (size 1 along the axis).
+        let block_nbytes = |coord: &[u32]| {
+            grid_nbytes(
+                self.itemsize,
+                (0..ndim).map(|d| self.chunks[d][coord[d] as usize]),
+            )
+        };
+        let plane_nbytes = |coord: &[u32]| {
+            grid_nbytes(
+                self.itemsize,
+                (0..ndim).map(|d| {
+                    if d == self.axis {
+                        1
+                    } else {
+                        self.chunks[d][coord[d] as usize]
+                    }
+                }),
+            )
+        };
+
         // 1) Per-block chunk tasks over the whole grid (C order).
         let total: usize = self.numblocks.iter().product();
         let mut coord = vec![0u32; ndim];
         for _ in 0..total {
             tasks.push(NeutralTask {
+                nbytes: block_nbytes(&coord),
                 name_idx: N_CHUNK,
                 coord: coord.clone(),
                 compute: Compute::Call { func_idx: F_CHUNK },
@@ -158,6 +188,7 @@ impl CumReductionLayer {
                 })
                 .collect();
             tasks.push(NeutralTask {
+                nbytes: plane_nbytes(&c0),
                 name_idx: N_EXTRA,
                 coord: c0.clone(),
                 compute: Compute::Call {
@@ -167,6 +198,7 @@ impl CumReductionLayer {
             });
             // output[pos, 0] = chunk[pos, 0]  (alias)
             tasks.push(NeutralTask {
+                nbytes: block_nbytes(&c0),
                 name_idx: N_OUT,
                 coord: c0.clone(),
                 compute: Compute::Alias,
@@ -183,6 +215,7 @@ impl CumReductionLayer {
                 // tail[old] = tail_func(chunk[old]) — last hyperplane, or the
                 // identity when that block is empty along the axis.
                 tasks.push(NeutralTask {
+                    nbytes: plane_nbytes(&old),
                     name_idx: N_TAIL,
                     coord: old.clone(),
                     compute: Compute::Call { func_idx: F_TAIL },
@@ -193,6 +226,7 @@ impl CumReductionLayer {
                 });
                 // extra[cur] = binop(extra[old], tail[old])
                 tasks.push(NeutralTask {
+                    nbytes: plane_nbytes(&cur),
                     name_idx: N_EXTRA,
                     coord: cur.clone(),
                     compute: Compute::Call { func_idx: F_BINOP },
@@ -209,6 +243,7 @@ impl CumReductionLayer {
                 });
                 // output[cur] = binop(extra[cur], chunk[cur])
                 tasks.push(NeutralTask {
+                    nbytes: block_nbytes(&cur),
                     name_idx: N_OUT,
                     coord: cur.clone(),
                     compute: Compute::Call { func_idx: F_BINOP },

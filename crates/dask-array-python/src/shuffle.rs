@@ -10,7 +10,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
 
 use crate::common::{
-    to_dask_graph, to_records_chunk, to_task_records, ArgSlot, Compute, Expanded, NeutralTask, Num,
+    grid_nbytes, to_dask_graph, to_records_chunk, to_task_records, ArgSlot, Compute, Expanded,
+    NeutralTask, Num,
 };
 
 #[pyclass]
@@ -24,11 +25,14 @@ pub struct ShuffleLayer {
     chunks: Vec<Vec<i64>>,
     axis: usize,
     new_chunks: Vec<Vec<i64>>,
+    /// Dtype itemsize for expected-nbytes stamps; 0 disables stamping.
+    itemsize: i64,
 }
 
 #[pymethods]
 impl ShuffleLayer {
     #[new]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         name: String,
         dep_name: String,
@@ -39,6 +43,7 @@ impl ShuffleLayer {
         chunks: Vec<Vec<i64>>,
         axis: isize,
         new_chunks: Vec<Vec<i64>>,
+        itemsize: i64,
     ) -> PyResult<Self> {
         if chunks.is_empty() {
             return Err(PyValueError::new_err(
@@ -86,6 +91,7 @@ impl ShuffleLayer {
             chunks,
             axis,
             new_chunks,
+            itemsize,
         })
     }
 
@@ -214,6 +220,8 @@ impl ShuffleLayer {
             let sorter_coord = if sources.len() > 1 {
                 let coord = vec![new_chunk_idx as u32, 0];
                 tasks.push(NeutralTask {
+                    // An index list; ~8 bytes per element as an int64 array.
+                    nbytes: grid_nbytes(8, [sorter.len() as i64]),
                     name_idx: 2,
                     coord: coord.clone(),
                     compute: Compute::Call { func_idx: 2 },
@@ -247,6 +255,8 @@ impl ShuffleLayer {
 
                 let taker_coord = vec![new_chunk_idx as u32, segment_idx as u32 + 1];
                 tasks.push(NeutralTask {
+                    // An index list; ~8 bytes per element as an int64 array.
+                    nbytes: grid_nbytes(8, [taker.len() as i64]),
                     name_idx: 2,
                     coord: taker_coord.clone(),
                     compute: Compute::Call { func_idx: 2 },
@@ -259,8 +269,21 @@ impl ShuffleLayer {
             for _ in 0..non_axis_total {
                 let mut split_deps = Vec::with_capacity(sources.len());
 
-                for (&source, taker_coord) in sources.iter().zip(&taker_coords) {
+                for ((segment_idx, &source), taker_coord) in
+                    sources.iter().enumerate().zip(&taker_coords)
+                {
+                    let segment_len = (starts[segment_idx + 1] - starts[segment_idx]) as i64;
                     let source_coord = full_coord(&non_axis_coord, source as u32, self.axis, ndim);
+                    let take_nbytes = grid_nbytes(
+                        self.itemsize,
+                        (0..ndim).map(|d| {
+                            if d == self.axis {
+                                segment_len
+                            } else {
+                                self.chunks[d][source_coord[d] as usize]
+                            }
+                        }),
+                    );
                     let take_slots = vec![
                         ArgSlot::Dep {
                             name_idx: 0,
@@ -275,6 +298,7 @@ impl ShuffleLayer {
 
                     if sources.len() == 1 {
                         tasks.push(NeutralTask {
+                            nbytes: take_nbytes,
                             name_idx: 0,
                             coord: full_coord(
                                 &non_axis_coord,
@@ -289,6 +313,7 @@ impl ShuffleLayer {
                         let coord = vec![split_idx];
                         split_idx += 1;
                         tasks.push(NeutralTask {
+                            nbytes: take_nbytes,
                             name_idx: 1,
                             coord: coord.clone(),
                             compute: Compute::Call { func_idx: 0 },
@@ -299,7 +324,19 @@ impl ShuffleLayer {
                 }
 
                 if sources.len() > 1 {
+                    let out_nbytes = grid_nbytes(
+                        self.itemsize,
+                        (0..ndim).map(|d| {
+                            if d == self.axis {
+                                new_chunk_taker.len() as i64
+                            } else {
+                                let full = full_coord(&non_axis_coord, 0, self.axis, ndim);
+                                self.chunks[d][full[d] as usize]
+                            }
+                        }),
+                    );
                     tasks.push(NeutralTask {
+                        nbytes: out_nbytes,
                         name_idx: 0,
                         coord: full_coord(&non_axis_coord, new_chunk_idx as u32, self.axis, ndim),
                         compute: Compute::Call { func_idx: 1 },

@@ -25,7 +25,9 @@ use pyo3::exceptions::PyNotImplementedError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use crate::common::{to_dask_graph, to_task_records, ArgSlot, Compute, Expanded, NeutralTask, Num};
+use crate::common::{
+    grid_nbytes, to_dask_graph, to_task_records, ArgSlot, Compute, Expanded, NeutralTask, Num,
+};
 
 /// The band invariants below are guaranteed by the Python gates
 /// (`supports_native_*` in `dask_array/reductions/_sliding_window.py`); if
@@ -101,6 +103,8 @@ fn expand_banded<'a>(
     kwargs: &'a Py<PyAny>,
     numblocks: &[usize],
     axis: usize,
+    chunks: &[Vec<i64>],
+    total_itemsize: i64,
     emit: impl Fn(usize) -> bool,
     mids: impl Fn(usize) -> (usize, usize),
     band: impl Fn(usize) -> (i64, i64),
@@ -120,7 +124,22 @@ fn expand_banded<'a>(
     for_each_non_axis_position(numblocks, axis, |full_coord| {
         for (q, _) in needed.iter().enumerate().filter(|(_, &n)| n) {
             let coord = full_coord(q as u32);
+            // A block total is one keepdims hyperplane (1 along the axis);
+            // `total_itemsize` bundles the value + count planes when the
+            // reducer tracks counts, and is 0 (no stamp) for unknown chunks.
+            let ndim = numblocks.len();
+            let nbytes = grid_nbytes(
+                total_itemsize,
+                (0..ndim).map(|d| {
+                    if d == axis {
+                        1
+                    } else {
+                        chunks[d][coord[d] as usize]
+                    }
+                }),
+            );
             tasks.push(NeutralTask {
+                nbytes,
                 name_idx: N_TOTAL,
                 coord: coord.clone(),
                 compute: Compute::Call { func_idx: F_TOTAL },
@@ -155,6 +174,7 @@ fn expand_banded<'a>(
             };
             let (a, b) = scalars(i);
             tasks.push(NeutralTask {
+                nbytes: 0,
                 name_idx: N_OUT,
                 coord: out_coord(&in_coord),
                 compute: Compute::Call { func_idx: F_REDUCE },
@@ -195,6 +215,10 @@ pub struct SlidingWindowReductionLayer {
     window_axis: usize,
     /// Per axis block: `[out_len, band_offset, band_lo, band_hi]`.
     plan: Vec<Vec<i64>>,
+    /// Input chunk sizes + effective per-element size of a block total —
+    /// only for the `-total` expected-nbytes stamps (0 disables).
+    chunks: Vec<Vec<i64>>,
+    total_itemsize: i64,
 }
 
 #[pymethods]
@@ -212,6 +236,8 @@ impl SlidingWindowReductionLayer {
         keepdims: bool,
         window_axis: usize,
         plan: Vec<Vec<i64>>,
+        chunks: Vec<Vec<i64>>,
+        total_itemsize: i64,
     ) -> PyResult<Self> {
         // Emitting rows: the band starts past the block itself and ends in-grid.
         check_plan(&plan, &numblocks, axis, |i, row| {
@@ -232,6 +258,8 @@ impl SlidingWindowReductionLayer {
             keepdims,
             window_axis,
             plan,
+            chunks,
+            total_itemsize,
         })
     }
 
@@ -256,6 +284,8 @@ impl SlidingWindowReductionLayer {
             &self.kwargs,
             &self.numblocks,
             self.axis,
+            &self.chunks,
+            self.total_itemsize,
             |i| self.plan[i][0] > 0,
             |i| (i + 1, self.plan[i][2] as usize),
             |i| (self.plan[i][2], self.plan[i][3]),
@@ -283,6 +313,10 @@ pub struct MovingWindowReductionLayer {
     /// Per axis block: `[n_trunc, band_offset, band_lo, band_hi]`;
     /// `band_lo == -1` means no band (the block starting the array).
     plan: Vec<Vec<i64>>,
+    /// Input chunk sizes + effective per-element size of a block total —
+    /// only for the `-total` expected-nbytes stamps (0 disables).
+    chunks: Vec<Vec<i64>>,
+    total_itemsize: i64,
 }
 
 #[pymethods]
@@ -298,6 +332,8 @@ impl MovingWindowReductionLayer {
         axis: usize,
         numblocks: Vec<usize>,
         plan: Vec<Vec<i64>>,
+        chunks: Vec<Vec<i64>>,
+        total_itemsize: i64,
     ) -> PyResult<Self> {
         // A band (band_lo >= 0) ends before the block itself; the array-start
         // block has neither band nor middles (both markers negative).
@@ -315,6 +351,8 @@ impl MovingWindowReductionLayer {
             axis,
             numblocks,
             plan,
+            chunks,
+            total_itemsize,
         })
     }
 
@@ -339,6 +377,8 @@ impl MovingWindowReductionLayer {
             &self.kwargs,
             &self.numblocks,
             self.axis,
+            &self.chunks,
+            self.total_itemsize,
             |_| true,
             |i| {
                 let hi = self.plan[i][3];

@@ -250,6 +250,7 @@ impl FromArrayGetterLayer {
                 });
             }
             tasks.push(NeutralTask {
+                nbytes: 0,
                 name_idx: 0,
                 coord: coord.iter().map(|&c| c as u32).collect(),
                 compute: Compute::Call { func_idx: 0 },

@@ -1088,7 +1088,7 @@ class TasksRechunk(Rechunk):
         # split views pin hundreds of GB of "released" parents as RSS that no
         # accounting sees (rss - managed - transient).  Upstream dask's
         # _compute_rechunk uses the same copying getitem for this reason.
-        return RechunkLayer(chunk_getitem, concatenate3, descs)
+        return RechunkLayer(chunk_getitem, concatenate3, descs, self.dtype)
 
 
 def _convert_to_task_refs(obj):

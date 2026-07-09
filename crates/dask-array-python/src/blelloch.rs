@@ -24,7 +24,9 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use crate::common::{to_dask_graph, to_task_records, ArgSlot, Compute, Expanded, NeutralTask};
+use crate::common::{
+    grid_nbytes, to_dask_graph, to_task_records, ArgSlot, Compute, Expanded, NeutralTask,
+};
 
 // Name indices (also `Dep` name_idx). `name` produces both outputs and scan
 // nodes; `name-batch` the preop batches; `x` is referenced only.
@@ -47,6 +49,14 @@ pub struct CumReductionBlellochLayer {
     kwargs: Py<PyAny>,
     axis: usize,
     numblocks: Vec<usize>,
+    /// Per-dimension chunk sizes — used only for expected-nbytes stamps (the
+    /// plan depends on block counts alone). Empty when sizes are unknown.
+    chunks: Vec<Vec<i64>>,
+    /// Per-task-family item sizes for expected-nbytes stamps; 0 disables stamping.
+    batch_itemsize: i64,
+    scan_itemsize: i64,
+    first_itemsize: i64,
+    combine_itemsize: i64,
 }
 
 #[pymethods]
@@ -63,14 +73,35 @@ impl CumReductionBlellochLayer {
         x_name: String,
         axis: usize,
         numblocks: Vec<usize>,
+        chunks: Vec<Vec<i64>>,
+        batch_itemsize: i64,
+        scan_itemsize: i64,
+        first_itemsize: i64,
+        combine_itemsize: i64,
     ) -> Self {
         let names = vec![name.clone(), format!("{name}-batch"), x_name];
+        let (batch_itemsize, scan_itemsize, first_itemsize, combine_itemsize) =
+            if chunks.len() == numblocks.len() {
+                (
+                    batch_itemsize,
+                    scan_itemsize,
+                    first_itemsize,
+                    combine_itemsize,
+                )
+            } else {
+                (0, 0, 0, 0)
+            };
         Self {
             names,
             funcs: vec![preop, binop, first, combine],
             kwargs,
             axis,
             numblocks,
+            chunks,
+            batch_itemsize,
+            scan_itemsize,
+            first_itemsize,
+            combine_itemsize,
         }
     }
 
@@ -119,11 +150,37 @@ impl CumReductionBlellochLayer {
 
         let mut tasks: Vec<NeutralTask> = Vec::new();
 
+        // Expected output sizes: outputs are whole blocks; batches and the
+        // combine-tree scan nodes are one keepdims hyperplane (1 along the axis).
+        let block_nbytes = |coord: &[u32], itemsize: i64| {
+            grid_nbytes(
+                itemsize,
+                (0..ndim).map(|d| self.chunks[d][coord[d] as usize]),
+            )
+        };
+        let plane_nbytes = |coord: &[u32], itemsize: i64| {
+            grid_nbytes(
+                itemsize,
+                (0..ndim).map(|d| {
+                    if d == axis {
+                        1
+                    } else {
+                        self.chunks[d][coord[d] as usize]
+                    }
+                }),
+            )
+        };
+
         // Phase 1: preop batch per block over the whole grid (C order).
-        let total: usize = if ndim == 0 { 1 } else { self.numblocks.iter().product() };
+        let total: usize = if ndim == 0 {
+            1
+        } else {
+            self.numblocks.iter().product()
+        };
         let mut coord = vec![0u32; ndim];
         for _ in 0..total {
             tasks.push(NeutralTask {
+                nbytes: plane_nbytes(&coord, self.batch_itemsize),
                 name_idx: N_BATCH,
                 coord: coord.clone(),
                 compute: Compute::Call { func_idx: F_PREOP },
@@ -151,29 +208,41 @@ impl CumReductionBlellochLayer {
         // the prefix for that position; seeded from the batches for axis 0..n-1.
         let n_vals = n - 1;
         let mut prefix_vals: Vec<Vec<(usize, Vec<u32>)>> = (0..n_vals)
-            .map(|ap| (0..na_count).map(|na| (N_BATCH, full_coord(ap as u32, na))).collect())
+            .map(|ap| {
+                (0..na_count)
+                    .map(|na| (N_BATCH, full_coord(ap as u32, na)))
+                    .collect()
+            })
             .collect();
 
         let mut level: u32 = 0;
         let emit_binop = |tasks: &mut Vec<NeutralTask>,
-                              prefix_vals: &mut Vec<Vec<(usize, Vec<u32>)>>,
-                              i: usize,
-                              stride: usize,
-                              level: u32| {
+                          prefix_vals: &mut Vec<Vec<(usize, Vec<u32>)>>,
+                          i: usize,
+                          stride: usize,
+                          level: u32| {
             for na in 0..na_count {
                 let index = full_coord(i as u32, na);
                 let (ln, lc) = prefix_vals[i - stride][na].clone();
                 let (rn, rc) = prefix_vals[i][na].clone();
+                let nbytes = plane_nbytes(&index, self.scan_itemsize);
                 let mut key_coord = index;
                 key_coord.push(level);
                 key_coord.push(i as u32);
                 tasks.push(NeutralTask {
+                    nbytes,
                     name_idx: N_OUT,
                     coord: key_coord.clone(),
                     compute: Compute::Call { func_idx: F_BINOP },
                     slots: vec![
-                        ArgSlot::Dep { name_idx: ln, coord: lc },
-                        ArgSlot::Dep { name_idx: rn, coord: rc },
+                        ArgSlot::Dep {
+                            name_idx: ln,
+                            coord: lc,
+                        },
+                        ArgSlot::Dep {
+                            name_idx: rn,
+                            coord: rc,
+                        },
                     ],
                 });
                 prefix_vals[i][na] = (N_OUT, key_coord);
@@ -214,6 +283,7 @@ impl CumReductionBlellochLayer {
         for na in 0..na_count {
             let c = full_coord(0, na);
             tasks.push(NeutralTask {
+                nbytes: block_nbytes(&c, self.first_itemsize),
                 name_idx: N_OUT,
                 coord: c.clone(),
                 compute: Compute::Call { func_idx: F_FIRST },
@@ -230,12 +300,21 @@ impl CumReductionBlellochLayer {
                 let c = full_coord(axis_pos, na);
                 let (vn, vc) = prefix_vals[k][na].clone();
                 tasks.push(NeutralTask {
+                    nbytes: block_nbytes(&c, self.combine_itemsize),
                     name_idx: N_OUT,
                     coord: c.clone(),
-                    compute: Compute::Call { func_idx: F_COMBINE },
+                    compute: Compute::Call {
+                        func_idx: F_COMBINE,
+                    },
                     slots: vec![
-                        ArgSlot::Dep { name_idx: vn, coord: vc },
-                        ArgSlot::Dep { name_idx: N_X, coord: c },
+                        ArgSlot::Dep {
+                            name_idx: vn,
+                            coord: vc,
+                        },
+                        ArgSlot::Dep {
+                            name_idx: N_X,
+                            coord: c,
+                        },
                     ],
                 });
             }

@@ -77,6 +77,7 @@ impl Diag1DLayer {
                 if i == j {
                     // np.diag(x_block_i)
                     tasks.push(NeutralTask {
+                        nbytes: 0,
                         name_idx: 0,
                         coord,
                         compute: Compute::Call { func_idx: 0 },
@@ -88,6 +89,7 @@ impl Diag1DLayer {
                 } else {
                     // np.zeros_like(meta, shape=(chunks_1d[i], chunks_1d[j]))
                     tasks.push(NeutralTask {
+                        nbytes: 0,
                         name_idx: 0,
                         coord,
                         compute: Compute::CallKw {
@@ -160,6 +162,7 @@ impl Diag2DSimpleLayer {
     fn expand(&self) -> Expanded<'_> {
         let tasks = (0..self.nblocks)
             .map(|i| NeutralTask {
+                nbytes: 0,
                 name_idx: 0,
                 coord: vec![i as u32],
                 compute: Compute::Call { func_idx: 0 },

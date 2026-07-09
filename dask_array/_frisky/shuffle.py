@@ -24,7 +24,9 @@ def shuffle_concat(blocks, sorter, axis):
 
 
 class ShuffleLayer(Layer):
-    def __init__(self, name, dep_name, chunks, axis, new_chunks):
+    def __init__(self, name, dep_name, chunks, axis, new_chunks, dtype):
+        # itemsize feeds only the expected-nbytes stamps (splits = take
+        # segments, outputs = new chunks); the caller guarantees known sizes.
         self._rust = _rust.ShuffleLayer(
             name,
             dep_name,
@@ -35,4 +37,5 @@ class ShuffleLayer(Layer):
             [list(map(int, dim)) for dim in chunks],
             int(axis),
             [list(map(int, chunk)) for chunk in new_chunks],
+            int(np.dtype(dtype).itemsize),
         )

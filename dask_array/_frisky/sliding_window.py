@@ -12,14 +12,29 @@ block grid and emits.
 
 from __future__ import annotations
 
+import math
+
 from dask_array import _rust
 from dask_array._frisky.base import Layer
 
 
+def _stamp_args(chunks, total_itemsize):
+    # Chunk sizes feed only the `-total` expected-nbytes stamps (one keepdims
+    # hyperplane each); unknown (nan) sizes disable stamping via itemsize=0.
+    known = all(not math.isnan(c) for dim in chunks for c in dim)
+    return (
+        [[0 if math.isnan(c) else int(c) for c in dim] for dim in chunks],
+        int(total_itemsize) if known else 0,
+    )
+
+
 class SlidingWindowReductionLayer(Layer):
-    def __init__(self, name, x_name, reduce_func, total_func, axis, numblocks, keepdims, window_axis, plan):
+    def __init__(
+        self, name, x_name, reduce_func, total_func, axis, numblocks, keepdims, window_axis, plan, chunks, total_itemsize
+    ):
         # plan rows per sliding-axis block: [out_len, band_offset, band_lo,
         # band_hi]; out_len 0 means the window trim consumed the block.
+        chunks, total_itemsize = _stamp_args(chunks, total_itemsize)
         self._rust = _rust.SlidingWindowReductionLayer(
             name,
             x_name,
@@ -31,13 +46,16 @@ class SlidingWindowReductionLayer(Layer):
             bool(keepdims),
             int(window_axis),
             [[int(v) for v in row] for row in plan],
+            chunks,
+            total_itemsize,
         )
 
 
 class MovingWindowReductionLayer(Layer):
-    def __init__(self, name, x_name, reduce_func, total_func, axis, numblocks, plan):
+    def __init__(self, name, x_name, reduce_func, total_func, axis, numblocks, plan, chunks, total_itemsize):
         # plan rows per sliding-axis block: [n_trunc, band_offset, band_lo,
         # band_hi]; band_lo -1 means no band (the block starting the array).
+        chunks, total_itemsize = _stamp_args(chunks, total_itemsize)
         self._rust = _rust.MovingWindowReductionLayer(
             name,
             x_name,
@@ -47,4 +65,6 @@ class MovingWindowReductionLayer(Layer):
             int(axis),
             [int(n) for n in numblocks],
             [[int(v) for v in row] for row in plan],
+            chunks,
+            total_itemsize,
         )

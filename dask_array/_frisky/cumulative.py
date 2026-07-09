@@ -50,6 +50,12 @@ class CumReductionLayer(Layer):
         tail_slice = (slice(None),) * axis + (slice(-1, None),) + (slice(None),) * (ndim - axis - 1)
         tail_func = partial(_cum_tail, chunk_getitem, tail_slice, ident, axis)
 
+        # Expected-nbytes stamping needs true chunk sizes; with any unknown (nan)
+        # size the placeholder 1s below are only valid for the identity shapes,
+        # so pass itemsize=0 to leave those layers' stamps unknown.
+        known = all(not math.isnan(c) for dim in chunks for c in dim)
+        itemsize = int(np.dtype(dtype).itemsize) if known else 0
+
         self._rust = _rust.CumReductionLayer(
             name,
             chunk_func,
@@ -60,12 +66,14 @@ class CumReductionLayer(Layer):
             x_name,
             int(axis),
             [int(n) for n in numblocks],
-            # Chunk sizes feed only the `extra` identity block's shape, which is 1
+            # Chunk sizes feed the `extra` identity block's shape, which is 1
             # along the reduction axis and otherwise just broadcasts against real
             # block data — so an unknown (nan) size can become 1 rather than crash
             # `int(nan)`. The plan itself never depended on sizes, only on the fixed
-            # block count.
+            # block count. (They also feed expected-nbytes stamps, disabled above
+            # when any size is unknown.)
             [[1 if math.isnan(c) else int(c) for c in dim] for dim in chunks],
+            itemsize,
         )
 
 

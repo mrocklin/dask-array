@@ -159,8 +159,11 @@ def _expected_nbytes_metadata(e):
     Binary records are still array-agnostic. The collector is the one place that
     has both the emitted layer chunk and the array expression metadata, so it can
     stamp final output tasks for any binary-capable layer with known
-    ``chunks``/``dtype``. The byte-level task walk runs in Rust; Python only
-    normalizes O(numblocks-per-axis) metadata.
+    ``chunks``/``dtype``. Helper tasks (rechunk splits, scan carries, overlap halo
+    getitems, …) are stamped earlier, at layer expansion time, where their exact
+    extents are in hand — this pass fills only stamps that are still zero. The
+    byte-level task walk runs in Rust; Python only normalizes
+    O(numblocks-per-axis) metadata.
     """
     try:
         name = e._name

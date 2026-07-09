@@ -100,6 +100,32 @@ pub struct NeutralTask {
     pub coord: Vec<u32>,
     pub compute: Compute,
     pub slots: Vec<ArgSlot>,
+    /// Expected output size in bytes (0 = unknown). Layers whose helper tasks
+    /// aren't grid-shaped (rechunk splits, overlap halo slices, scan carries…)
+    /// fill this at expansion time, where the exact extents are in hand; plain
+    /// output-grid tasks may leave it 0 and rely on the collector's
+    /// `stamp_expected_nbytes_chunk` pass, which fills zeros from the
+    /// expression's `chunks`/`dtype` and never overwrites a nonzero value.
+    pub nbytes: i64,
+}
+
+/// `itemsize * prod(sizes)` with saturation; 0 (unknown) when any factor is
+/// non-positive — the consumer treats 0 as "no estimate", never as free-by-fiat.
+pub fn grid_nbytes(itemsize: i64, sizes: impl IntoIterator<Item = i64>) -> i64 {
+    if itemsize <= 0 {
+        return 0;
+    }
+    let mut nbytes = itemsize as i128;
+    for size in sizes {
+        if size <= 0 {
+            return 0;
+        }
+        nbytes *= size as i128;
+        if nbytes > i64::MAX as i128 {
+            return i64::MAX;
+        }
+    }
+    nbytes as i64
 }
 
 /// A layer's fully expanded subgraph. Shared payloads borrow from the layer;
@@ -575,7 +601,7 @@ pub fn to_records_chunk<'py>(py: Python<'py>, exp: &Expanded) -> PyResult<Bound<
     for task in &exp.tasks {
         w_u32(&mut buf, task.name_idx as u32);
         w_coord(&mut buf, &task.coord)?;
-        w_i64(&mut buf, 0);
+        w_i64(&mut buf, task.nbytes.max(0));
         match &task.compute {
             Compute::Call { func_idx } => {
                 buf.push(0);
@@ -718,35 +744,27 @@ fn expected_nbytes_for(
     chunks: &[Vec<i64>],
     itemsize: i64,
 ) -> i64 {
-    if task_name != output_name || coord.len() != chunks.len() || itemsize <= 0 {
+    if task_name != output_name || coord.len() != chunks.len() {
         return 0;
     }
-
-    let mut nbytes = itemsize as i128;
-    for (axis, &block) in coord.iter().enumerate() {
-        let Some(size) = chunks
-            .get(axis)
-            .and_then(|dim| dim.get(block as usize))
-            .copied()
-        else {
-            return 0;
-        };
-        if size <= 0 {
-            return 0;
-        }
-        nbytes *= size as i128;
-        if nbytes > i64::MAX as i128 {
-            return i64::MAX;
-        }
-    }
-    nbytes as i64
+    grid_nbytes(
+        itemsize,
+        coord.iter().enumerate().map(|(axis, &block)| {
+            chunks
+                .get(axis)
+                .and_then(|dim| dim.get(block as usize))
+                .copied()
+                .unwrap_or(0)
+        }),
+    )
 }
 
 /// Patch the `expected_nbytes` field in a binary records LAYER chunk.
 ///
-/// The layer emitters stay array-agnostic and write zero placeholders. Python's
-/// collector owns the expression metadata (`_name`, `chunks`, `dtype`) and calls
-/// this helper once per binary chunk so the O(tasks) byte walk runs in Rust.
+/// Layers stamp their non-grid helper tasks (splits, carries, halo slices…) at
+/// expansion time; the plain output-grid tasks are left 0 and filled here from
+/// the expression's `chunks`/`dtype`, which only Python's collector has. A
+/// nonzero stamp is never overwritten. Runs the O(tasks) byte walk in Rust.
 pub fn stamp_expected_nbytes_chunk(
     mut data: Vec<u8>,
     output_name: &str,
@@ -780,9 +798,15 @@ pub fn stamp_expected_nbytes_chunk(
 
         let offset = pos;
         skip_i64(&data, &mut pos)?;
-        let nbytes = expected_nbytes_for(task_name, &coord, output_name, chunks, itemsize);
-        if nbytes > 0 {
-            data[offset..offset + 8].copy_from_slice(&nbytes.to_le_bytes());
+        // Fill only unknown (zero) stamps: a layer that stamped this task at
+        // expansion time (helper geometry only it knows) wins over the generic
+        // output-grid estimate.
+        let existing = i64::from_le_bytes(data[offset..offset + 8].try_into().unwrap());
+        if existing == 0 {
+            let nbytes = expected_nbytes_for(task_name, &coord, output_name, chunks, itemsize);
+            if nbytes > 0 {
+                data[offset..offset + 8].copy_from_slice(&nbytes.to_le_bytes());
+            }
         }
 
         match r_u8(&data, &mut pos)? {

@@ -21,8 +21,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
 
 use crate::common::{
-    to_dask_graph, to_records_chunk, to_task_records, ArgSlot, Compute, Expanded, IndexElem,
-    NeutralTask,
+    grid_nbytes, to_dask_graph, to_records_chunk, to_task_records, ArgSlot, Compute, Expanded,
+    IndexElem, NeutralTask,
 };
 
 struct Step {
@@ -41,6 +41,8 @@ pub struct RechunkLayer {
     /// All key/dep names, interned; both `name_idx` and `Dep::name_idx` index it.
     names: Vec<String>,
     steps: Vec<Step>,
+    /// Dtype itemsize for expected-nbytes stamps; 0 disables stamping.
+    itemsize: i64,
 }
 
 fn intern(s: String, names: &mut Vec<String>, index: &mut HashMap<String, usize>) -> usize {
@@ -64,6 +66,7 @@ impl RechunkLayer {
         concatenate3: Py<PyAny>,
         kwargs: Py<PyAny>,
         steps: Vec<(String, Vec<Vec<i64>>, Vec<Vec<i64>>, String, String)>,
+        itemsize: i64,
     ) -> PyResult<Self> {
         let mut names: Vec<String> = Vec::new();
         let mut index: HashMap<String, usize> = HashMap::new();
@@ -100,6 +103,7 @@ impl RechunkLayer {
             kwargs,
             names,
             steps: step_structs,
+            itemsize,
         })
     }
 
@@ -243,6 +247,7 @@ impl RechunkLayer {
                     let mut full = true;
                     let mut old_coord = vec![0u32; ndim];
                     let mut slices: Vec<IndexElem> = Vec::with_capacity(ndim);
+                    let mut extents: Vec<i64> = Vec::with_capacity(ndim);
                     for d in 0..ndim {
                         let (oi, lo, hi) = entries[d][sel[d]];
                         old_coord[d] = oi;
@@ -251,6 +256,7 @@ impl RechunkLayer {
                             stop: Some(hi),
                             step: Some(1),
                         });
+                        extents.push(hi - lo);
                         if !(lo == 0 && hi == step.old_chunks[d][oi as usize]) {
                             full = false;
                         }
@@ -265,6 +271,7 @@ impl RechunkLayer {
                         }
                     } else {
                         tasks.push(NeutralTask {
+                            nbytes: grid_nbytes(self.itemsize, extents),
                             name_idx: step.split_idx,
                             coord: vec![cur],
                             compute: Compute::Call { func_idx: 0 }, // getitem
@@ -292,10 +299,15 @@ impl RechunkLayer {
                     }
                 }
 
+                let merge_nbytes = grid_nbytes(
+                    self.itemsize,
+                    (0..ndim).map(|d| step.new_chunks[d][new_idx[d] as usize]),
+                );
                 if subdims.iter().all(|&s| s == 1) {
                     // Single source block covers the whole new block — alias it.
                     let r = refs.into_iter().next().unwrap();
                     tasks.push(NeutralTask {
+                        nbytes: merge_nbytes,
                         name_idx: step.merge_idx,
                         coord: new_idx.clone(),
                         compute: Compute::Alias,
@@ -305,6 +317,7 @@ impl RechunkLayer {
                     let mut it = refs.into_iter();
                     let nested = nest(&mut it, &subdims);
                     tasks.push(NeutralTask {
+                        nbytes: merge_nbytes,
                         name_idx: step.merge_idx,
                         coord: new_idx.clone(),
                         compute: Compute::Call { func_idx: 1 }, // concatenate3
