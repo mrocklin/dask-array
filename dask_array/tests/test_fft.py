@@ -17,7 +17,6 @@ import pytest
 
 import dask_array as da
 from dask_array._core_utils import normalize_chunks
-from dask_array._numpy_compat import NUMPY_GE_200
 from dask_array._test_utils import assert_eq, same_keys
 from dask_array.fft import fft_wrap
 
@@ -66,7 +65,7 @@ def test_fft2n_shapes(funcname):
     assert_eq(da_fft(darr3, (8, 9), axes=(1, 0)), np_fft(nparr, (8, 9), axes=(1, 0)))
     assert_eq(da_fft(darr3, (12, 11), axes=(1, 0)), np_fft(nparr, (12, 11), axes=(1, 0)))
 
-    if NUMPY_GE_200 and funcname.endswith("fftn"):
+    if funcname.endswith("fftn"):
         ctx = pytest.warns(
             DeprecationWarning,
             match="`axes` should not be `None` if `s` is not `None`",
