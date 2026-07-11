@@ -20,7 +20,7 @@ from dask_array import _rust
 # any Rust change. This is a LOCAL build-freshness check, not a wire protocol;
 # the Frisky-coordinated version is the records grammar (common::RECORDS_PROTOCOL
 # _VERSION), which a plain layer addition does not touch.
-_NATIVE_BUILD_GENERATION = 41
+_NATIVE_BUILD_GENERATION = 42
 if _rust.native_build_generation() != _NATIVE_BUILD_GENERATION:
     raise ImportError(
         f"dask_array._rust is at native build generation {_rust.native_build_generation()}, "

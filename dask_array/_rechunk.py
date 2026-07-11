@@ -6,6 +6,7 @@ import math
 import operator
 from functools import reduce
 from itertools import chain, product
+from numbers import Integral
 from operator import add, itemgetter, mul
 from warnings import warn
 
@@ -750,6 +751,7 @@ class Rechunk(ArrayExpr):
         """
         from dask_array._blockwise import Elemwise
         from dask_array._concatenate import Concatenate
+        from dask_array.manipulation._expand import ExpandDims
         from dask_array.manipulation._transpose import Transpose
 
         # Rechunk(Rechunk(x)) -> single Rechunk to final chunks
@@ -768,6 +770,10 @@ class Rechunk(ArrayExpr):
         # Rechunk(Transpose) -> Transpose(rechunked input)
         if isinstance(self.array, Transpose):
             return self._pushdown_through_transpose()
+
+        # Rechunk(ExpandDims) -> ExpandDims(rechunked input)
+        if isinstance(self.array, ExpandDims):
+            return self._pushdown_through_expand_dims()
 
         # Rechunk(Elemwise) -> Elemwise(rechunked inputs)
         if isinstance(self.array, Elemwise):
@@ -797,6 +803,123 @@ class Rechunk(ArrayExpr):
                 method=self.method,
             )
         return None
+
+    def _pushdown_through_slice(self):
+        """Rechunk(Slice(x, ranges)) -> aligned-Slice(Rechunk(x, expanded)).
+
+        A contiguous range slice whose cut points sit off ``x``'s chunk grid
+        shifts every boundary, so the rechunk right after it re-cuts an
+        off-grid intermediate: each output block straddles two of the sliced
+        pieces, none of the block coordinates line up with the input's, and
+        coordinate-driven placement/ordering sees off-grid work even though
+        the data movement is mostly local to neighboring blocks.
+
+        Composed, the inner rechunk cuts ``x`` straight onto the target grid
+        *shifted into x's frame*: inside the kept range it uses the target
+        chunks, outside it keeps ``x``'s own boundaries so the dropped region
+        stays pure aliases.  The outer slice then falls on block boundaries
+        and lowers to block selection (aliases).  Each kept block is built
+        from one same-coordinate heavy piece plus a sliver of its neighbor --
+        the alignment placement needs.  Values are untouched: same elements,
+        same target chunking.
+
+        Runs at lowering (from ``_lower``), not during simplify: a slice
+        still standing there is genuinely blocked (its input is shared or
+        opaque), whereas composing during simplify would preempt the more
+        valuable slice-into-source pushdowns.  The inner rechunk is emitted as
+        an already-lowered ``TasksRechunk`` so it cannot later bypass the
+        sharing-aware simplify gate by pushing into the shared child.
+
+        Integer indices (dropped axes) ride along: those axes keep ``x``'s
+        own chunks in the expanded grid and the outer index still drops
+        them.  Declines on stepped/unknown-size indices, on p2p rechunks, and
+        when the slice is already block-aligned (nothing to fix).
+        """
+        from dask_array.slicing._basic import SliceSlicesIntegers
+
+        if self.method == "p2p":
+            return None
+        slc = self.array
+        x = slc.array
+        index = tuple(slc.index) + (slice(None),) * (x.ndim - len(slc.index))
+        if len(index) != x.ndim:
+            return None
+        target = self.chunks
+        if any(math.isnan(c) for dim in (*x.chunks, *target) for c in dim):
+            return None
+
+        # target has one axis per *slice* entry; integer entries drop theirs
+        target_iter = iter(target)
+        expanded = []
+        aligned = True
+        for idx, old, size in zip(index, x.chunks, x.shape):
+            if isinstance(idx, Integral):
+                expanded.append(old)  # dropped axis: leave x's grid alone
+                continue
+            if not isinstance(idx, slice):
+                return None
+            tgt = next(target_iter)
+            start, stop, step = idx.indices(size)
+            if step != 1 or stop <= start:
+                return None
+            bounds = set(accumulate(add, (0,) + old))
+            if start not in bounds or stop not in bounds:
+                aligned = False
+            cuts = [0, *sorted(b for b in bounds if 0 < b < start), start]
+            pre = [b - a for a, b in zip(cuts, cuts[1:]) if b > a]
+            cuts = [stop, *sorted(b for b in bounds if stop < b < size), size]
+            post = [b - a for a, b in zip(cuts, cuts[1:]) if b > a]
+            expanded.append((*pre, *tgt, *post))
+        if aligned:
+            # Already on x's grid: the slice is pure block selection and the
+            # rechunk (if any) only re-cuts kept blocks.  Nothing to compose.
+            return None
+        if any(c == 0 for dim in target for c in dim):
+            # The outer slice's chunks property drops zero-width blocks, so
+            # composing would silently change the declared block structure.
+            return None
+        kept = math.prod(map(len, target))
+        if math.prod(map(len, expanded)) - kept > 4 * kept:
+            # The dropped region materializes as aliases (nothing culls them
+            # on the records path); for heavily-trimming slices that dead
+            # weight outweighs the alignment win, so keep the plain lowering.
+            return None
+
+        method = self.method or _choose_rechunk_method(slc.chunks, target, threshold=self.threshold)
+        if method == "p2p":
+            return None
+
+        inner = TasksRechunk(x, tuple(expanded), self.threshold, self.block_size_limit)
+        return SliceSlicesIntegers(inner, index, True)
+
+    def _pushdown_through_expand_dims(self):
+        """Rechunk(ExpandDims(y)) -> ExpandDims(Rechunk(y)).
+
+        The expanded axes are size 1 (always chunked ``(1,)``), so the
+        rechunk only ever concerns ``y``'s axes: drop the expanded axes from
+        the chunk spec and rechunk underneath.  This unblocks the rewrites
+        that key on the rechunk's direct input -- most importantly the
+        slice/rechunk composition when a slice sank through the expansion
+        (``_pushdown_through_slice``).
+        """
+        from dask_array.manipulation._expand import ExpandDims
+
+        expand = self.array
+        axes = set(expand.axes)
+        # self.chunks is the settled target (balance already applied), so the
+        # inner rechunk takes it verbatim with balance off.
+        inner_chunks = tuple(c for ax, c in enumerate(self.chunks) if ax not in axes)
+        return ExpandDims(
+            Rechunk(
+                expand.array,
+                inner_chunks,
+                self.threshold,
+                self.block_size_limit,
+                False,
+                self.method,
+            ),
+            expand.axes,
+        )
 
     def _pushdown_through_transpose(self):
         """Push rechunk through transpose by reordering chunk spec."""
@@ -994,6 +1117,13 @@ class Rechunk(ArrayExpr):
         if pushed is not None:
             return pushed
 
+        from dask_array.slicing._basic import SliceSlicesIntegers
+
+        if type(self.array) is SliceSlicesIntegers:
+            pushed = self._pushdown_through_slice()
+            if pushed is not None:
+                return pushed
+
         method = self.method or _choose_rechunk_method(self.array.chunks, self.chunks, threshold=self.threshold)
         if method == "p2p":
             return P2PRechunk(
@@ -1115,7 +1245,11 @@ def _compute_rechunk(old_name, old_chunks, chunks, level, name):
     else:
         merge_name = name.replace("rechunk-merge-", "rechunk-merge-")
         split_name = name.replace("rechunk-merge-", "rechunk-split-")
-    split_name_suffixes = itertools.count()
+    # Split keys are (split_name, *old_index, piece): the source block's
+    # coordinate plus a per-source piece counter (mirrors the Rust
+    # RechunkLayer) so coordinate-driven ordering sees each split where its
+    # data lives, instead of an opaque global counter.
+    split_pieces = {}
 
     # Pre-allocate old block references
     old_blocks = np.empty([len(c) for c in old_chunks], dtype="O")
@@ -1136,7 +1270,6 @@ def _compute_rechunk(old_name, old_chunks, chunks, level, name):
         # Iterate over the old blocks required to build the new block
         for rec_cat_index, ind_slices in enumerate(cross1):
             old_block_index, slices = zip(*ind_slices)
-            intermediate_name = (split_name, next(split_name_suffixes))
             old_index = old_blocks[old_block_index][1:]
             if all(
                 slc.start == 0 and slc.stop == old_chunks[i][ind] for i, (slc, ind) in enumerate(zip(slices, old_index))
@@ -1146,6 +1279,9 @@ def _compute_rechunk(old_name, old_chunks, chunks, level, name):
             else:
                 # Need to slice the old block.  chunk.getitem (copy-if-small),
                 # not operator.getitem — see TasksRechunk._frisky_layer.
+                piece = split_pieces.get(old_index, 0)
+                split_pieces[old_index] = piece + 1
+                intermediate_name = (split_name, *old_index, piece)
                 intermediates[intermediate_name] = Task(
                     intermediate_name,
                     chunk_getitem,

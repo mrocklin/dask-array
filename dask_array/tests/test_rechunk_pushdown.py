@@ -864,3 +864,218 @@ def test_rechunk_through_concatenate_multi_part_axis1():
     names = [type(node).__name__ for node in opt.walk()]
     assert sum("Rechunk" in name for name in names) == 1, names
     assert_eq(y, np.concatenate(parts_np, axis=1))
+
+
+def _shared(x):
+    """A second consumer so slices can't sink into ``x``'s source."""
+    return x.sum()
+
+
+def test_rechunk_composes_with_offgrid_slice():
+    """Rechunk(off-grid Slice(x)) lowers to aligned-Slice(Rechunk(x, expanded)):
+    the off-grid intermediate layout vanishes, each kept block is built from a
+    same-coordinate heavy piece plus a neighbor sliver, and the outer slice is
+    pure block selection."""
+    from dask_array.slicing._basic import SliceSlicesIntegers
+    from dask_array._rechunk import TasksRechunk
+
+    a = np.random.RandomState(0).rand(40, 6)
+    x = da.from_array(a, chunks=(8, 6), asarray=False) + 0
+    y = x[7:39].rechunk((8, 6))
+
+    from dask._expr import _ExprSequence
+
+    opt = _ExprSequence(y.expr, _shared(x).expr).optimize(fuse=False).operands[0]
+    assert isinstance(opt, SliceSlicesIntegers)
+    inner = opt.array
+    assert isinstance(inner, TasksRechunk)
+    # x's frame: target grid inside the kept range, x's own boundaries outside
+    assert inner.chunks[0] == (7, 8, 8, 8, 8, 1)
+    assert opt.chunks == ((8, 8, 8, 8), (6,))
+    assert_eq(y, (a + 0)[7:39], scheduler="synchronous")
+
+
+def test_rechunk_slice_composition_does_not_push_into_shared_leaf():
+    """The composed inner rechunk must not absorb into a shared FromArray.
+
+    The slice survived simplify because the source is shared. If the new inner
+    rechunk later pushed into the read during lowering, the graph would contain
+    two source reads: one for the sum and one for the sliced/rechunked branch.
+    """
+    from dask._expr import _ExprSequence
+    from dask_array._rechunk import TasksRechunk
+    from dask_array.slicing._basic import SliceSlicesIntegers
+
+    a = np.arange(40.0)
+    x = da.from_array(a, chunks=(8,), asarray=False)
+    y = x[7:39].rechunk((8,))
+
+    opt = _ExprSequence(y.expr, x.sum().expr).optimize(fuse=False)
+    first = opt.operands[0]
+    assert isinstance(first, SliceSlicesIntegers)
+    assert isinstance(first.array, TasksRechunk)
+    assert first.array.chunks == ((7, 8, 8, 8, 8, 1),)
+    from_arrays = {node._name for node in opt.walk() if isinstance(node, FromArray)}
+    assert len(from_arrays) == 1
+    assert_eq(y, a[7:39], scheduler="synchronous")
+
+
+def test_rechunk_slice_composition_does_not_push_into_shared_concatenate():
+    """A shared concatenate must stay shared under slice/rechunk composition."""
+    from dask._expr import _ExprSequence
+    from dask_array._rechunk import TasksRechunk
+    from dask_array.slicing._basic import SliceSlicesIntegers
+
+    left_np = np.arange(40.0)
+    right_np = np.arange(40.0, 80.0)
+    left = da.from_array(left_np, chunks=(8,), asarray=False)
+    right = da.from_array(right_np, chunks=(8,), asarray=False)
+    x = da.concatenate([left, right])
+    y = x[7:73].rechunk((8,))
+
+    opt = _ExprSequence(y.expr, x.sum().expr).optimize(fuse=False)
+    first = opt.operands[0]
+    assert isinstance(first, SliceSlicesIntegers)
+    assert isinstance(first.array, TasksRechunk)
+    from_arrays = {node._name for node in opt.walk() if isinstance(node, FromArray)}
+    assert len(from_arrays) == 2
+    assert_eq(y, np.concatenate([left_np, right_np])[7:73], scheduler="synchronous")
+
+
+def test_rechunk_slice_composition_keeps_outside_boundaries():
+    """The dropped region keeps x's own chunk boundaries so its blocks stay
+    pure aliases (no work for data the slice discards)."""
+    from dask_array._rechunk import TasksRechunk
+
+    a = np.arange(64.0).reshape(64, 1)
+    x = da.from_array(a, chunks=(8, 1), asarray=False) + 0
+    y = x[27:47].rechunk((10, 1))
+
+    from dask._expr import _ExprSequence
+
+    opt = _ExprSequence(y.expr, _shared(x).expr).optimize(fuse=False).operands[0]
+    inner = opt.array
+    assert isinstance(inner, TasksRechunk)
+    # outside: cut at x's boundaries (8, 16, 24 | 48, 56); inside: target
+    assert inner.chunks[0] == (8, 8, 8, 3, 10, 10, 1, 8, 8)
+    assert_eq(y, (a + 0)[27:47], scheduler="synchronous")
+
+
+def test_rechunk_does_not_compose_with_aligned_slice():
+    """A slice already on x's grid is pure block selection; composing would
+    only churn names."""
+    from dask_array.slicing._basic import SliceSlicesIntegers
+
+    a = np.random.RandomState(0).rand(40, 6)
+    x = da.from_array(a, chunks=(8, 6), asarray=False) + 0
+    y = x[8:32].rechunk((8, 6))
+
+    from dask._expr import _ExprSequence
+
+    opt = _ExprSequence(y.expr, _shared(x).expr).optimize(fuse=False).operands[0]
+    # the aligned slice's rechunk is a no-op; the slice itself survives
+    assert isinstance(opt, SliceSlicesIntegers)
+    assert not isinstance(opt.array, Rechunk)
+    assert_eq(y, (a + 0)[8:32], scheduler="synchronous")
+
+
+def test_rechunk_slice_composition_declines_integers_and_steps():
+    """Non-unit steps keep the plain slice-then-rechunk lowering, and a pure
+    integer index (remaining slices on-grid) has nothing to compose."""
+    a = np.random.RandomState(0).rand(40, 6)
+    x = da.from_array(a, chunks=(8, 6), asarray=False) + 0
+
+    from dask._expr import _ExprSequence
+
+    y = x[7:39:2].rechunk((8, 6))
+    opt = _ExprSequence(y.expr, _shared(x).expr).optimize(fuse=False).operands[0]
+    assert isinstance(opt, Rechunk)
+    assert_eq(y, (a + 0)[7:39:2], scheduler="synchronous")
+
+    z = x[3].rechunk((3,))
+    opt = _ExprSequence(z.expr, _shared(x).expr).optimize(fuse=False).operands[0]
+    assert isinstance(opt, Rechunk)
+    assert_eq(z, (a + 0)[3], scheduler="synchronous")
+
+
+def test_rechunk_slice_composition_with_integer_axis_drop():
+    """An off-grid range mixed with an integer index (dropped axis) still
+    composes: the dropped axis keeps x's grid and the outer index drops it."""
+    from dask_array.slicing._basic import SliceSlicesIntegers
+    from dask_array._rechunk import TasksRechunk
+
+    a = np.random.RandomState(0).rand(40, 6, 1)
+    x = da.from_array(a, chunks=(8, 6, 1), asarray=False) + 0
+    y = x[7:39, :, 0].rechunk((8, 6))
+
+    from dask._expr import _ExprSequence
+
+    opt = _ExprSequence(y.expr, _shared(x).expr).optimize(fuse=False).operands[0]
+    assert isinstance(opt, SliceSlicesIntegers)
+    inner = opt.array
+    assert isinstance(inner, TasksRechunk)
+    assert inner.chunks == ((7, 8, 8, 8, 8, 1), (6,), (1,))
+    assert opt.chunks == ((8, 8, 8, 8), (6,))
+    assert_eq(y, (a + 0)[7:39, :, 0], scheduler="synchronous")
+
+
+def test_rechunk_slice_composition_multi_axis():
+    """Off-grid ranges on several axes compose in one pass."""
+    a = np.random.RandomState(0).rand(24, 15)
+    x = da.from_array(a, chunks=(6, 5), asarray=False) + 0
+    y = x[5:23, 1:13].rechunk((6, 4))
+
+    from dask._expr import _ExprSequence
+
+    opt = _ExprSequence(y.expr, _shared(x).expr).optimize(fuse=False).operands[0]
+    inner = opt.array
+    assert inner.chunks == ((5, 6, 6, 6, 1), (1, 4, 4, 4, 2))
+    assert opt.chunks == ((6, 6, 6), (4, 4, 4))
+    assert_eq(y, (a + 0)[5:23, 1:13], scheduler="synchronous")
+
+
+def test_rechunk_pushes_through_expand_dims_and_composes_with_slice():
+    """Rechunk(ExpandDims(off-grid Slice(y))) -- the single-column write
+    pattern -- ends as ExpandDims(aligned-Slice(Rechunk(y, expanded)))."""
+    from dask_array.manipulation._expand import ExpandDims
+    from dask_array.slicing._basic import SliceSlicesIntegers
+    from dask_array._rechunk import TasksRechunk
+
+    a = np.random.RandomState(0).rand(40)
+    y1d = da.from_array(a, chunks=(8,), asarray=False) + 0
+    x = da.expand_dims(y1d, axis=1)  # (40, 1)
+    y = x[7:39].rechunk((8, 1))
+
+    from dask._expr import _ExprSequence
+
+    opt = _ExprSequence(y.expr, _shared(y1d).expr).optimize(fuse=False).operands[0]
+    assert isinstance(opt, ExpandDims)
+    sl = opt.array
+    assert isinstance(sl, SliceSlicesIntegers)
+    inner = sl.array
+    assert isinstance(inner, TasksRechunk)
+    assert inner.chunks == ((7, 8, 8, 8, 8, 1),)
+    assert opt.chunks == ((8, 8, 8, 8), (1,))
+    assert_eq(y, (a + 0)[7:39, None], scheduler="synchronous")
+
+
+def test_rechunk_slice_composition_declines_zero_target_chunks_and_heavy_trims():
+    """Zero-width target chunks would be dropped by the outer slice's chunks
+    property (declared-grid change), and keep-tiny slices would materialize a
+    dead alias per dropped x block (nothing culls records); both decline."""
+    a = np.random.RandomState(0).rand(40, 6)
+    x = da.from_array(a, chunks=(8, 6), asarray=False) + 0
+
+    from dask._expr import _ExprSequence
+
+    y = x[7:39].rechunk(((8, 8, 0, 8, 8, 0), (6,)))
+    opt = _ExprSequence(y.expr, _shared(x).expr).optimize(fuse=False).operands[0]
+    assert isinstance(opt, Rechunk)
+    assert opt.chunks == ((8, 8, 0, 8, 8, 0), (6,))
+    assert_eq(y, (a + 0)[7:39], scheduler="synchronous")
+
+    big = da.from_array(np.arange(4000.0)[:, None], chunks=(8, 1), asarray=False) + 0
+    z = big[3:19].rechunk((16, 1))  # keeps 2 of 500 blocks
+    opt = _ExprSequence(z.expr, _shared(big).expr).optimize(fuse=False).operands[0]
+    assert isinstance(opt, Rechunk)
+    assert_eq(z, (np.arange(4000.0)[:, None] + 0)[3:19], scheduler="synchronous")

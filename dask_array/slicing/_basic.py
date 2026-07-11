@@ -452,6 +452,10 @@ class SliceSlicesIntegers(Slice):
         # ``ArrayExpr._slice_pushdown``, which sees ``dependents`` and declines
         # when another parent needs the child in full. A dispatch from this
         # side would be sharing-blind.
+        # A rechunk parent composes with this slice at *lowering* time instead
+        # (``Rechunk._pushdown_through_slice``): only a slice that survived
+        # simplify is genuinely blocked, and composing earlier would preempt
+        # the more valuable slice-into-source pushdowns.
 
     def _slice_chunks(self, chunks, start, length):
         """Compute new chunks after slicing."""

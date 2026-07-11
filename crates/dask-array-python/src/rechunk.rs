@@ -232,7 +232,13 @@ impl RechunkLayer {
             };
 
             let mut new_idx = vec![0u32; ndim];
-            let mut suffix: u32 = 0; // split-key counter, reset per step (dask matches)
+            // Split keys are (split_name, *old_coord, piece): the source
+            // block's coordinate plus a per-source piece counter.  Coordinate-
+            // driven ordering/placement (e.g. banded streaming order) then
+            // sees each split where its data lives; an opaque global counter
+            // used to stretch the effective coordinate axis (~2x day rate on
+            // day-grid shifts).  Keys stay unique per (old block, piece).
+            let mut pieces: HashMap<Vec<u32>, u32> = HashMap::new();
 
             for _ in 0..total_new {
                 let entries: Vec<&Vec<(u32, i64, i64)>> =
@@ -261,8 +267,6 @@ impl RechunkLayer {
                             full = false;
                         }
                     }
-                    let cur = suffix;
-                    suffix += 1;
                     let r = if full {
                         // Whole old block — reference it directly (no split task).
                         ArgSlot::Dep {
@@ -270,10 +274,14 @@ impl RechunkLayer {
                             coord: old_coord,
                         }
                     } else {
+                        let piece = pieces.entry(old_coord.clone()).or_insert(0);
+                        let mut split_coord = old_coord.clone();
+                        split_coord.push(*piece);
+                        *piece += 1;
                         tasks.push(NeutralTask {
                             nbytes: grid_nbytes(self.itemsize, extents),
                             name_idx: step.split_idx,
-                            coord: vec![cur],
+                            coord: split_coord.clone(),
                             compute: Compute::Call { func_idx: 0 }, // getitem
                             slots: vec![
                                 ArgSlot::Dep {
@@ -285,7 +293,7 @@ impl RechunkLayer {
                         });
                         ArgSlot::Dep {
                             name_idx: step.split_idx,
-                            coord: vec![cur],
+                            coord: split_coord,
                         }
                     };
                     refs.push(r);

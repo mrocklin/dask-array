@@ -101,7 +101,9 @@ class ExpandDims(ArrayExpr):
             )
 
     def _simplify_up(self, parent, dependents):
-        """Allow slice and shuffle operations to push through ExpandDims."""
+        """Allow slice, shuffle and rechunk operations to push through
+        ExpandDims."""
+        from dask_array._rechunk import Rechunk
         from dask_array._shuffle import Shuffle
         from dask_array.slicing import SliceSlicesIntegers
 
@@ -109,6 +111,8 @@ class ExpandDims(ArrayExpr):
             return self._slice_pushdown(parent, dependents)
         if isinstance(parent, Shuffle):
             return self._shuffle_pushdown(parent, dependents)
+        if type(parent) is Rechunk:
+            return self._rechunk_pushdown(parent, dependents)
         return None
 
     def _accept_slice(self, slice_expr):
