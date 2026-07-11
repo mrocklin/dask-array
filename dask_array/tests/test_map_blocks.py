@@ -32,25 +32,20 @@ def test_map_blocks_explicit_chunks_preserves_rechunked_slice_block():
     x = da.ones((104, 2), chunks=(8, 2))
     arr = (x + 1)[95:103].rechunk((8, 2))
 
-    seen = []
-
-    def sentinel(block):
-        seen.append(block.shape)
-        return np.array([[1]], dtype="uint8")
+    def block_shape_code(block):
+        return np.array([[100 * block.shape[0] + block.shape[1]]], dtype="int64")
 
     out = arr.map_blocks(
-        sentinel,
-        dtype="uint8",
+        block_shape_code,
+        dtype="int64",
         chunks=(1, 1),
-        meta=np.array((), dtype="uint8"),
+        meta=np.array((), dtype="int64"),
     )
 
     assert out.chunks == ((1,), (1,))
     for optimize_graph in (True, False):
-        seen.clear()
         result = dask.compute(out, optimize_graph=optimize_graph)[0]
-        np.testing.assert_array_equal(result, np.array([[1]], dtype="uint8"))
-        assert seen == [(8, 2)]
+        np.testing.assert_array_equal(result, np.array([[802]], dtype="int64"))
     assert out.optimize().chunks == ((1,), (1,))
 
 
@@ -79,46 +74,37 @@ def test_map_blocks_explicit_chunks_preserves_nested_elemwise_slice_block():
     y = da.where(da.isnan((x + 1) * 2), 0, (x + 1) * 2)
     arr = y[1:5].rechunk((4, 2))
 
-    seen = []
-
-    def sentinel(block):
-        seen.append(block.shape)
-        return np.array([[1]], dtype="uint8")
+    def block_shape_code(block):
+        return np.array([[100 * block.shape[0] + block.shape[1]]], dtype="int64")
 
     out = arr.map_blocks(
-        sentinel,
-        dtype="uint8",
+        block_shape_code,
+        dtype="int64",
         chunks=(1, 1),
-        meta=np.array((), dtype="uint8"),
+        meta=np.array((), dtype="int64"),
     )
 
     assert arr.chunks == ((4,), (2,))
     assert out.chunks == ((1,), (1,))
     for optimize_graph in (True, False):
-        seen.clear()
         result = dask.compute(out, optimize_graph=optimize_graph)[0]
-        np.testing.assert_array_equal(result, np.array([[1]], dtype="uint8"))
-        assert seen == [(4, 2)]
+        np.testing.assert_array_equal(result, np.array([[402]], dtype="int64"))
 
 
 def test_map_blocks_without_explicit_chunks_preserves_input_block_shapes():
     x = da.ones((16,), chunks=(4,))
     y = da.where(da.isnan((x + 1) * 2), 0, (x + 1) * 2)
     arr = y[1:5]
-    seen = []
 
-    def observe(block):
-        seen.append(block.shape)
-        return block
+    def block_length(block):
+        return np.full(block.shape, block.shape[0], dtype="int64")
 
-    out = arr.map_blocks(observe, dtype=arr.dtype)
+    out = arr.map_blocks(block_length, dtype="int64")
 
     assert arr.chunks == ((3, 1),)
     assert out.chunks == ((3, 1),)
     for optimize_graph in (True, False):
-        seen.clear()
-        np.testing.assert_array_equal(out.compute(optimize_graph=optimize_graph), np.full(4, 4.0))
-        assert sorted(seen) == [(1,), (3,)]
+        np.testing.assert_array_equal(out.compute(optimize_graph=optimize_graph), np.array([3, 3, 3, 1]))
 
 
 def test_map_blocks_invalid_explicit_chunk_count_still_raises():
