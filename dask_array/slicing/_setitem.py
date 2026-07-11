@@ -16,14 +16,31 @@ from dask.core import flatten
 from dask.utils import cached_cumsum
 
 
-def setitem_array_expr(out_name, array, indices, value):
-    """Array-expr version of setitem_array that generates Task objects directly.
+def parse_and_validate_assignment(indices, array_shape, value_shape):
+    """Parse assignment indices and validate the value's shape against them.
 
-    This function creates a new dask graph that assigns values to each block
-    that is touched by the indices, leaving other blocks unchanged.
+    Shared prologue of ``setitem_array_expr``.  ``Array.__setitem__`` also
+    calls this eagerly (discarding the result) so that shape errors surface
+    at assignment time rather than at compute time.
+
+    Returns
+    -------
+    indices : list
+        Parsed indices, as returned by ``parse_assignment_indices``.
+    reverse : list
+        Positions, relative to the common shape, of dimensions indexed by
+        reversed slices.
+    offset, value_offset : int
+        Additive offsets aligning the value's dimensions with the shape
+        implied by the indices.
+    value_common_shape : tuple
+        The trailing dimensions of the value that correspond to the
+        implied shape.
+    base_value_indices : list
+        Template indices used to select each block's part of the value.
+    non_broadcast_dimensions : list
+        Positions in the common shape where the value is not broadcast.
     """
-    array_shape = array.shape
-    value_shape = value.shape
     value_ndim = len(value_shape)
 
     # Reformat input indices
@@ -85,6 +102,36 @@ def setitem_array_expr(out_name, array, indices, value):
                 "could not be broadcast to indexing result of shape "
                 f"{tuple(implied_shape)}"
             )
+
+    return (
+        indices,
+        reverse,
+        offset,
+        value_offset,
+        value_common_shape,
+        base_value_indices,
+        non_broadcast_dimensions,
+    )
+
+
+def setitem_array_expr(out_name, array, indices, value):
+    """Array-expr version of setitem_array that generates Task objects directly.
+
+    This function creates a new dask graph that assigns values to each block
+    that is touched by the indices, leaving other blocks unchanged.
+    """
+    value_shape = value.shape
+    value_ndim = len(value_shape)
+
+    (
+        indices,
+        reverse,
+        offset,
+        value_offset,
+        value_common_shape,
+        base_value_indices,
+        non_broadcast_dimensions,
+    ) = parse_and_validate_assignment(indices, array.shape, value_shape)
 
     # Translate chunks tuple to array locations
     chunks = array.chunks

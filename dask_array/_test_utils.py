@@ -12,7 +12,7 @@ import numpy as np
 
 from dask.base import is_dask_collection
 
-from dask_array._utils import is_arraylike, is_cupy_type
+from dask.utils import is_arraylike, is_cupy_type
 
 
 def normalize_to_array(x):

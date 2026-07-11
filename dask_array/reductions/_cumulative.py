@@ -425,7 +425,7 @@ class CumReductionBlelloch(ArrayExpr):
 def _cumreduction_expr(func, binop, ident, x, axis, dtype, out, method, preop):
     """Create cumulative reduction expression."""
     from dask_array._collection import Array
-    from dask_array.core._blockwise_funcs import _handle_out
+    from dask_array._core_utils import handle_out
 
     if not isinstance(x, Array):
         from dask_array.core._conversion import asarray
@@ -445,7 +445,7 @@ def _cumreduction_expr(func, binop, ident, x, axis, dtype, out, method, preop):
         raise ValueError(f'Invalid method for cumreduction. Expected "sequential" or "blelloch". Got: {method!r}')
 
     result = new_collection(expr)
-    return _handle_out(out, result)
+    return handle_out(out, result)
 
 
 def cumsum(x, axis=None, dtype=None, out=None, method="sequential"):

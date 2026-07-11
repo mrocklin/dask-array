@@ -9,6 +9,7 @@ import numpy as np
 from dask import config
 from dask.utils import cached_max, derived_from
 
+from dask_array._core_utils import _calculate_new_chunksizes
 from dask_array._dispatch import einsum_lookup
 
 # Valid characters for einsum subscripts (from numpy)
@@ -31,13 +32,6 @@ def chunk_einsum(*operands, **kwargs):
     # Avoid concatenate=True in blockwise by adding 1's
     # for the contracted dimensions
     return chunk.reshape(chunk.shape + (1,) * ncontract_inds)
-
-
-def _calculate_new_chunksizes(old_chunks, new_chunks, changeable_dimensions, target_size):
-    """Calculate new chunk sizes for einsum rechunking."""
-    from dask_array._shuffle import _calculate_new_chunksizes as _calc
-
-    return _calc(old_chunks, new_chunks, changeable_dimensions, target_size)
 
 
 def _parse_einsum_input(operands, asarray):

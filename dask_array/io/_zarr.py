@@ -7,11 +7,7 @@ import numpy as np
 
 from dask.base import tokenize
 
-from dask_array._core_utils import normalize_chunks, unknown_chunk_message
-
-
-class PerformanceWarning(Warning):
-    """A warning given when bad chunking may cause poor performance."""
+from dask_array._core_utils import PerformanceWarning, normalize_chunks, unknown_chunk_message
 
 
 def _zarr_v3() -> bool:

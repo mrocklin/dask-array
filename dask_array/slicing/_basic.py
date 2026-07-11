@@ -14,13 +14,9 @@ from dask_array._chunk import getitem
 from dask_array._utils import meta_from_array
 from dask_array.slicing._utils import (
     _slice_1d,
-    check_index,
     fuse_slice,
     new_blockdim,
     normalize_slice,
-    posify_index,
-    replace_ellipsis,
-    sanitize_index,
 )
 from dask.layers import ArrayBlockwiseDep
 from dask.utils import cached_cumsum, is_arraylike
@@ -124,75 +120,6 @@ def slice_with_int_dask_array(x, index):
         else:
             out_index.append(idx)
     return x, tuple(out_index)
-
-
-def normalize_index(idx, shape):
-    """Normalize slicing indexes
-
-    1.  Replaces ellipses with many full slices
-    2.  Adds full slices to end of index
-    3.  Checks bounding conditions
-    4.  Replace multidimensional numpy arrays with dask arrays
-    5.  Replaces numpy arrays with lists
-    6.  Posify's integers and lists
-    7.  Normalizes slices to canonical form
-
-    Examples
-    --------
-    >>> normalize_index(1, (10,))
-    (1,)
-    >>> normalize_index(-1, (10,))
-    (9,)
-    >>> normalize_index([-1], (10,))
-    (array([9]),)
-    >>> normalize_index(slice(-3, 10, 1), (10,))
-    (slice(7, None, None),)
-    >>> normalize_index((Ellipsis, None), (10,))
-    (slice(None, None, None), None)
-    >>> normalize_index(np.array([[True, False], [False, True], [True, True]]), (3, 2))
-    (dask.array<array, shape=(3, 2), dtype=bool, chunksize=(3, 2), chunktype=numpy.ndarray>,)
-    """
-    from dask_array._collection import Array, from_array
-
-    if not isinstance(idx, tuple):
-        idx = (idx,)
-
-    # if a > 1D numpy.array is provided, cast it to a dask array
-    if len(idx) > 0 and len(shape) > 1:
-        i = idx[0]
-        if is_arraylike(i) and not isinstance(i, Array) and i.shape == shape:
-            idx = (from_array(i), *idx[1:])
-
-    idx = replace_ellipsis(len(shape), idx)
-    n_sliced_dims = 0
-    for i in idx:
-        if hasattr(i, "ndim") and i.ndim >= 1:
-            n_sliced_dims += i.ndim
-        elif i is None:
-            continue
-        else:
-            n_sliced_dims += 1
-
-    idx = idx + (slice(None),) * (len(shape) - n_sliced_dims)
-    if len([i for i in idx if i is not None]) > len(shape):
-        raise IndexError("Too many indices for array")
-
-    none_shape = []
-    i = 0
-    for ind in idx:
-        if ind is not None:
-            none_shape.append(shape[i])
-            i += 1
-        else:
-            none_shape.append(None)
-
-    for axis, (i, d) in enumerate(zip(idx, none_shape)):
-        if d is not None:
-            check_index(axis, i, d)
-    idx = tuple(map(sanitize_index, idx))
-    idx = tuple(map(normalize_slice, idx, none_shape))
-    idx = posify_index(none_shape, idx)
-    return idx
 
 
 def slice_with_int_dask_array_on_axis(x, idx, axis):

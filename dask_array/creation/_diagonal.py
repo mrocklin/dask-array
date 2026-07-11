@@ -139,7 +139,7 @@ class Diagonal(ArrayExpr):
         return pop_axes(x.chunks, axis1, axis2) + (kdiag_chunks,)
 
     def _layer(self) -> dict:
-        from dask_array._utils import is_cupy_type
+        from dask.utils import is_cupy_type
 
         dsk = {}
         info = self._diag_info

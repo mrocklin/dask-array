@@ -296,6 +296,11 @@ class ArrayExpr(SingletonExpr):
 
     @functools.cached_property
     def _cached_keys(self):
+        # Derives keys by *lowering*, so it is only meaningful on expressions
+        # that are already lowered (all current callers hit this during
+        # `_layer()`, where the tree is lowered by construction). Contrast
+        # `Array._cached_dask_keys` in _collection.py, which must never lower:
+        # collection keys are the raw root name, pinned at materialization.
         out = self.lower_completely()
 
         name, chunks, numblocks = out.name, out.chunks, out.numblocks
@@ -357,11 +362,7 @@ class ArrayExpr(SingletonExpr):
             refs = dependents.get(dep._name)
             if not refs:
                 continue
-            dependents[dep._name] = [
-                ref
-                for ref in refs
-                if (node := ref()) is not None and node._name != self._name
-            ]
+            dependents[dep._name] = [ref for ref in refs if (node := ref()) is not None and node._name != self._name]
 
     def _requires_grid_preservation(self, dependency):
         """Whether this node observes a dependency's block grid."""

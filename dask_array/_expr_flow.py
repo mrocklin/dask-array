@@ -7,6 +7,8 @@ from math import prod
 
 from dask.utils import funcname
 
+from dask_array._visualize import format_bytes
+
 
 @dataclass
 class FlowNode:
@@ -253,24 +255,6 @@ def _assign_layout(nodes, edges):
 def count_operations(expr) -> int:
     """Count total operations in an expression tree."""
     return len(list(_walk_expr_tree(expr)))
-
-
-def _format_bytes(nbytes: int) -> str:
-    """Format bytes with 2 significant figures."""
-    for unit, threshold in [
-        ("PiB", 2**50),
-        ("TiB", 2**40),
-        ("GiB", 2**30),
-        ("MiB", 2**20),
-        ("kiB", 2**10),
-    ]:
-        if nbytes >= threshold:
-            value = nbytes / threshold
-            if value >= 10:
-                return f"{value:.0f} {unit}"
-            else:
-                return f"{value:.1f} {unit}"
-    return f"{nbytes} B"
 
 
 def _format_shape(shape: tuple) -> str:
@@ -524,7 +508,7 @@ def _render_card(node: FlowNode, x: float, y: float, emphasized: bool, global_ma
 
     # Bottom section: shape and bytes, left-aligned
     shape_str = _format_shape(node.shape)
-    bytes_str = _format_bytes(node.nbytes) if node.nbytes > 0 else ""
+    bytes_str = format_bytes(node.nbytes) if node.nbytes > 0 else ""
     left_margin = x + 12
 
     parts.append(

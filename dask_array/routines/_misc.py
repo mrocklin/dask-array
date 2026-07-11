@@ -55,7 +55,7 @@ def compress(condition, a, axis=None):
         A copy of a without the slices along axis for which condition
         is false.
     """
-    from dask_array._utils import is_arraylike
+    from dask.utils import is_arraylike
 
     if not is_arraylike(condition):
         condition = np.asarray(condition)

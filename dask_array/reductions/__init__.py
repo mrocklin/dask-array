@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from importlib import import_module
 
+# This package intentionally lazy-loads its exports via __getattr__ instead of
+# importing the implementation modules eagerly like other subpackages do.
+# Worker-side unpickling of reduction functions (std/var/moment/all) imports
+# this package re-entrantly and must not observe a partially initialized
+# module (see commit e88b958). Don't "normalize" this to eager imports.
 _EXPORTS = {
     "all": ("dask_array.reductions._common", "all"),
     "any": ("dask_array.reductions._common", "any"),

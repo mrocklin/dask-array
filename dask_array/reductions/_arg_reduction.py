@@ -8,9 +8,9 @@ import numpy as np
 from tlz import accumulate, pluck
 
 from dask_array._expr import ArrayExpr
-from dask_array._utils import is_arraylike, validate_axis
+from dask_array._utils import validate_axis
 from dask.tokenize import _tokenize_deterministic
-from dask.utils import cached_property
+from dask.utils import cached_property, is_arraylike
 
 
 class ArgChunk(ArrayExpr):
@@ -101,7 +101,7 @@ def arg_reduction(x, chunk, combine, agg, axis=None, keepdims=False, split_every
     axis : int, optional
     split_every : int or dict, optional
     """
-    from dask_array.core._blockwise_funcs import _handle_out
+    from dask_array._core_utils import handle_out
     from dask_array._utils import asarray_safe, meta_from_array
 
     if axis is None:
@@ -147,4 +147,4 @@ def arg_reduction(x, chunk, combine, agg, axis=None, keepdims=False, split_every
         split_every=split_every,
         combine=combine,
     )
-    return _handle_out(out, result)
+    return handle_out(out, result)

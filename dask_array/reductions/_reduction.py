@@ -14,12 +14,12 @@ from dask import config
 from dask_array._new_collection import new_collection
 from dask_array._expr import ArrayExpr
 from dask_array._utils import compute_meta
-from dask_array._core_utils import _concatenate2
+from dask_array._core_utils import _concatenate2, handle_out
 from dask_array._numpy_compat import ComplexWarning
-from dask_array._utils import is_arraylike, validate_axis
+from dask_array._utils import validate_axis
 from dask.blockwise import lol_tuples
 from dask.tokenize import _tokenize_deterministic
-from dask.utils import cached_property, funcname, getargspec, is_series_like
+from dask.utils import cached_property, funcname, getargspec, is_arraylike, is_series_like
 
 
 class Reduction(ArrayExpr):
@@ -424,12 +424,7 @@ def reduction(
         )
     )
 
-    # Handle out= parameter
-    if out is not None:
-        from dask_array.core._blockwise_funcs import _handle_out
-
-        return _handle_out(out, result)
-    return result
+    return handle_out(out, result)
 
 
 def _sliding_window_nan_skip_reduce_block(block, *, window, sliding_axis, out_dtype, identity, binop):

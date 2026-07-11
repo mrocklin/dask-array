@@ -662,6 +662,22 @@ def test_setitem_with_different_chunks_preserves_shape(params):
     assert x.shape == result.shape
 
 
+def test_setitem_errors_raise_at_assignment_time():
+    # Shape validation happens eagerly in __setitem__, not at compute time.
+    x = da.ones((10, 10), chunks=(5, 5))
+    with pytest.raises(ValueError, match="could not be broadcast"):
+        x[:5, :5] = np.ones((6, 6))
+    with pytest.raises(ValueError, match="could not broadcast input array"):
+        x[:5, :5] = np.ones((2, 5, 5))
+
+    # A dask boolean index limits the value size along that dimension
+    # (upstream dask parity); this also fires at assignment time.
+    y = da.ones((3, 10), chunks=(2, 5))
+    mask = da.from_array(np.array([True, False, True]), chunks=2)
+    with pytest.raises(ValueError, match="boolean index"):
+        y[mask, :5] = np.ones(5)
+
+
 def test_gh3579():
     assert_eq(np.arange(10)[0::-1], da.arange(10, chunks=3)[0::-1])
     assert_eq(np.arange(10)[::-1], da.arange(10, chunks=3)[::-1])

@@ -15,56 +15,9 @@ import numpy as np
 from dask.base import is_dask_collection
 from dask.utils import cached_cumsum, is_arraylike
 
+from dask_array._utils import asanyarray_safe
+
 colon = slice(None, None, None)
-
-
-# ============================================================================
-# Helper functions
-# ============================================================================
-
-
-def _array_like_safe(np_func, da_func, a, like, **kwargs):
-    """Helper for asanyarray_safe."""
-    from dask_array._collection import Array
-
-    if like is a and hasattr(a, "__array_function__"):
-        return a
-
-    if isinstance(like, Array):
-        return da_func(a, **kwargs)
-
-    # Handle dask arrays backed by cupy
-    if isinstance(a, Array):
-        try:
-            from dask.utils import is_cupy_type
-
-            if is_cupy_type(a._meta):
-                a = a.compute(scheduler="sync")
-        except ImportError:
-            pass
-
-    if hasattr(like, "__array_function__"):
-        return np_func(a, like=like, **kwargs)
-
-    if type(like).__module__.startswith("scipy.sparse"):
-        kwargs.pop("order", None)
-        if np.isscalar(a):
-            a = np.array([[a]])
-        return type(like)(a, **kwargs)
-
-    return np_func(a, **kwargs)
-
-
-def asanyarray_safe(a, like, **kwargs):
-    """Convert to array using np.asanyarray with proper dispatching.
-
-    If a is dask.array, return dask.array.asanyarray(a, **kwargs),
-    otherwise return np.asanyarray(a, like=like, **kwargs), dispatching
-    the call to the library that implements the like array.
-    """
-    from dask_array.core._conversion import asanyarray
-
-    return _array_like_safe(np.asanyarray, asanyarray, a, like, **kwargs)
 
 
 # ============================================================================
@@ -548,6 +501,8 @@ def normalize_index(idx, shape):
     (slice(7, None, None),)
     >>> normalize_index((Ellipsis, None), (10,))
     (slice(None, None, None), None)
+    >>> normalize_index(np.array([[True, False], [False, True], [True, True]]), (3, 2))
+    (dask.array<array, shape=(3, 2), dtype=bool, chunksize=(3, 2), chunktype=numpy.ndarray>,)
     """
     from dask_array._collection import Array
     from dask_array.core import from_array

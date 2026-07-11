@@ -5,7 +5,6 @@ from dask_array.slicing._basic import (
     Slice,
     SliceSlicesIntegers,
     TakeUnknownOneChunk,
-    normalize_index,
     slice_array,
     slice_slices_and_integers,
     slice_with_int_dask_array,
@@ -14,6 +13,7 @@ from dask_array.slicing._basic import (
     slice_wrap_lists,
     take,
 )
+from dask_array.slicing._utils import normalize_index
 from dask_array.slicing._bool_index import (
     BooleanIndexFlattened,
     getitem_variadic,

@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 from dask.base import named_schedulers
 from dask.utils import SerializableLock
 
-from dask_array._utils import is_arraylike
+from dask.utils import is_arraylike
 from dask_array.slicing._utils import fuse_slice
 
 

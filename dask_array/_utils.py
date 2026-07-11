@@ -3,75 +3,12 @@ from __future__ import annotations
 import contextlib
 import numbers
 import warnings
-from typing import Any
 
 import numpy as np
 from numpy.exceptions import AxisError
 
 from dask.base import is_dask_collection
-from dask.utils import has_keyword
-
-
-def typename(typ: Any, short: bool = False) -> str:
-    """Return the name of a type.
-
-    Examples
-    --------
-    >>> typename(int)
-    'int'
-    """
-    if not isinstance(typ, type):
-        return typename(type(typ))
-    try:
-        if not typ.__module__ or typ.__module__ == "builtins":
-            return typ.__name__
-        else:
-            if short:
-                module, *_ = typ.__module__.split(".")
-            else:
-                module = typ.__module__
-            return f"{module}.{typ.__name__}"
-    except AttributeError:
-        return str(typ)
-
-
-def is_cupy_type(x) -> bool:
-    """Check if x is a CuPy array type."""
-    return "cupy" in str(type(x))
-
-
-def is_arraylike(x) -> bool:
-    """Is this object a numpy array or something similar?
-
-    This function tests specifically for an object that already has
-    array attributes (e.g. np.ndarray, dask.array.Array, cupy.ndarray,
-    sparse.COO), **NOT** for something that can be coerced into an
-    array object (e.g. Python lists and tuples).
-
-    Examples
-    --------
-    >>> import numpy as np
-    >>> is_arraylike(np.ones(5))
-    True
-    >>> is_arraylike(np.ones(()))
-    True
-    >>> is_arraylike(5)
-    False
-    >>> is_arraylike('cat')
-    False
-    """
-    is_duck_array = hasattr(x, "__array_function__") or hasattr(x, "__array_ufunc__")
-
-    return bool(
-        hasattr(x, "shape")
-        and isinstance(x.shape, tuple)
-        and hasattr(x, "dtype")
-        and not any(is_dask_collection(n) for n in x.shape)
-        # We special case scipy.sparse and cupyx.scipy.sparse arrays as having partial
-        # support for them is useful in scenarios where we mostly call `map_partitions`
-        # or `map_blocks` with scikit-learn functions on dask arrays and dask dataframes.
-        and (is_duck_array or "scipy.sparse" in typename(type(x)))
-    )
+from dask.utils import has_keyword, is_arraylike, is_cupy_type
 
 
 def meta_from_array(x, ndim=None, dtype=None):

@@ -745,6 +745,30 @@ def test_array_reduction_out(func):
     assert_eq(x, func(np.ones((10, 10)), axis=0))
 
 
+def test_median_out_dask_array():
+    x = da.ones(10, chunks=(5,))
+    y = da.ones((10, 10), chunks=(4, 4))
+    da.median(y, axis=0, out=x)
+    assert_eq(x, np.median(np.ones((10, 10)), axis=0))
+
+
+@pytest.mark.parametrize(
+    "reduce",
+    [
+        lambda x, out: x.sum(axis=0, out=out),
+        lambda x, out: da.median(x, axis=0, out=out),
+        lambda x, out: da.cumsum(x, axis=0, out=out),
+        lambda x, out: da.argmax(x, axis=0, out=out),
+    ],
+)
+def test_reduction_out_numpy_array_raises(reduce):
+    # Only dask Arrays (or None) are supported as out=; matches upstream dask.
+    x = da.ones((10, 10), chunks=(4, 4))
+    out = np.empty((10, 10))
+    with pytest.raises(NotImplementedError, match="out parameter is not fully supported"):
+        reduce(x, out)
+
+
 @pytest.mark.parametrize("func", ["cumsum", "cumprod", "nancumsum", "nancumprod"])
 @pytest.mark.parametrize("use_nan", [False, True])
 @pytest.mark.parametrize(

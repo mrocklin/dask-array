@@ -374,6 +374,18 @@ def test_store_forces_local_scheduler_only_for_inmemory_targets():
         assert not _force_local_store_scheduler([inmem], "sync")  # explicit: respect it
 
 
+def test_to_zarr_rechunk_warning_is_da_performance_warning():
+    # The zarr writer's rechunk warning must be the canonical
+    # da.PerformanceWarning so users can filter it.
+    zarr = pytest.importorskip("zarr")
+
+    z = zarr.zeros((20,), chunks=(10,), dtype="f8", store={})
+    x = da.ones((20,), chunks=(20,))
+    with dask.config.set({"array.chunk-size": "24 B"}):
+        with pytest.warns(da.PerformanceWarning, match="rechunked along axis"):
+            da.to_zarr(x, z, compute=False)
+
+
 @pytest.mark.parametrize(
     "array",
     [

@@ -892,7 +892,7 @@ class Elemwise(Blockwise):
         """Return expression dependencies.
 
         When where is True (the default), 'out' is not actually used in
-        the computation - it's just a placeholder for _handle_out to
+        the computation - it's just a placeholder for handle_out to
         replace the expression. Exclude it from dependencies to avoid
         fusion issues, UNLESS out is also an input (e.g., np.sin(x, out=x)).
         """

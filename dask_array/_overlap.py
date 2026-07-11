@@ -19,7 +19,7 @@ from dask_array._collection import Array, concatenate
 from dask_array._expr import ArrayExpr, unify_chunks_expr
 from dask_array._map_blocks import map_blocks
 from dask_array.creation import full_like, repeat
-from dask_array._shuffle import _calculate_new_chunksizes
+from dask_array._core_utils import _calculate_new_chunksizes
 from dask_array._numpy_compat import normalize_axis_tuple
 from dask_array._utils import compute_meta, meta_from_array, validate_axis
 from dask.layers import ArrayOverlapLayer

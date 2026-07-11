@@ -678,6 +678,56 @@ def auto_chunks(chunks, shape, limit, dtype, previous_chunks=None):
         return tuple(chunks)
 
 
+def _calculate_new_chunksizes(input_chunks, new_chunks, changeable_dimensions: set, maximum_chunk):
+    """Split chunks along ``changeable_dimensions`` until the largest chunk
+    implied by ``new_chunks`` stays close to ``maximum_chunk`` elements.
+
+    Generic chunk-splitting helper used by shuffle, sliding-window overlap,
+    and einsum to compensate for chunk growth along other dimensions.
+    ``new_chunks`` is a mutable list of chunk tuples that is updated in place
+    and returned.
+    """
+    chunksize_tolerance = config.get("array.chunk-size-tolerance")
+    maximum_chunk = max(maximum_chunk, 1)
+
+    # iterate until we distributed the increase in chunksize across all dimensions
+    # or every non-shuffle dimension is all 1
+    while changeable_dimensions:
+        n_changeable_dimensions = len(changeable_dimensions)
+        chunksize_inc_factor = math.prod(map(max, new_chunks)) / maximum_chunk
+        if chunksize_inc_factor <= 1:
+            break
+
+        for i in list(changeable_dimensions):
+            new_chunksizes = []
+            # calculate what the max chunk size in this dimension is and split every
+            # chunk that is larger than that. We split the increase factor evenly
+            # between all dimensions that are not shuffled.
+            up_chunksize_limit_for_dim = max(new_chunks[i]) / (chunksize_inc_factor ** (1 / n_changeable_dimensions))
+            for c in input_chunks[i]:
+                if c > chunksize_tolerance * up_chunksize_limit_for_dim:
+                    factor = math.ceil(c / up_chunksize_limit_for_dim)
+
+                    # Ensure that we end up at least with chunksize 1
+                    factor = min(factor, c)
+
+                    chunksize, remainder = divmod(c, factor)
+                    nc = [chunksize] * factor
+                    for ii in range(remainder):
+                        # Add remainder parts to the first few chunks
+                        nc[ii] += 1
+                    new_chunksizes.extend(nc)
+
+                else:
+                    new_chunksizes.append(c)
+
+            if tuple(new_chunksizes) == new_chunks[i] or max(new_chunksizes) == 1:
+                changeable_dimensions.remove(i)
+
+            new_chunks[i] = tuple(new_chunksizes)
+    return new_chunks
+
+
 def normalize_chunks(chunks, shape=None, limit=None, dtype=None, previous_chunks=None):
     """Normalize chunks to tuple of tuples
 
@@ -986,12 +1036,8 @@ def _elemwise_handle_where(*args, **kwargs):
     return function(*args, where=where, out=out, **kwargs)
 
 
-def handle_out(out, result):
-    """Handle out parameters
-
-    If out is a dask.array then this overwrites the contents of that array with
-    the result
-    """
+def _normalize_out(out):
+    """Normalize an ``out=`` argument: unwrap 1-tuples, allow only None or a dask Array."""
     from dask_array._collection import Array
 
     if isinstance(out, tuple):
@@ -1005,6 +1051,18 @@ def handle_out(out, result):
         raise NotImplementedError(
             f"The out parameter is not fully supported. Received type {type(out).__name__}, expected Dask Array"
         )
+    return out
+
+
+def handle_out(out, result):
+    """Handle out parameters
+
+    If out is a dask.array then this overwrites the contents of that array with
+    the result
+    """
+    from dask_array._collection import Array
+
+    out = _normalize_out(out)
     if isinstance(out, Array):
         if out.shape != result.shape:
             raise ValueError(

@@ -7,7 +7,7 @@ import toolz
 
 from dask_array._new_collection import new_collection
 from dask_array._blockwise import Blockwise, Elemwise
-from dask_array._core_utils import is_scalar_for_elemwise
+from dask_array._core_utils import _normalize_out, handle_out, is_scalar_for_elemwise
 
 
 def blockwise(
@@ -271,42 +271,4 @@ def elemwise(op, *args, out=None, where=True, dtype=None, name=None, **kwargs):
 
     result = new_collection(Elemwise(op, dtype, name, where, out, user_kwargs, *args))
 
-    return _handle_out(out, result)
-
-
-def _normalize_out(out):
-    """Normalize out parameter for elemwise operations."""
-    from dask_array._collection import Array
-
-    if isinstance(out, tuple):
-        if len(out) == 1:
-            out = out[0]
-        elif len(out) > 1:
-            raise NotImplementedError("The out parameter is not fully supported")
-        else:
-            out = None
-    if not (out is None or isinstance(out, Array)):
-        raise NotImplementedError(
-            f"The out parameter is not fully supported. Received type {type(out).__name__}, expected Dask Array"
-        )
-    return out
-
-
-def _handle_out(out, result):
-    """Handle out parameters for array-expr.
-
-    If out is a dask Array then this overwrites the contents of that array with
-    the result by replacing its internal expression.
-    """
-    from dask_array._collection import Array
-
-    if isinstance(out, Array):
-        if out.shape != result.shape:
-            raise ValueError(
-                f"Mismatched shapes between result and out parameter. out={out.shape}, result={result.shape}"
-            )
-        # Modify the out array in-place by replacing its expression
-        out._replace_expr(result._expr)
-        return out
-    else:
-        return result
+    return handle_out(out, result)
