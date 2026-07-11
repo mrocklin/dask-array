@@ -83,7 +83,6 @@ def broadcast_arrays(*args, subok=False):
 
     from dask_array._collection import broadcast_to
     from dask_array._core_utils import broadcast_chunks, broadcast_shapes
-    from dask_array._numpy_compat import NUMPY_GE_200
 
     subok = bool(subok)
 
@@ -91,9 +90,7 @@ def broadcast_arrays(*args, subok=False):
     args = tuple(to_array(e) for e in args)
 
     if not args:
-        if NUMPY_GE_200:
-            return ()
-        return []
+        return ()
 
     # Unify uneven chunking
     inds = [list(reversed(range(x.ndim))) for x in args]
@@ -103,9 +100,4 @@ def broadcast_arrays(*args, subok=False):
     shape = broadcast_shapes(*(e.shape for e in args))
     chunks = broadcast_chunks(*(e.chunks for e in args))
 
-    if NUMPY_GE_200:
-        result = tuple(broadcast_to(e, shape=shape, chunks=chunks) for e in args)
-    else:
-        result = [broadcast_to(e, shape=shape, chunks=chunks) for e in args]
-
-    return result
+    return tuple(broadcast_to(e, shape=shape, chunks=chunks) for e in args)

@@ -11,9 +11,8 @@ import numpy as np
 from tlz import accumulate
 from toolz import concat
 
-from dask._task_spec import Alias, List, Task, TaskRef
+from dask._task_spec import Alias
 from dask_array._expr import ArrayExpr, unify_chunks_expr
-from dask_array._core_utils import concatenate3
 from dask_array._dispatch import concatenate_lookup
 from dask_array._utils import meta_from_array
 
@@ -209,52 +208,6 @@ class Concatenate(ArrayExpr):
             self._meta,
             *sliced_arrays[1:],
         )
-
-
-class ConcatenateFinalize(ArrayExpr):
-    """Finalize array computation by concatenating all blocks.
-
-    This is used for arrays with unknown chunk sizes where rechunking
-    is not possible.
-    """
-
-    _parameters = ["arr"]
-
-    @functools.cached_property
-    def _name(self):
-        return f"concatenate-finalize-{self.deterministic_token}"
-
-    @functools.cached_property
-    def _meta(self):
-        return self.arr._meta
-
-    @functools.cached_property
-    def chunks(self):
-        # Output is a single chunk with unknown size
-        return tuple((np.nan,) for _ in range(self.arr.ndim))
-
-    @functools.cached_property
-    def numblocks(self):
-        return tuple(1 for _ in range(self.arr.ndim))
-
-    @functools.cached_property
-    def _cached_keys(self):
-        return List(TaskRef((self._name,) + (0,) * self.arr.ndim))
-
-    def _layer(self) -> dict:
-        # Get all keys from the input array in nested list structure
-        arr_keys = self.arr.__dask_keys__()
-
-        # Convert nested key structure to TaskRefs
-        def convert_keys(keys):
-            if isinstance(keys, list):
-                return List(*[convert_keys(k) for k in keys])
-            return TaskRef(keys)
-
-        keys_list = convert_keys(arr_keys)
-
-        out_key = (self._name,) + (0,) * self.arr.ndim
-        return {out_key: Task(out_key, concatenate3, keys_list)}
 
 
 def concatenate(seq, axis=0, allow_unknown_chunksizes=False):

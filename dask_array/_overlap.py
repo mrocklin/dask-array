@@ -18,7 +18,7 @@ from dask_array._blockwise import Blockwise
 from dask_array._collection import Array, concatenate
 from dask_array._expr import ArrayExpr, unify_chunks_expr
 from dask_array._map_blocks import map_blocks
-from dask_array.creation import empty_like, full_like, repeat
+from dask_array.creation import full_like, repeat
 from dask_array._shuffle import _calculate_new_chunksizes
 from dask_array._numpy_compat import normalize_axis_tuple
 from dask_array._utils import compute_meta, meta_from_array, validate_axis
@@ -985,43 +985,6 @@ def overlap(x, depth, boundary, *, allow_rechunk=True):
     trim = {k: v * 2 if boundary2.get(k, "none") != "none" else 0 for k, v in depth2.items()}
     x4 = chunk.trim(x3, trim)
     return x4
-
-
-def add_dummy_padding(x, depth, boundary):
-    """
-    Pads an array which has 'none' as the boundary type.
-    Used to simplify trimming arrays which use 'none'.
-
-    >>> import dask_array as da
-    >>> x = da.arange(6, chunks=3)
-    >>> add_dummy_padding(x, {0: 1}, {0: 'none'}).compute()  # doctest: +NORMALIZE_WHITESPACE
-    array([..., 0, 1, 2, 3, 4, 5, ...])
-    """
-    for k, v in boundary.items():
-        d = depth.get(k, 0)
-        if v == "none" and d > 0:
-            empty_shape = list(x.shape)
-            empty_shape[k] = d
-
-            empty_chunks = list(x.chunks)
-            empty_chunks[k] = (d,)
-
-            empty = empty_like(
-                getattr(x, "_meta", x),
-                shape=empty_shape,
-                chunks=empty_chunks,
-                dtype=x.dtype,
-            )
-
-            out_chunks = list(x.chunks)
-            ax_chunks = list(out_chunks[k])
-            ax_chunks[0] += d
-            ax_chunks[-1] += d
-            out_chunks[k] = tuple(ax_chunks)
-
-            x = concatenate([empty, x, empty], axis=k)
-            x = x.rechunk(out_chunks)
-    return x
 
 
 def _map_overlap_direct(func, args, depth, boundary, trim, allow_rechunk, kwargs):

@@ -11,7 +11,6 @@ from dask.utils import derived_from
 @derived_from(np)
 def meshgrid(*xi, sparse=False, indexing="xy", **kwargs):
     from dask_array._routines import broadcast_arrays
-    from dask_array._numpy_compat import NUMPY_GE_200
 
     sparse = bool(sparse)
 
@@ -46,8 +45,7 @@ def meshgrid(*xi, sparse=False, indexing="xy", **kwargs):
     if indexing == "xy" and len(xi) > 1:
         grid = (grid[1], grid[0], *grid[2:])
 
-    out_type = tuple if NUMPY_GE_200 else list
-    return out_type(grid)
+    return tuple(grid)
 
 
 def indices(dimensions, dtype=int, chunks="auto"):

@@ -10,8 +10,7 @@ import numpy as np
 # Parse numpy version to tuple for comparisons
 _np_version = tuple(int(x) for x in np.__version__.split(".")[:2])
 
-# Version flags - NUMPY_GE_200 is always True since we require numpy >= 2.0
-NUMPY_GE_200 = True
+# Version flags (numpy >= 2.0 is the baseline requirement)
 NUMPY_GE_210 = _np_version >= (2, 1)
 NUMPY_GE_220 = _np_version >= (2, 2)
 NUMPY_GE_240 = _np_version >= (2, 4)
@@ -98,38 +97,3 @@ class _Recurser:
             return
         for i, xi in enumerate(x):
             yield from self.walk(xi, index + (i,))
-
-
-def moveaxis(a, source, destination):
-    """Move axes of an array to new positions."""
-    source = normalize_axis_tuple(source, a.ndim, "source")
-    destination = normalize_axis_tuple(destination, a.ndim, "destination")
-    if len(source) != len(destination):
-        raise ValueError("`source` and `destination` arguments must have the same number of elements")
-
-    order = [n for n in range(a.ndim) if n not in source]
-
-    for dest, src in sorted(zip(destination, source)):
-        order.insert(dest, src)
-
-    result = a.transpose(order)
-    return result
-
-
-def rollaxis(a, axis, start=0):
-    """Roll the specified axis backwards, until it lies in a given position."""
-    n = a.ndim
-    axis = normalize_axis_index(axis, n)
-    if start < 0:
-        start += n
-    msg = "'%s' arg requires %d <= %s < %d, but %d was passed in"
-    if not (0 <= start < n + 1):
-        raise ValueError(msg % ("start", -n, "start", n + 1, start))
-    if axis < start:
-        start -= 1
-    if axis == start:
-        return a[...]
-    axes = list(range(0, n))
-    axes.remove(axis)
-    axes.insert(start, axis)
-    return a.transpose(axes)

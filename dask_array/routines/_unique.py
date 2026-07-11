@@ -167,7 +167,6 @@ def unique_no_structured_arr(ar, return_index=False, return_inverse=False, retur
 def unique(ar, return_index=False, return_inverse=False, return_counts=False):
     """Find the unique elements of an array."""
     from dask_array.creation import arange, ones
-    from dask_array._numpy_compat import NUMPY_GE_200
 
     try:
         meta = meta_from_array(ar)
@@ -209,12 +208,11 @@ def unique(ar, return_index=False, return_inverse=False, return_counts=False):
     if return_index:
         result.append(aggregated["indices"])
     if return_inverse:
+        from dask_array._reshape import reshape
+
         matches = (ar[:, None] == aggregated["values"][None, :]).astype(np.intp)
         inverse = (matches * aggregated["inverse"]).sum(axis=1)
-        if NUMPY_GE_200:
-            from dask_array._reshape import reshape
-
-            inverse = reshape(inverse, orig_shape)
+        inverse = reshape(inverse, orig_shape)
         result.append(inverse)
     if return_counts:
         result.append(aggregated["counts"])

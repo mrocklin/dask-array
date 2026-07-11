@@ -257,7 +257,6 @@ def atleast_1d(*arys):
     numpy.atleast_1d
     """
     from dask_array.core import asanyarray
-    from dask_array._numpy_compat import NUMPY_GE_200
 
     new_arys = []
     for x in arys:
@@ -269,9 +268,7 @@ def atleast_1d(*arys):
     if len(new_arys) == 1:
         return new_arys[0]
     else:
-        if NUMPY_GE_200:
-            new_arys = tuple(new_arys)
-        return new_arys
+        return tuple(new_arys)
 
 
 def atleast_2d(*arys):
@@ -294,7 +291,6 @@ def atleast_2d(*arys):
     numpy.atleast_2d
     """
     from dask_array.core import asanyarray
-    from dask_array._numpy_compat import NUMPY_GE_200
 
     new_arys = []
     for x in arys:
@@ -308,9 +304,7 @@ def atleast_2d(*arys):
     if len(new_arys) == 1:
         return new_arys[0]
     else:
-        if NUMPY_GE_200:
-            new_arys = tuple(new_arys)
-        return new_arys
+        return tuple(new_arys)
 
 
 def atleast_3d(*arys):
@@ -333,7 +327,6 @@ def atleast_3d(*arys):
     numpy.atleast_3d
     """
     from dask_array.core import asanyarray
-    from dask_array._numpy_compat import NUMPY_GE_200
 
     new_arys = []
     for x in arys:
@@ -349,6 +342,4 @@ def atleast_3d(*arys):
     if len(new_arys) == 1:
         return new_arys[0]
     else:
-        if NUMPY_GE_200:
-            new_arys = tuple(new_arys)
-        return new_arys
+        return tuple(new_arys)

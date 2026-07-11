@@ -11,18 +11,11 @@ import warnings
 from numbers import Integral, Number
 
 import numpy as np
-from tlz import memoize
 
 from dask.base import is_dask_collection
 from dask.utils import cached_cumsum, is_arraylike
 
 colon = slice(None, None, None)
-
-
-class SlicingNoop(Exception):
-    """This indicates that a slicing operation is a no-op. The caller has to handle this"""
-
-    pass
 
 
 # ============================================================================
@@ -945,50 +938,6 @@ def shuffle_slice(x, index):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=Warning)
         return x[index2].rechunk(chunks2)[index3]
-
-
-# ============================================================================
-# expander (used by some slice operations)
-# ============================================================================
-
-
-@memoize
-def _expander(where):
-    if not where:
-
-        def expand(seq, val):
-            return seq
-
-        return expand
-    else:
-        decl = """def expand(seq, val):
-            return ({left}) + tuple({right})
-        """
-        left = []
-        j = 0
-        for i in range(max(where) + 1):
-            if i in where:
-                left.append("val, ")
-            else:
-                left.append(f"seq[{j}], ")
-                j += 1
-        right = f"seq[{j}:]"
-        left = "".join(left)
-        decl = decl.format(**locals())
-        ns = {}
-        exec(compile(decl, "<dynamic>", "exec"), ns, ns)
-        return ns["expand"]
-
-
-def expander(where):
-    """Create a function to insert value at many locations in sequence.
-
-    Examples
-    --------
-    >>> expander([0, 2])(['a', 'b', 'c'], 'z')
-    ('z', 'a', 'z', 'b', 'c')
-    """
-    return _expander(tuple(where))
 
 
 # ============================================================================

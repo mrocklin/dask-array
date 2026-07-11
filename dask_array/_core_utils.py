@@ -7,7 +7,6 @@ previously imported from dask.array.core.
 
 from __future__ import annotations
 
-import functools
 import math
 import sys
 import traceback
@@ -15,7 +14,6 @@ import warnings
 from collections.abc import Iterable, Iterator
 from itertools import product, zip_longest
 from numbers import Integral, Number
-from typing import TYPE_CHECKING
 
 import numpy as np
 from tlz import first
@@ -38,9 +36,6 @@ from dask.utils import (
     ndimlist,
     parse_bytes,
 )
-
-if TYPE_CHECKING:
-    pass
 
 # Type definition
 T_IntOrNaN = int | float  # Should be int | Literal[np.nan]
@@ -681,20 +676,6 @@ def auto_chunks(chunks, shape, limit, dtype, previous_chunks=None):
             chunks[i] = round_to(size, shape[i])
 
         return tuple(chunks)
-
-
-@functools.lru_cache
-def normalize_chunks_cached(chunks, shape=None, limit=None, dtype=None, previous_chunks=None):
-    """Cached version of normalize_chunks.
-
-    .. note::
-
-        chunks and previous_chunks are expected to be hashable. Dicts and lists aren't
-        allowed for this function.
-
-    See :func:`normalize_chunks` for further documentation.
-    """
-    return normalize_chunks(chunks, shape=shape, limit=limit, dtype=dtype, previous_chunks=previous_chunks)
 
 
 def normalize_chunks(chunks, shape=None, limit=None, dtype=None, previous_chunks=None):

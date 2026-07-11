@@ -553,10 +553,6 @@ class Array(DaskMethodsMixin):
         return self
 
     @property
-    def _key_array(self):
-        return np.array(self.__dask_keys__(), dtype=object)
-
-    @property
     def blocks(self):
         from dask_array.slicing._blocks import BlockView
 

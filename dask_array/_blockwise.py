@@ -1293,10 +1293,6 @@ def is_fusable_blockwise(expr):
     return getattr(expr, "_is_blockwise_fusable", False)
 
 
-# Alias for internal use
-is_fusable_elemwise = is_fusable_blockwise
-
-
 def _symbolic_mapping(expr, parent_mapping):
     """Compute symbolic block mapping from root dimensions to dependency dimensions.
 
@@ -1495,7 +1491,7 @@ def optimize_blockwise_fusion_array(expr):
                 continue
             seen.add(node._name)
 
-            if is_fusable_elemwise(node):
+            if is_fusable_blockwise(node):
                 dependencies[node._name] = set()
                 if node._name not in dependents:
                     dependents[node._name] = set()
@@ -1503,7 +1499,7 @@ def optimize_blockwise_fusion_array(expr):
 
             for operand in node.dependencies():
                 stack.append(operand)
-                if is_fusable_elemwise(operand):
+                if is_fusable_blockwise(operand):
                     if node._name in dependencies:
                         dependencies[node._name].add(operand._name)
                     dependents[operand._name].add(node._name)
@@ -1514,7 +1510,7 @@ def optimize_blockwise_fusion_array(expr):
         roots = [
             expr_mapping[k]
             for k, v in dependents.items()
-            if v == set() or all(not is_fusable_elemwise(expr_mapping.get(_name)) for _name in v)
+            if v == set() or all(not is_fusable_blockwise(expr_mapping.get(_name)) for _name in v)
         ]
         replacements = {}
         assigned = set()

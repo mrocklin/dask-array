@@ -17,7 +17,6 @@ from dask_array._chunk import getitem
 local_getitem = getitem  # alias for tests that check internal implementation
 from dask_array.slicing import normalize_index
 from dask_array.slicing._utils import (
-    SlicingNoop,
     _sanitize_index_element,
     _slice_1d,
     make_block_sorted_slices,

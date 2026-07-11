@@ -17,7 +17,6 @@ except ImportError:
 from dask_array._collection import asarray, concatenate
 from dask_array._map_blocks import map_blocks
 from dask_array.creation import arange
-from dask_array._numpy_compat import NUMPY_GE_200
 from dask.utils import derived_from, skip_doctest
 
 chunk_error = (
@@ -177,13 +176,12 @@ def fft_wrap(fft_func, kind=None, dtype=None, allow_fftpack=False):
                 if s is None:
                     axes = tuple(range(a.ndim))
                 else:
-                    if NUMPY_GE_200:
-                        # Match deprecation in numpy
-                        warnings.warn(
-                            "DeprecationWarning: `axes` should not be `None` "
-                            "if `s` is not `None` (Deprecated in NumPy 2.0)",
-                            DeprecationWarning,
-                        )
+                    # Match deprecation in numpy
+                    warnings.warn(
+                        "DeprecationWarning: `axes` should not be `None` "
+                        "if `s` is not `None` (Deprecated in NumPy 2.0)",
+                        DeprecationWarning,
+                    )
                     axes = tuple(range(len(s)))
             else:
                 axes = (-1,)

@@ -291,7 +291,7 @@ def map_blocks(
     if isinstance(drop_axis, Number):
         drop_axis = [drop_axis]
     if isinstance(new_axis, Number):
-        new_axis = [new_axis]  # TODO: handle new_axis
+        new_axis = [new_axis]
 
     if has_keyword(func, "block_id") or has_keyword(func, "block_info"):
         # The block_id/block_info payloads built below are literals frozen to
@@ -349,7 +349,6 @@ def map_blocks(
     if new_axis is None and chunks is not None and len(out_ind) < len(chunks):
         new_axis = range(len(chunks) - len(out_ind))
     if new_axis:
-        # new_axis = [x + len(drop_axis) for x in new_axis]
         out_ind = list(out_ind)
         for ax in sorted(new_axis):
             n = len(out_ind) + len(drop_axis)
