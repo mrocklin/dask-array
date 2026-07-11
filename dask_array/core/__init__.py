@@ -12,6 +12,15 @@ from dask_array.core._conversion import (
 )
 from dask_array.core._from_graph import from_graph
 
+# Upstream-compatible aliases: dask.array.core exposes these helpers and
+# downstream libraries import them from there.
+from dask_array._core_utils import (
+    getter,
+    getter_inline,
+    getter_nofancy,
+    normalize_chunks,
+)
+
 
 def __getattr__(name):
     """Lazy import of Array to avoid circular imports."""
@@ -31,4 +40,8 @@ __all__ = [
     "array",
     "blockwise",
     "elemwise",
+    "getter",
+    "getter_inline",
+    "getter_nofancy",
+    "normalize_chunks",
 ]

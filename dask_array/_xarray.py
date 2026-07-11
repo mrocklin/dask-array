@@ -17,8 +17,23 @@ Because both xarray and dask-array register an entry point named "dask",
 the winner of ``importlib.metadata.entry_points()`` iteration is
 non-deterministic (it depends on filesystem enumeration order).  To make
 the result reproducible, ``_ensure_registered`` mutates the cached dict
-returned by ``list_chunkmanagers()`` at import time so that our manager
-is always the one stored under the "dask" key.
+returned by ``list_chunkmanagers()`` so that our manager is always the one
+stored under the "dask" key.
+
+This module is imported lazily -- never by ``import dask_array`` itself
+(which must not pull in xarray or pandas).  It loads through exactly two
+paths, both of which run ``_ensure_registered`` via the module-level call
+at the bottom:
+
+1. Explicitly, via ``dask_array.xarray.register()``.
+2. By xarray itself: ``list_chunkmanagers`` loads every entry point in the
+   "xarray.chunkmanagers" group on first chunked-array use, and ours points
+   here.  In that mid-discovery case the reentrant ``list_chunkmanagers()``
+   call builds and caches the registry (reentrant ``lru_cache`` calls win
+   the cache slot), we pin our manager into it, and every later lookup sees
+   ours regardless of entry-point enumeration order.  Only the single
+   in-flight discovery still sees the enumeration-order winner -- the same
+   guarantee the old eager registration at ``import dask_array`` gave.
 """
 
 from __future__ import annotations
@@ -340,3 +355,8 @@ def _ensure_registered() -> None:
     managers = list_chunkmanagers()
     if not isinstance(managers.get("dask"), DaskArrayExprManager):
         managers["dask"] = DaskArrayExprManager()
+
+
+# Any import of this module (explicit register() or xarray's entry-point
+# discovery) pins our manager; see the module docstring.
+_ensure_registered()

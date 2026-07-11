@@ -155,6 +155,11 @@ def cov(
     return c.squeeze()
 
 
+def ptp(a, axis=None):
+    """Peak to peak (maximum - minimum) value along a given axis."""
+    return a.max(axis=axis) - a.min(axis=axis)
+
+
 @derived_from(np)
 def corrcoef(x, y=None, rowvar=1):
     """Return Pearson product-moment correlation coefficients."""

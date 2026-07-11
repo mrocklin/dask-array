@@ -41,7 +41,7 @@ def where(condition, x=None, y=None):
         raise ValueError("either both or neither of x and y should be given")
     if (x is None) and (y is None):
         # Single arg case - returns indices of nonzero elements
-        from dask_array._routines import nonzero
+        from dask_array.routines._nonzero import nonzero
 
         return nonzero(condition)
 

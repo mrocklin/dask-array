@@ -84,7 +84,6 @@ __all__ = [
     "sum",
     "trace",
     "var",
-    "_tree_reduce",
 ]
 
 

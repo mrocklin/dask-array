@@ -10,7 +10,7 @@ from dask.utils import derived_from
 
 @derived_from(np)
 def meshgrid(*xi, sparse=False, indexing="xy", **kwargs):
-    from dask_array._routines import broadcast_arrays
+    from dask_array.routines._broadcast import broadcast_arrays
 
     sparse = bool(sparse)
 

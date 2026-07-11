@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import uuid
 import warnings
 from collections.abc import Iterable
@@ -11,7 +12,7 @@ import numpy as np
 from dask_array._core_utils import getter_inline
 from dask_array._utils import meta_from_array
 from dask.base import is_dask_collection
-from dask.utils import SerializableLock
+from dask.utils import SerializableLock, derived_from
 
 
 def _as_dtype(a, dtype):
@@ -168,8 +169,9 @@ def from_array(
     if isinstance(x, Array):
         raise ValueError("Array is already a dask array. Use 'asarray' or 'rechunk' instead.")
 
-    # Handle xarray DataArray wrapping a dask array
-    try:
+    # Handle xarray DataArray wrapping a dask array. An xr.DataArray can only
+    # reach us if the caller already imported xarray; don't import it ourselves.
+    if "xarray" in sys.modules:
         import xarray as xr
 
         if isinstance(x, xr.DataArray) and x.chunks is not None:
@@ -177,8 +179,6 @@ def from_array(
                 raise TypeError("dask_array does not accept dask.array.Array inputs")
             if isinstance(x.data, Array):
                 return x.data
-    except ImportError:
-        pass
 
     if is_dask_collection(x):
         warnings.warn(
@@ -414,13 +414,8 @@ def asanyarray(a, dtype=None, order=None, *, like=None, inline_array=False):
     return _as_dtype(a, dtype)
 
 
+@derived_from(np)
 def array(x, dtype=None, ndmin=None, *, like=None):
-    """Create a dask array from an array-like object.
-
-    See Also
-    --------
-    numpy.array
-    """
     x = asarray(x, like=like)
     while ndmin is not None and x.ndim < ndmin:
         x = x[None, :]

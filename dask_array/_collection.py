@@ -1112,7 +1112,7 @@ class Array(DaskMethodsMixin):
         --------
         dask.array.choose : equivalent function
         """
-        from dask_array._routines import choose
+        from dask_array.routines._select import choose
 
         return choose(self, choices)
 
@@ -1125,7 +1125,7 @@ class Array(DaskMethodsMixin):
         --------
         dask.array.nonzero : equivalent function
         """
-        from dask_array._routines import nonzero
+        from dask_array.routines._nonzero import nonzero
 
         return nonzero(self)
 
@@ -1138,7 +1138,7 @@ class Array(DaskMethodsMixin):
         --------
         dask.array.round : equivalent function
         """
-        from dask_array._routines import round
+        from dask_array._ufunc import round
 
         return round(self, decimals=decimals)
 
@@ -1586,7 +1586,7 @@ class Array(DaskMethodsMixin):
         --------
         dask.array.topk : equivalent function
         """
-        from dask_array._routines import topk
+        from dask_array.routines._topk import topk
 
         return topk(self, k, axis=axis, split_every=split_every)
 
@@ -1599,7 +1599,7 @@ class Array(DaskMethodsMixin):
         --------
         dask.array.argtopk : equivalent function
         """
-        from dask_array._routines import argtopk
+        from dask_array.routines._topk import argtopk
 
         return argtopk(self, k, axis=axis, split_every=split_every)
 

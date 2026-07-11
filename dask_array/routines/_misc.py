@@ -5,8 +5,15 @@ from __future__ import annotations
 import numpy as np
 
 from dask_array._collection import Array, asarray, elemwise
+from dask_array._core_utils import implements
 from dask_array._utils import validate_axis
 from dask.utils import derived_from
+
+
+@implements(np.iscomplexobj)
+def iscomplexobj(x):
+    """Check whether the input has a complex dtype."""
+    return issubclass(x.dtype.type, np.complexfloating)
 
 
 @derived_from(np)

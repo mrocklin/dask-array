@@ -2850,3 +2850,24 @@ def test_pickle_vectorized_routines():
     assert_eq(c, [[0], [1]], check_dtype=False)
     c2 = pickle.loads(pickle.dumps(c))
     assert_eq(c2, [[0], [1]], check_dtype=False)
+
+
+def test_push():
+    bn = pytest.importorskip("bottleneck")
+    data = np.array([np.nan, 1, 2, np.nan, np.nan, np.nan, np.nan, 5, np.nan, np.nan])
+
+    for chunks in [2, 3, 10]:
+        x = da.from_array(data, chunks=chunks)
+        for n in [None, 1, 2, 5, 10]:
+            assert_eq(da.push(x, n, axis=0), bn.push(data, n))
+
+
+def test_push_2d_axis():
+    bn = pytest.importorskip("bottleneck")
+    rng = np.random.default_rng(42)
+    data = rng.random((4, 12))
+    data[data < 0.4] = np.nan
+
+    x = da.from_array(data, chunks=(2, 5))
+    for axis in [0, 1]:
+        assert_eq(da.push(x, None, axis=axis), bn.push(data, None, axis))

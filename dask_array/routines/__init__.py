@@ -1,13 +1,9 @@
 """Array routines for array-expr."""
 
-import numpy as np
-
-from dask.utils import derived_from
-
 # Direct imports from submodules
 # Re-exports from other modules
 from dask_array._blockwise import outer  # noqa: F401
-from dask_array._collection import asanyarray, asarray
+from dask_array.core._conversion import array
 from dask_array._ufunc import (  # noqa: F401
     allclose,
     around,
@@ -19,7 +15,7 @@ from dask_array._ufunc import (  # noqa: F401
 from dask_array.routines._apply import apply_along_axis, apply_over_axes
 from dask_array.routines._bincount import bincount
 from dask_array.routines._broadcast import broadcast_arrays, unify_chunks
-from dask_array.routines._coarsen import aligned_coarsen_chunks, coarsen
+from dask_array.routines._coarsen import Coarsen, aligned_coarsen_chunks, coarsen
 from dask_array.routines._diff import diff
 from dask_array.routines._gradient import gradient
 from dask_array.routines._indexing import ravel_multi_index, unravel_index
@@ -31,6 +27,7 @@ from dask_array.routines._insert_delete import (
 )
 from dask_array.routines._misc import (
     compress,
+    iscomplexobj,
     ndim,
     result_type,
     shape,
@@ -51,7 +48,7 @@ from dask_array.routines._select import (
     piecewise,
     select,
 )
-from dask_array.routines._statistics import average, corrcoef, cov
+from dask_array.routines._statistics import average, corrcoef, cov, ptp
 from dask_array.routines._topk import argtopk, topk
 from dask_array.routines._triangular import (
     tril,
@@ -64,18 +61,8 @@ from dask_array.routines._triangular import (
 from dask_array.routines._unique import union1d, unique
 from dask_array.routines._where import where
 
-
-@derived_from(np)
-def array(x, dtype=None, ndmin=None, *, like=None):
-    x = asarray(x, like=like)
-    while ndmin is not None and x.ndim < ndmin:
-        x = x[None, :]
-    if dtype is not None and x.dtype != dtype:
-        x = x.astype(dtype)
-    return x
-
-
 __all__ = [
+    "Coarsen",
     "aligned_coarsen_chunks",
     "allclose",
     "append",
@@ -103,6 +90,7 @@ __all__ = [
     "gradient",
     "insert",
     "isclose",
+    "iscomplexobj",
     "isin",
     "isnonzero",
     "isnull",
@@ -111,6 +99,7 @@ __all__ = [
     "notnull",
     "outer",
     "piecewise",
+    "ptp",
     "ravel_multi_index",
     "result_type",
     "round",
