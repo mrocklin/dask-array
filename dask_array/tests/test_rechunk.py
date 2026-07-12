@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 from collections import defaultdict
 
 import numpy as np
@@ -152,8 +153,17 @@ def test_rechunk_split_tasks_copy_small_selections():
     piece = split_tasks[0].func(parent, (slice(0, 40), slice(0, 4)))
     assert piece.flags.owndata, "small split selection must be a copy"
 
-    # Rust records path (TasksRechunk._frisky_layer -> RechunkLayer).
+
+def test_rechunk_split_tasks_copy_small_selections_frisky(monkeypatch):
+    """The Rust rechunk layer must receive chunk.getitem for split tasks."""
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+
+    from dask_array._chunk import getitem as chunk_getitem
     import dask_array._frisky.rechunk as rechunk_mod
+
+    x = da.ones((40, 40), chunks=(40, 40))
+    y = x.rechunk((40, 4))
 
     captured = {}
     real_layer = rechunk_mod.RechunkLayer
@@ -166,12 +176,9 @@ def test_rechunk_split_tasks_copy_small_selections():
         def __getattr__(self, name):
             return getattr(self._wrapped, name)
 
-    rechunk_mod.RechunkLayer = RecordingLayer
-    try:
-        expr = y.optimize().expr
-        rechunk_exprs = [e for e in expr.walk() if type(e).__name__ == "TasksRechunk"]
-        assert rechunk_exprs, "expected a TasksRechunk node"
-        rechunk_exprs[0]._frisky_layer()
-    finally:
-        rechunk_mod.RechunkLayer = real_layer
+    monkeypatch.setattr(rechunk_mod, "RechunkLayer", RecordingLayer)
+    expr = y.optimize().expr
+    rechunk_exprs = [e for e in expr.walk() if type(e).__name__ == "TasksRechunk"]
+    assert rechunk_exprs, "expected a TasksRechunk node"
+    rechunk_exprs[0]._frisky_layer()
     assert captured["getitem"] is chunk_getitem
