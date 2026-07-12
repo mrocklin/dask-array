@@ -10,7 +10,7 @@ from dask_array.core._conversion import (
     asarray,
     from_array,
 )
-from dask_array.core._from_graph import from_graph
+from dask_array.io._from_graph import from_graph
 
 # Upstream-compatible aliases: dask.array.core exposes these helpers and
 # downstream libraries import them from there.

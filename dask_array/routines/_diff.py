@@ -28,7 +28,7 @@ def diff(a, n=1, axis=-1, prepend=None, append=None):
     numpy.diff
     """
     # Lazy imports to avoid circular dependencies
-    from dask_array._broadcast import broadcast_to
+    from dask_array._broadcast_to import broadcast_to
     from dask_array.core import asarray
     from dask_array.stacking import concatenate
 

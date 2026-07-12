@@ -26,7 +26,7 @@ except ImportError:
 
 # Import blockwise functions from their module
 # Import broadcast
-from dask_array._broadcast import broadcast_to
+from dask_array._broadcast_to import broadcast_to
 
 # Import concatenate and stacking
 from dask_array.stacking._concatenate import concatenate
@@ -40,7 +40,7 @@ from dask_array.core._conversion import (
     asarray,
     from_array,
 )
-from dask_array.core._from_graph import from_graph
+from dask_array.io._from_graph import from_graph
 
 # Import manipulation functions
 from dask_array.manipulation._expand import (
@@ -762,7 +762,7 @@ class Array(DaskMethodsMixin):
 
         # Use "where" method for any dask Array key (matches legacy behavior)
         if isinstance(key, Array):
-            from dask_array._broadcast import broadcast_to
+            from dask_array._broadcast_to import broadcast_to
 
             left_shape = np.array(key.shape)
             right_shape = np.array(self.shape)

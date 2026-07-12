@@ -31,7 +31,7 @@ def _shuffle(bit_generator, x, axis=0):
 
 def _broadcast_array_arg(arg, size, target_chunks):
     """Broadcast and rechunk an array argument to match output shape."""
-    from dask_array._broadcast import broadcast_to
+    from dask_array._broadcast_to import broadcast_to
     from dask_array.core._conversion import from_array
 
     if isinstance(arg, np.ndarray) and arg.shape:

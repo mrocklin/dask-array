@@ -395,7 +395,7 @@ def reduction(
     # Handle weights broadcasting
     weights_expr = None
     if weights is not None:
-        from dask_array._broadcast import broadcast_to
+        from dask_array._broadcast_to import broadcast_to
         from dask_array.core._conversion import asanyarray
 
         wgt = asanyarray(weights)
