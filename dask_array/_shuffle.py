@@ -4,6 +4,7 @@ import functools
 import math
 from functools import reduce
 from itertools import count, product
+from numbers import Integral
 from operator import mul
 from typing import Literal
 
@@ -147,6 +148,11 @@ class Shuffle(ArrayExpr):
 
     @functools.cached_property
     def chunks(self):
+        # A stale/out-of-bounds axis would silently fall through the loop below
+        # and return the input chunks unchanged — wrong shape, no error.
+        assert 0 <= self.axis < len(self.array.chunks), (
+            f"shuffle axis {self.axis} out of bounds for {self.array.chunks}"
+        )
         output_chunks = []
         for i, c in enumerate(self.array.chunks):
             if i == self.axis:
@@ -262,11 +268,19 @@ class Shuffle(ArrayExpr):
         index = slice_expr.index
         indexer = self.indexer
 
+        # Don't handle None/newaxis (adds dimensions)
+        if any(idx is None for idx in index):
+            return None
+
         # Pad index to full length
         full_index = list(index) + [slice(None)] * (len(self.shape) - len(index))
 
         # Check if we're slicing on the shuffle axis
         axis_slice = full_index[axis]
+
+        # Integer indices drop their dimension, so integers before the shuffle
+        # axis shift it left in the sliced input.
+        new_axis = axis - sum(1 for idx in full_index[:axis] if isinstance(idx, Integral))
 
         if axis_slice == slice(None):
             # Not slicing shuffle axis - push through directly
@@ -274,7 +288,7 @@ class Shuffle(ArrayExpr):
             return Shuffle(
                 sliced_input.expr,
                 indexer,
-                self.axis,
+                new_axis,
                 self.operand("name"),
             )
 
@@ -333,7 +347,7 @@ class Shuffle(ArrayExpr):
         return Shuffle(
             sliced_input.expr,
             adjusted_indexer,
-            self.axis,
+            new_axis,
             self.operand("name"),
         )
 

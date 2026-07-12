@@ -254,13 +254,7 @@ def test_slicing_exhaustively():
             assert_eq(x[i][j], a[i][j])
 
 
-@pytest.mark.slow  # minutes of combinations once the xfail below is fixed
-@pytest.mark.xfail(
-    reason="indexing again after a list indexer breaks chunk metadata: e.g. "
-    "x[:, [0, 1]][0] fails at compute with 'Chunks do not add up to shape' "
-    "(see test_chained_getitem_after_list_indexer for a minimal repro)",
-    raises=(ValueError, IndexError),
-)
+@pytest.mark.slow  # ~1400 indexing combinations
 def test_slicing_exhaustively_chained():
     x = np.random.default_rng().random((6, 7, 8))
     a = da.from_array(x, chunks=(3, 3, 3))
@@ -274,16 +268,20 @@ def test_slicing_exhaustively_chained():
                 assert_eq(x[..., i][:, j][k], a[..., i][:, j][k])
 
 
-@pytest.mark.xfail(
-    reason="indexing again after a list indexer breaks chunk metadata: the collection "
-    "reports the right shape/chunks but compute fails with 'Chunks do not add up to "
-    "shape. Got chunks=((2,),), shape=(7,)' (the pre-fancy-index axis size)",
-    raises=ValueError,
-)
 def test_chained_getitem_after_list_indexer():
+    # The list indexer becomes a Shuffle; the follow-up integer index used to
+    # push through it without shifting the shuffle axis for the dropped
+    # dimension, yielding a Shuffle with a stale axis and the wrong shape.
     x = np.arange(42).reshape(6, 7)
     d = da.from_array(x, chunks=(3, 3))
     assert_eq(d[:, [0, 1]][0], x[:, [0, 1]][0])
+    # Same bug via a contiguous slice on the shuffle axis after an integer.
+    assert_eq(d[:, [0, 1, 2]][0, 1:], x[:, [0, 1, 2]][0, 1:])
+    # And one pushdown later: the broken Shuffle used to raise IndexError
+    # when the next slice was pushed into it.
+    x3 = np.arange(6 * 7 * 8).reshape(6, 7, 8)
+    d3 = da.from_array(x3, chunks=(3, 3, 3))
+    assert_eq(d3[..., [0, 1]][:, 0][::-1], x3[..., [0, 1]][:, 0][::-1])
 
 
 def test_slicing_with_negative_step_flops_keys():
