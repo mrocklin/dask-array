@@ -295,7 +295,11 @@ type(arr.expr)                  # Expression class
 |------|---------|
 | `_expr.py` | Base `ArrayExpr` class, utilities |
 | `_collection.py` | `Array` wrapper, method definitions |
+| `_materialize.py` | `_materialize`/`_lower`: expression → task graph (key pinning, shared lowering cache) |
 | `_blockwise.py` | `Blockwise`, `Elemwise` base classes |
+
+Where a new operation module lives — and which modules may import
+`_collection` at module top — is written down in [layout.md](./layout.md).
 
 ## Anti-patterns
 

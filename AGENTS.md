@@ -35,9 +35,16 @@ DataFrames.
 |-----------|----------|---------|
 | `ArrayExpr` | `_expr.py` | Base class for all expressions |
 | `Array` | `_collection.py` | User-facing wrapper, provides API and mutation|
+| `_materialize` | `_materialize.py` | Expression → task graph (optimize + pin output keys) |
 | `Blockwise` | `_blockwise.py` | Aligned block operations |
 | `Elemwise` | `_blockwise.py` | Broadcasting element-wise ops |
 | ...  | ... | various other ArrayExpr subclasses |
+
+Operations live in domain subpackages (`stacking/`, `manipulation/`,
+`routines/`, ...), one module per operation family holding the expression
+class and the user function together. The placement rule — including which
+modules may import `_collection` at module top — is
+[.ai-docs/layout.md](.ai-docs/layout.md).
 
 
 ## Building and releasing

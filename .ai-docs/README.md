@@ -6,6 +6,7 @@ Documentation to help you understand this codebase before starting work.
 
 | Document | Read when... |
 |----------|--------------|
+| [layout.md](./layout.md) | Deciding where a new module or operation lives. The subpackage grain (expression + user function together), the same-basename rule, which modules may import `_collection` at module top vs must defer. |
 | [expression-system.md](./expression-system.md) | Creating new operations or expressions. Understanding `ArrayExpr`, `Array`, `_parameters`, `_meta`, `chunks`, `_layer()`, `_name`. Debugging with `pprint()`, `__dask_graph__()`. Using `new_collection()`, `substitute_parameters()`. |
 | [blockwise.md](./blockwise.md) | Working with `Blockwise`, `Elemwise`, element-wise ops, broadcasting. Understanding `out_ind`, `args`, `adjust_chunks`, `new_axes`, index mapping. Implementing `_task()`. Working on `FusedBlockwise` or fusion. |
 | [reductions.md](./reductions.md) | Implementing or debugging reductions (`sum`, `mean`, `var`, `argmax`, etc.). Understanding tree reduction pattern with `chunk`/`combine`/`aggregate`. Working with `PartialReduce`, `split_every`, `keepdims`, `axis`. Adding new aggregation functions. |
