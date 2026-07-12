@@ -949,15 +949,19 @@ def test_slice_construction_does_not_lower(monkeypatch):
     O(depth) per layer. Building the expression must lower nothing, at any depth.
     """
     import dask_array._collection as _collection
+    import dask_array._materialize as _materialize_mod
 
     calls = 0
-    orig_materialize = _collection._materialize
+    orig_materialize = _materialize_mod._materialize
 
     def counting_materialize(*args, **kwargs):
         nonlocal calls
         calls += 1
         return orig_materialize(*args, **kwargs)
 
+    # Patch both bindings: _expr defers its import (reads the module attribute
+    # at call time), while _collection binds the name at module scope.
+    monkeypatch.setattr(_materialize_mod, "_materialize", counting_materialize)
     monkeypatch.setattr(_collection, "_materialize", counting_materialize)
 
     def build(depth):

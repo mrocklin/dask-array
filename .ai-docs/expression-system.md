@@ -64,7 +64,7 @@ Expressions are content-addressed: simplify/lower/fuse rename every node they
 rewrite. Collections are not: `Array._name`, `.name`, and `__dask_keys__()`
 are the **raw** root expression's name, assigned at construction, cheap (no
 lowering), and stable forever. Materialization (`_materialize` in
-`_collection.py` — the single choke point behind `__dask_graph__` and the
+`_materialize.py` — the single choke point behind `__dask_graph__` and the
 Frisky walks) optimizes fully (simplify → lower → **fuse**) and then pins the
 graph's output keys back to the raw name with a `RootAlias` node (one alias
 task per output block; a rechunk bridge if a rewrite changed output chunks).

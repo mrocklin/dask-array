@@ -199,7 +199,7 @@ def test_optimize_shares_work_across_collections_with_shared_ancestry():
     lowering cache as ``_lowered_expr``.
     """
     import dask.tokenize
-    from dask_array._collection import _LOWER_CACHE
+    from dask_array._materialize import _LOWER_CACHE
 
     def build_chain(depth):
         a = da.ones((100, 100), chunks=(10, 10))

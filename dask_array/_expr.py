@@ -129,7 +129,7 @@ class ArrayExpr(SingletonExpr):
 
     def __dask_graph__(self):
         from dask._expr import Expr
-        from dask_array._collection import _materialize
+        from dask_array._materialize import _materialize
 
         # Materialize (not just optimize): pinning the output keys back to
         # this node's name means any dask-side consumer that pairs this graph
@@ -138,7 +138,7 @@ class ArrayExpr(SingletonExpr):
 
     def _layer(self):
         from dask._expr import Expr
-        from dask_array._collection import _materialize
+        from dask_array._materialize import _materialize
 
         expr = _materialize(self)
         if expr is self:
@@ -1026,7 +1026,7 @@ class RootAlias(ArrayExpr):
     stable ``(raw root name, i, ...)`` keys to the optimized root's keys.
 
     Only constructed *after* optimization has finished (``_materialize`` in
-    ``_collection.py``), and never fed back through simplify/lower/fuse:
+    ``_materialize.py``), and never fed back through simplify/lower/fuse:
     ``_name`` is pinned rather than content-derived, so the rewrite
     framework's name-based change detection cannot see through it.  For the
     same reason this class opts out of the singleton registry — two pins of

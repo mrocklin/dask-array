@@ -170,7 +170,7 @@ def from_graph(layer, _meta, chunks, keys, name, dependencies=(), rename=None):
     # form: ``layer`` references the dependency's public keys — its raw root
     # name — and materialization is exactly the operation that guarantees a
     # graph producing those keys (see ``_materialize``).
-    from dask_array._collection import _materialize
+    from dask_array._materialize import _materialize
 
     expr_dependencies = []
     for dep in dependencies:
