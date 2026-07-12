@@ -98,8 +98,10 @@ must defer.
    `dask_array/__init__.py` (which imports subpackage names directly, e.g.
    `from dask_array.routines import ...`) and its `__all__`.
 3. If NumPy has a method form, add a thin delegating method on `Array`
-   (`_collection.py`) with a function-local import — method bodies are the
-   one place `_collection` reaches back into op modules.
+   (`_collection.py`). A function-local import in the method body is always
+   safe (see `Array.map_overlap`); a module-scope import in `_collection`
+   works only when the op's subpackage is in the must-defer closure above
+   (that's how `stack` and `squeeze` are wired).
 4. Optional Frisky fast path: add `_frisky_layer()` on the expression and a
    layer in `_frisky/` + `crates/dask-array-python/src/` (see AGENTS.md);
    without it the generic fallback is used, which is correct, just slower.
