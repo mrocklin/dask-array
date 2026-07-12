@@ -234,9 +234,8 @@ class ReturnItem:
         return key
 
 
-@pytest.mark.skip(reason="really long test")
 def test_slicing_exhaustively():
-    x = np.random.default_rng().random(6, 7, 8)
+    x = np.random.default_rng().random((6, 7, 8))
     a = da.from_array(x, chunks=(3, 3, 3))
     I = ReturnItem()
 
@@ -246,9 +245,6 @@ def test_slicing_exhaustively():
         assert_eq(x[i], a[i])
         for j in indexers:
             assert_eq(x[i][:, j], a[i][:, j])
-            assert_eq(x[:, i][j], a[:, i][j])
-            for k in indexers:
-                assert_eq(x[..., i][:, j][k], a[..., i][:, j][k])
 
     # repeated indexing along the first axis
     first_indexers = [I[:], I[:5], np.arange(5), [3, 1, 4, 5, 0], np.arange(6) < 6]
@@ -256,6 +252,38 @@ def test_slicing_exhaustively():
     for i in first_indexers:
         for j in second_indexers:
             assert_eq(x[i][j], a[i][j])
+
+
+@pytest.mark.slow  # minutes of combinations once the xfail below is fixed
+@pytest.mark.xfail(
+    reason="indexing again after a list indexer breaks chunk metadata: e.g. "
+    "x[:, [0, 1]][0] fails at compute with 'Chunks do not add up to shape' "
+    "(see test_chained_getitem_after_list_indexer for a minimal repro)",
+    raises=(ValueError, IndexError),
+)
+def test_slicing_exhaustively_chained():
+    x = np.random.default_rng().random((6, 7, 8))
+    a = da.from_array(x, chunks=(3, 3, 3))
+    I = ReturnItem()
+
+    indexers = [0, -2, I[:], I[:5], [0, 1], [0, 1, 2], [4, 2], I[::-1], None, I[:0], []]
+    for i in indexers:
+        for j in indexers:
+            assert_eq(x[:, i][j], a[:, i][j])
+            for k in indexers:
+                assert_eq(x[..., i][:, j][k], a[..., i][:, j][k])
+
+
+@pytest.mark.xfail(
+    reason="indexing again after a list indexer breaks chunk metadata: the collection "
+    "reports the right shape/chunks but compute fails with 'Chunks do not add up to "
+    "shape. Got chunks=((2,),), shape=(7,)' (the pre-fancy-index axis size)",
+    raises=ValueError,
+)
+def test_chained_getitem_after_list_indexer():
+    x = np.arange(42).reshape(6, 7)
+    d = da.from_array(x, chunks=(3, 3))
+    assert_eq(d[:, [0, 1]][0], x[:, [0, 1]][0])
 
 
 def test_slicing_with_negative_step_flops_keys():
@@ -481,13 +509,36 @@ def test_index_with_bool_dask_array_2():
         assert_eq(x[tuple(index3)], d[tuple(index2)])
 
 
-@pytest.mark.xfail(reason="tests internal graph optimization, not user behavior")
-def test_cull():
+@pytest.mark.parametrize(
+    "slc",
+    [
+        slice(0, 30),
+        pytest.param(
+            1,
+            marks=pytest.mark.xfail(
+                reason="integer indices don't push into creation expressions; the "
+                "materialized graph keeps every Ones task even though only one is "
+                "reachable from the output key",
+                raises=AssertionError,
+            ),
+        ),
+        pytest.param(
+            slice(0, None, 100),
+            marks=pytest.mark.xfail(
+                reason="strided slices don't push into creation expressions; the "
+                "materialized graph keeps every Ones task plus one getitem per "
+                "selected chunk",
+                raises=AssertionError,
+            ),
+        ),
+    ],
+)
+def test_cull(slc):
+    # Slicing should shrink the optimized graph: only tasks for the needed
+    # input chunks remain.
     x = da.ones(1000, chunks=(10,))
-
-    for slc in [1, slice(0, 30), slice(0, None, 100)]:
-        y = x[slc]
-        assert len(y.dask) < len(x.dask)
+    y = x[slc]
+    assert len(y.optimize().__dask_graph__()) < len(x.optimize().__dask_graph__())
 
 
 @pytest.mark.parametrize("shape", [(2,), (2, 3), (2, 3, 5)])
@@ -695,7 +746,6 @@ def test_make_blockwise_sorted_slice():
     np.testing.assert_array_equal(b, index3)
 
 
-@pytest.mark.filterwarnings("ignore:Slicing:dask.array.core.PerformanceWarning")
 @pytest.mark.parametrize("size, chunks", [((100, 2), (50, 2)), ((100, 2), (37, 1)), ((100,), (55,))])
 def test_shuffle_slice(size, chunks):
     x = da.random.default_rng().integers(0, 1000, size=size, chunks=chunks)
@@ -801,7 +851,7 @@ def test_all_none_slices_just_mappings():
 
 def test_minimal_dtype_doesnt_overflow():
     x = np.arange(1980)
-    dx = dask.array.from_array(x, chunks=[248])
+    dx = da.from_array(x, chunks=[248])
     ib = np.zeros(1980, dtype=bool)
     ib[1560:1860] = True
     assert_eq(dx[ib], x[ib])

@@ -3,6 +3,7 @@ import numpy as np
 import dask
 import dask_array as da
 from dask_array._map_blocks import map_blocks_multi_output
+from dask_array._test_utils import assert_eq
 
 
 def split_block(spec, block):
@@ -41,16 +42,16 @@ def test_map_blocks_multi_output_computes_projected_arrays():
 
     assert isinstance(double, da.Array)
     assert isinstance(row_sum, da.Array)
-    np.testing.assert_array_equal(double.compute(), np.arange(8).reshape(4, 2) * 2)
-    np.testing.assert_array_equal(row_sum.compute(), np.arange(8).reshape(4, 2).sum(axis=1))
+    assert_eq(double, np.arange(8).reshape(4, 2) * 2)
+    assert_eq(row_sum, np.arange(8).reshape(4, 2).sum(axis=1))
 
     opt_double, opt_row_sum = dask.optimize(double, row_sum)
-    np.testing.assert_array_equal(opt_double.compute(), np.arange(8).reshape(4, 2) * 2)
-    np.testing.assert_array_equal(opt_row_sum.compute(), np.arange(8).reshape(4, 2).sum(axis=1))
+    assert_eq(opt_double, np.arange(8).reshape(4, 2) * 2)
+    assert_eq(opt_row_sum, np.arange(8).reshape(4, 2).sum(axis=1))
 
     persisted_double, persisted_row_sum = dask.persist(double, row_sum, scheduler="single-threaded")
-    np.testing.assert_array_equal(persisted_double.compute(), np.arange(8).reshape(4, 2) * 2)
-    np.testing.assert_array_equal(persisted_row_sum.compute(), np.arange(8).reshape(4, 2).sum(axis=1))
+    assert_eq(persisted_double, np.arange(8).reshape(4, 2) * 2)
+    assert_eq(persisted_row_sum, np.arange(8).reshape(4, 2).sum(axis=1))
 
 
 def test_map_blocks_multi_output_shares_block_calls():
@@ -101,4 +102,4 @@ def test_map_blocks_multi_output_single_projection_omits_other_projection_keys()
     graph_keys = set(a.__dask_graph__())
 
     assert not any(key[0].startswith(b.name) for key in graph_keys if isinstance(key, tuple))
-    np.testing.assert_array_equal(a.compute(), np.arange(6) + 1)
+    assert_eq(a, np.arange(6) + 1)

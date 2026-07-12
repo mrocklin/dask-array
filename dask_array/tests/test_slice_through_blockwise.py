@@ -516,7 +516,7 @@ def test_optimization_reduces_tasks():
 # =============================================================================
 
 
-@pytest.mark.filterwarnings("ignore::dask.array.core.PerformanceWarning")
+@pytest.mark.filterwarnings("ignore:Increasing number of chunks:dask_array._core_utils.PerformanceWarning")
 def test_slice_through_tensordot_correctness():
     """Verify slice through tensordot produces correct values."""
     arr = np.random.random((100, 100))
@@ -528,7 +528,7 @@ def test_slice_through_tensordot_correctness():
     assert_eq(result, expected)
 
 
-@pytest.mark.filterwarnings("ignore::dask.array.core.PerformanceWarning")
+@pytest.mark.filterwarnings("ignore:Increasing number of chunks:dask_array._core_utils.PerformanceWarning")
 def test_slice_through_matmul_correctness():
     """Verify slice through matmul produces correct values."""
     arr1 = np.random.random((100, 50))
@@ -542,7 +542,7 @@ def test_slice_through_matmul_correctness():
     assert_eq(result, expected)
 
 
-@pytest.mark.filterwarnings("ignore::dask.array.core.PerformanceWarning")
+@pytest.mark.filterwarnings("ignore:Increasing number of chunks:dask_array._core_utils.PerformanceWarning")
 def test_slice_through_matmul_expression_structure():
     """Verify x.dot(y)[a:b, c:d] simplifies to x[a:b, :].dot(y[:, c:d])."""
     x = da.ones((100, 50), chunks=(10, 10))
@@ -556,7 +556,7 @@ def test_slice_through_matmul_expression_structure():
     assert result.expr.simplify()._name == expected.expr.simplify()._name
 
 
-@pytest.mark.filterwarnings("ignore::dask.array.core.PerformanceWarning")
+@pytest.mark.filterwarnings("ignore:Increasing number of chunks:dask_array._core_utils.PerformanceWarning")
 def test_slice_through_tensordot_reduces_tasks():
     """Verify slice through tensordot reduces task count.
 

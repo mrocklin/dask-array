@@ -273,7 +273,7 @@ def test_rechunk_pushdown_respects_zarr_storage_chunks():
     assert simplified._name == expected.expr.simplify()._name
     assert y.chunks == ((2,) * 10, (2,) * 15)
     _assert_from_array_reads_respect_storage_chunks(simplified)
-    np.testing.assert_array_equal(y.compute(scheduler="synchronous"), z[:])
+    assert_eq(y, z[:], scheduler="synchronous")
 
 
 def test_rechunk_pushdown_respects_icechunk_storage_chunks():
@@ -298,7 +298,7 @@ def test_rechunk_pushdown_respects_icechunk_storage_chunks():
     assert simplified._name == expected.expr.simplify()._name
     assert y.chunks == ((2,) * 10, (2,) * 15)
     _assert_from_array_reads_respect_storage_chunks(simplified)
-    np.testing.assert_array_equal(y.compute(scheduler="synchronous"), data)
+    assert_eq(y, data, scheduler="synchronous")
 
 
 def test_rechunk_pushdown_sees_storage_chunks_through_lazy_wrapper():
@@ -363,7 +363,7 @@ def test_rechunk_pushdown_respects_storage_chunks_through_xarray():
     (from_array,) = _from_array_exprs(simplified)
     assert from_array.chunks == ((10, 10), (10, 10, 10))  # native storage grid
     _assert_from_array_reads_respect_storage_chunks(simplified)
-    np.testing.assert_array_equal(rechunked.data.compute(scheduler="synchronous"), data)
+    assert_eq(rechunked.data, data, scheduler="synchronous")
 
 
 def test_rechunk_pushdown_eliminates_storage_aligned_rechunk():
@@ -377,7 +377,7 @@ def test_rechunk_pushdown_eliminates_storage_aligned_rechunk():
     assert simplified._name == expected.expr.simplify()._name
     assert y.chunks == ((10, 10), (10, 10, 10))
     _assert_from_array_reads_respect_storage_chunks(simplified)
-    np.testing.assert_array_equal(y.compute(scheduler="synchronous"), store.data)
+    assert_eq(y, store.data, scheduler="synchronous")
 
 
 def test_rechunk_pushdown_through_region_pushes_storage_compatible_axes():

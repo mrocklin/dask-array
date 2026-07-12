@@ -913,11 +913,8 @@ def test_histogram_delayed_bins(density, weighted):
     )
 
     assert bins_d is bins_d2
-    # The HLG that is assembled from the bins and the range triggers a sanity
-    # check because they contain duplicate keys and the HLG dependencies are not
-    # reflecting this properly. Graph is perfectly fine but the check fails.
-    assert_eq(hist_d, hist, check_graph=False)
-    assert_eq(bins_d2, bins, check_graph=False)
+    assert_eq(hist_d, hist)
+    assert_eq(bins_d2, bins)
 
 
 def test_histogram_delayed_n_bins_raises_with_density():
@@ -1669,7 +1666,11 @@ def test_take():
     assert same_keys(da.take(a, [3, 4, 5], axis=-1), da.take(a, [3, 4, 5], axis=-1))
 
 
-@pytest.mark.skip(reason="hangs - lazy evaluation issue")
+@pytest.mark.skip(
+    reason="da.take's no-op check materializes a full-axis-length arange "
+    "(slicing/_basic.py take()); construction is O(axis length), minutes at 1e12 "
+    "elements. Verified 2026-07-11: hangs in graph construction, before compute."
+)
 def test_take_large():
     a = da.arange(1_000_000_000_000, chunks=(200_000_000,), dtype="int64")
 

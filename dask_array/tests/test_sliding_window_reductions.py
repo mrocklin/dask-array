@@ -7,6 +7,7 @@ import pytest
 
 import dask_array as da
 from dask_array._rechunk import TasksRechunk
+from dask_array._test_utils import assert_eq
 
 
 def _contains_sliding_window_view(expr):
@@ -57,9 +58,7 @@ def test_sliding_window_reduction_window_spanning_many_chunks_keeps_native_chunk
     assert optimized.chunks == ((96,) * 8 + (1,), (2, 1))
     assert not _contains_tasks_rechunk(optimized)
     assert not _contains_overlap(optimized)
-    got = result.compute()
-    np.testing.assert_allclose(got, expected, rtol=1e-11, atol=1e-12, equal_nan=True)
-    np.testing.assert_array_equal(np.isnan(got), np.isnan(expected))
+    assert_eq(result, expected, rtol=1e-11, atol=1e-12)
 
 
 @pytest.mark.parametrize("window", [13, 20])
@@ -82,7 +81,7 @@ def test_sliding_window_reduction_irregular_chunks(reduction, window):
 
     if window == 20:  # every chunk fits under the window depth: native path
         assert result.expr.simplify().chunks == ((7, 12, 9, 14, 8, 11),)
-    np.testing.assert_allclose(result.compute(), expected, rtol=1e-12, equal_nan=True)
+    assert_eq(result, expected, rtol=1e-12)
 
 
 def test_sliding_window_reduction_window_one_past_chunk():
@@ -94,7 +93,7 @@ def test_sliding_window_reduction_window_one_past_chunk():
     expected = np.lib.stride_tricks.sliding_window_view(data, 9, axis=0).sum(axis=-1)
 
     assert result.expr.simplify().chunks == ((8,) * 9,)
-    np.testing.assert_allclose(result.compute(), expected, rtol=1e-13)
+    assert_eq(result, expected, rtol=1e-13)
 
 
 @pytest.mark.parametrize("func_name", ["move_sum", "move_mean", "move_min", "move_max"])
@@ -121,9 +120,7 @@ def test_map_overlap_bottleneck_moving_window_keeps_native_chunks(func_name, min
     assert isinstance(optimized, MovingWindowReduction)
     assert optimized.chunks == x.chunks
     assert not _contains_tasks_rechunk(optimized)
-    got = result.compute()
-    np.testing.assert_allclose(got, expected, rtol=1e-13, atol=1e-13, equal_nan=True)
-    np.testing.assert_array_equal(np.isnan(got), np.isnan(expected))
+    assert_eq(result, expected, rtol=1e-13, atol=1e-13)
 
 
 def test_map_overlap_bottleneck_moving_window_irregular_chunks():
@@ -138,7 +135,7 @@ def test_map_overlap_bottleneck_moving_window_irregular_chunks():
     expected = bn.move_sum(data, window, min_count=1, axis=0)
 
     assert result.expr.optimize().chunks == x.chunks
-    np.testing.assert_allclose(result.compute(), expected, rtol=1e-13, atol=1e-13, equal_nan=True)
+    assert_eq(result, expected, rtol=1e-13, atol=1e-13)
 
 
 def test_map_overlap_bottleneck_moving_window_large_chunk_falls_back():
@@ -156,7 +153,7 @@ def test_map_overlap_bottleneck_moving_window_large_chunk_falls_back():
     expected = bn.move_sum(data, window, min_count=1, axis=0)
 
     assert not isinstance(result.expr.optimize(), MovingWindowReduction)
-    np.testing.assert_allclose(result.compute(), expected, rtol=1e-13, atol=1e-13, equal_nan=True)
+    assert_eq(result, expected, rtol=1e-13, atol=1e-13)
 
 
 def test_sliding_window_sum_large_offset_stays_accurate():
@@ -173,8 +170,8 @@ def test_sliding_window_sum_large_offset_stays_accurate():
     exact = window * 1e9 + np.lib.stride_tricks.sliding_window_view(noise, window, axis=0).sum(axis=-1)
 
     assert result.expr.simplify().chunks == ((64,) * 8 + (1,),)
-    np.testing.assert_allclose(result.compute(), exact, rtol=1e-13)
-    np.testing.assert_allclose(result.compute(), windows.sum(axis=-1), rtol=1e-13)
+    assert_eq(result, exact, rtol=1e-13)
+    assert_eq(result, windows.sum(axis=-1), rtol=1e-13)
 
 
 @pytest.mark.parametrize("reduction", ["min", "max", "sum", "prod", "mean"])
@@ -194,7 +191,7 @@ def test_sliding_window_reduction_over_window_axis_avoids_window_block(reduction
     # instead of the view's window-sized ones.
     native_chunks = ((16, 16, 16, 9), (4,), (5,)) + (((1,),) if keepdims else ())
     assert result.expr.simplify().chunks == native_chunks
-    np.testing.assert_allclose(result.compute(), expected, rtol=1e-5)
+    assert_eq(result, expected, rtol=1e-5)
     assert _contains_sliding_window_view(result.expr)
     assert not _contains_sliding_window_view(result.expr.simplify())
 
@@ -213,7 +210,7 @@ def test_sliding_window_reduction_keeps_non_window_chunks(reduction, keepdims):
 
     expected_chunks = ((24, 1), (24, 8), (24, 24), (1,)) if keepdims else ((24, 1), (24, 8), (24, 24))
     assert result.expr.simplify().chunks == expected_chunks
-    np.testing.assert_allclose(result.compute(), expected, rtol=1e-5)
+    assert_eq(result, expected, rtol=1e-5)
 
 
 @pytest.mark.parametrize("reduction", ["any", "all"])
@@ -230,7 +227,7 @@ def test_sliding_window_boolean_reduction_keeps_non_window_chunks(reduction, kee
 
     expected_chunks = ((24, 1), (24, 8), (24, 24), (1,)) if keepdims else ((24, 1), (24, 8), (24, 24))
     assert result.expr.simplify().chunks == expected_chunks
-    np.testing.assert_array_equal(result.compute(), expected)
+    assert_eq(result, expected)
 
 
 @pytest.mark.parametrize("reduction", ["nansum", "nanprod", "nanmin", "nanmax", "nanmean"])
@@ -252,7 +249,7 @@ def test_sliding_window_nan_reduction_keeps_non_window_chunks(reduction, keepdim
     expected_chunks = ((24, 1), (24, 8), (24, 24), (1,)) if keepdims else ((24, 1), (24, 8), (24, 24))
     assert result.expr.simplify().chunks == expected_chunks
     assert not _contains_sliding_window_view(result.expr.simplify())
-    np.testing.assert_allclose(result.compute(), expected, equal_nan=True)
+    assert_eq(result, expected)
 
 
 @pytest.mark.parametrize("reduction", ["var", "std"])
@@ -271,7 +268,7 @@ def test_sliding_window_moment_reduction_keeps_non_window_chunks(reduction, ddof
     expected_chunks = ((25,), (24, 8), (24, 24), (1,)) if keepdims else ((25,), (24, 8), (24, 24))
     assert result.expr.simplify().chunks == expected_chunks
     assert not _contains_sliding_window_view(result.expr.simplify())
-    np.testing.assert_allclose(result.compute(), expected)
+    assert_eq(result, expected)
 
 
 @pytest.mark.parametrize("reduction", ["nanvar", "nanstd"])
@@ -294,7 +291,7 @@ def test_sliding_window_nan_moment_reduction_keeps_non_window_chunks(reduction, 
     expected_chunks = ((25,), (24, 8), (24, 24), (1,)) if keepdims else ((25,), (24, 8), (24, 24))
     assert result.expr.simplify().chunks == expected_chunks
     assert not _contains_sliding_window_view(result.expr.simplify())
-    np.testing.assert_allclose(result.compute(), expected, rtol=1e-7, atol=1e-8, equal_nan=True)
+    assert_eq(result, expected, rtol=1e-7, atol=1e-8)
 
 
 def test_sliding_window_var_uses_stable_block_algorithm():
@@ -306,7 +303,7 @@ def test_sliding_window_var_uses_stable_block_algorithm():
     expected = np.lib.stride_tricks.sliding_window_view(data, 72, axis=0).var(axis=-1)
 
     assert result.expr.simplify().chunks == ((25,), (4, 4))
-    np.testing.assert_allclose(result.compute(), expected, rtol=1e-7, atol=1e-8)
+    assert_eq(result, expected, rtol=1e-7, atol=1e-8)
 
 
 def test_sliding_window_nanvar_uses_stable_block_algorithm():
@@ -320,7 +317,7 @@ def test_sliding_window_nanvar_uses_stable_block_algorithm():
 
     assert result.expr.simplify().chunks == ((25,), (4, 4))
     assert not _contains_sliding_window_view(result.expr.simplify())
-    np.testing.assert_allclose(result.compute(), expected, rtol=5e-7, atol=1e-8)
+    assert_eq(result, expected, rtol=5e-7, atol=1e-8)
 
 
 def test_sliding_window_reduction_avoids_rechunking_left_padding_chunk():
@@ -342,7 +339,7 @@ def test_sliding_window_reduction_avoids_rechunking_left_padding_chunk():
     optimized = result.expr.optimize()
     assert optimized.chunks == ((window - 1, data.shape[0] - (window - 1)), (2,))
     assert not _contains_tasks_rechunk(optimized)
-    np.testing.assert_array_equal(result.compute(), expected)
+    assert_eq(result, expected)
 
 
 @pytest.mark.parametrize("reduction", ["var", "nanvar", "std", "nanstd"])
@@ -358,7 +355,7 @@ def test_sliding_window_var_explicit_integer_dtype(reduction):
 
     assert result.dtype == expected.dtype
     assert not _contains_sliding_window_view(result.expr.simplify())
-    np.testing.assert_array_equal(result.compute(), expected)
+    assert_eq(result, expected)
 
 
 def test_sliding_window_reduction_slice_pushdown_preserves_reducer_kind():
@@ -371,7 +368,7 @@ def test_sliding_window_reduction_slice_pushdown_preserves_reducer_kind():
     expected = np.nanvar(np.lib.stride_tricks.sliding_window_view(data, 72, axis=0), axis=-1)[:10]
 
     assert result.expr.simplify().sliding_window_reducer == "nanvar"
-    np.testing.assert_allclose(result.compute(), expected, equal_nan=True)
+    assert_eq(result, expected)
 
 
 @pytest.mark.parametrize("reduction", ["nansum", "nanprod", "nanmin", "nanmax", "nanmean"])
@@ -398,7 +395,7 @@ def test_sliding_window_nan_reduction_complex_values(reduction):
         expected = getattr(np, reduction)(np.lib.stride_tricks.sliding_window_view(data, 3, axis=0), axis=-1)
 
     assert not _contains_sliding_window_view(result.expr.simplify())
-    np.testing.assert_allclose(result.compute(), expected, equal_nan=True)
+    assert_eq(result, expected)
 
 
 def test_sliding_window_nansum_object_dtype_stays_on_general_path():
@@ -410,7 +407,7 @@ def test_sliding_window_nansum_object_dtype_stays_on_general_path():
     expected = np.nansum(np.lib.stride_tricks.sliding_window_view(data, 3, axis=0), axis=-1)
 
     assert _contains_sliding_window_view(result.expr.simplify())
-    np.testing.assert_array_equal(result.compute(), expected)
+    assert_eq(result, expected)
 
 
 @pytest.mark.parametrize("reduction", ["var", "std"])
@@ -431,7 +428,7 @@ def test_sliding_window_var_complex_explicit_dtype(reduction, dtype):
         assert not _contains_sliding_window_view(result.expr.simplify())
     else:
         assert _contains_sliding_window_view(result.expr.simplify())
-    np.testing.assert_allclose(result.compute(), expected)
+    assert_eq(result, expected)
 
 
 @pytest.mark.parametrize("reduction", ["nanvar", "nanstd"])
@@ -456,7 +453,7 @@ def test_sliding_window_nanvar_complex_explicit_dtype(reduction, dtype):
         assert not _contains_sliding_window_view(result.expr.simplify())
     else:
         assert _contains_sliding_window_view(result.expr.simplify())
-    np.testing.assert_allclose(result.compute(), expected, equal_nan=True)
+    assert_eq(result, expected)
 
 
 def test_sliding_window_var_complex_explicit_complex_dtype_stays_on_moment_path():
@@ -470,7 +467,7 @@ def test_sliding_window_var_complex_explicit_complex_dtype_stays_on_moment_path(
     expected = np.lib.stride_tricks.sliding_window_view(data, 3, axis=0).var(axis=-1, dtype="c8")
 
     assert _contains_sliding_window_view(result.expr.simplify())
-    np.testing.assert_allclose(result.compute(), expected, rtol=1e-5, atol=1e-7)
+    assert_eq(result, expected, rtol=1e-5, atol=1e-7)
 
 
 def test_sliding_window_nanvar_complex_explicit_complex_dtype_stays_on_moment_path():
@@ -485,7 +482,7 @@ def test_sliding_window_nanvar_complex_explicit_complex_dtype_stays_on_moment_pa
     expected = np.nanvar(np.lib.stride_tricks.sliding_window_view(data, 3, axis=0), axis=-1, dtype="c8")
 
     assert _contains_sliding_window_view(result.expr.simplify())
-    np.testing.assert_allclose(result.compute(), expected, rtol=1e-5, atol=1e-7, equal_nan=True)
+    assert_eq(result, expected, rtol=1e-5, atol=1e-7)
 
 
 @pytest.mark.parametrize("data", [np.arange(8, dtype=np.float64), np.ones(8, dtype=np.float64)])
@@ -498,7 +495,7 @@ def test_sliding_window_var_ddof_equal_window(data):
         warnings.simplefilter("ignore", RuntimeWarning)
         expected = np.lib.stride_tricks.sliding_window_view(data, 3, axis=0).var(axis=-1, ddof=3)
 
-    np.testing.assert_allclose(result.compute(), expected, equal_nan=True)
+    assert_eq(result, expected)
 
 
 @pytest.mark.parametrize(
@@ -523,7 +520,7 @@ def test_sliding_window_nanvar_ddof_equal_count(data, expected):
     result = da.nanvar(windowed, axis=-1, ddof=2)
 
     assert not _contains_sliding_window_view(result.expr.simplify())
-    np.testing.assert_allclose(result.compute(), expected, equal_nan=True)
+    assert_eq(result, expected)
 
 
 @pytest.mark.parametrize(
@@ -542,4 +539,4 @@ def test_sliding_window_reduction_keeps_non_leading_non_window_chunks(reduction,
     expected = getattr(np.lib.stride_tricks.sliding_window_view(data, 24, axis=axis), reduction)(axis=-1)
 
     assert result.expr.simplify().chunks == expected_chunks
-    np.testing.assert_allclose(result.compute(), expected)
+    assert_eq(result, expected)

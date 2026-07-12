@@ -85,7 +85,6 @@ def _check_chunks(x, check_ndim=True, scheduler=None):
 def _get_dt_meta_computed(
     x,
     check_shape=True,
-    check_graph=True,
     check_chunks=True,
     check_ndim=True,
     scheduler=None,
@@ -98,9 +97,6 @@ def _get_dt_meta_computed(
     if is_dask_collection(x) and is_arraylike(x):
         assert x.dtype is not None
         adt = x.dtype
-        # Note: check_graph is ignored in array-expr mode as it triggers
-        # expensive graph regeneration. The HLG validation can be enabled
-        # when needed for debugging.
         x_meta = getattr(x, "_meta", None)
         if check_chunks:
             # Replace x with persisted version to avoid computing it twice.
@@ -127,7 +123,6 @@ def assert_eq(
     a,
     b,
     check_shape=True,
-    check_graph=True,
     check_meta=True,
     check_chunks=True,
     check_ndim=True,
@@ -148,8 +143,6 @@ def assert_eq(
         Arrays to compare
     check_shape : bool
         Whether to check that shapes match
-    check_graph : bool
-        Whether to validate the dask graph (currently not implemented locally)
     check_meta : bool
         Whether to check metadata consistency
     check_chunks : bool
@@ -183,7 +176,6 @@ def assert_eq(
     a, adt, a_meta, a_computed = _get_dt_meta_computed(
         a,
         check_shape=check_shape,
-        check_graph=check_graph,
         check_chunks=check_chunks,
         check_ndim=check_ndim,
         scheduler=scheduler,
@@ -191,7 +183,6 @@ def assert_eq(
     b, bdt, b_meta, b_computed = _get_dt_meta_computed(
         b,
         check_shape=check_shape,
-        check_graph=check_graph,
         check_chunks=check_chunks,
         check_ndim=check_ndim,
         scheduler=scheduler,

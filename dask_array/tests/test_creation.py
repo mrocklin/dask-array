@@ -4,13 +4,9 @@ import pickle
 
 import pytest
 
-from dask._task_spec import Alias
-from dask.base import collections_to_expr
-
 pytest.importorskip("numpy")
 
 import numpy as np
-import pytest
 from tlz import concat
 
 import dask
@@ -133,7 +129,6 @@ def test_arr_like_shape(funcname, kwargs, shape, dtype, chunks, out_shape):
         assert_eq(np_r, da_r)
 
 
-@pytest.mark.skip(reason="dask scalar inputs not supported")
 @pytest.mark.parametrize("endpoint", [True, False])
 def test_linspace(endpoint):
     darr = da.linspace(6, 49, endpoint=endpoint, chunks=5)
@@ -163,11 +158,6 @@ def test_linspace(endpoint):
         da.linspace(6, 49, endpoint=endpoint, chunks=5, dtype=float).dask
     )
 
-    x = da.array([0.2, 6.4, 3.0, 1.6])
-    nparr = np.linspace(0, 2, 8, endpoint=endpoint)
-    darr = da.linspace(da.argmin(x), da.argmax(x) + 1, 8, endpoint=endpoint)
-    assert_eq(darr, nparr)
-
     nparr = np.linspace(0, 0, 0, endpoint=endpoint)
     darr = da.linspace(0, 0, 0, endpoint=endpoint)
     assert_eq(darr, nparr)
@@ -190,6 +180,15 @@ def test_linspace(endpoint):
 
     nparr = np.linspace(1, 5, 1, endpoint=endpoint)
     darr = da.linspace(1, 5, 1, endpoint=endpoint)
+    assert_eq(darr, nparr)
+
+
+@pytest.mark.xfail(reason="dask scalars as linspace bounds are not supported", raises=TypeError)
+@pytest.mark.parametrize("endpoint", [True, False])
+def test_linspace_dask_scalar_bounds(endpoint):
+    x = da.array([0.2, 6.4, 3.0, 1.6])
+    nparr = np.linspace(0, 2, 8, endpoint=endpoint)
+    darr = da.linspace(da.argmin(x), da.argmax(x) + 1, 8, endpoint=endpoint)
     assert_eq(darr, nparr)
 
 
@@ -562,35 +561,6 @@ def test_diag_extraction(k):
     # heterogeneous chunks:
     d = da.from_array(y, chunks=((3, 2), (4, 1, 2, 1)))
     assert_eq(da.diag(d, k), np.diag(y, k))
-
-
-@pytest.mark.skip(reason="data_producer not implemented")
-def test_creation_data_producers():
-    x = np.arange(64).reshape((8, 8))
-    d = da.from_array(x, chunks=(4, 4))
-    dsk = collections_to_expr([d]).__dask_graph__()
-    assert all(v.data_producer for v in dsk.values())
-
-    # blockwise fusion
-    x = d.astype("float64")
-    dsk = collections_to_expr([x]).__dask_graph__()
-    assert sum(v.data_producer for v in dsk.values()) == 4
-    assert sum(isinstance(v, Alias) for v in dsk.values()) == 4
-    assert len(dsk) == 8
-
-    # linear fusion
-    x = d[slice(0, 6), None].astype("float64")
-    dsk = collections_to_expr([x]).__dask_graph__()
-    assert sum(v.data_producer for v in dsk.values()) == 4
-    assert sum(isinstance(v, Alias) for v in dsk.values()) == 4
-    assert len(dsk) == 8
-
-    # no fusion
-    x = d[[1, 3, 5, 7, 6, 4, 2, 0]].astype("float64")
-    dsk = collections_to_expr([x]).__dask_graph__()
-    assert sum(v.data_producer and "array-" in k[0] for k, v in dsk.items()) == 4
-    assert sum(v.data_producer for v in dsk.values()) == 8  # getitem data nodes
-    assert len(dsk) == 24
 
 
 def test_diagonal():

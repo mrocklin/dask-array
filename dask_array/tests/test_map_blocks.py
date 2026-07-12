@@ -7,6 +7,7 @@ import pytest
 import dask_array as da
 from dask_array._expr import ArrayExpr
 from dask_array._new_collection import new_collection
+from dask_array._test_utils import assert_eq
 
 
 class _LowerOnlyDrift(ArrayExpr):
@@ -65,7 +66,7 @@ def test_map_blocks_explicit_chunks_preserves_multiple_input_block_shapes():
 
     assert arr.chunks == ((3, 5), (2,))
     assert out.chunks == ((1, 1), (1,))
-    np.testing.assert_array_equal(out.compute(), np.array([[3], [5]]))
+    assert_eq(out, np.array([[3], [5]]))
     assert out.optimize().chunks == ((1, 1), (1,))
 
 
@@ -237,7 +238,7 @@ def test_freeze_chunks_pins_layout_without_materializing():
     assert frozen.freeze_chunks() is frozen
     # The layout promise survives optimization; the raw expression's doesn't.
     assert frozen.optimize().chunks == advertised
-    np.testing.assert_array_equal(frozen.compute(), r.compute())
+    assert_eq(frozen, r.compute())
 
 
 def test_map_blocks_block_info_stable_through_lower_time_chunk_drift():
@@ -254,7 +255,7 @@ def test_map_blocks_block_info_stable_through_lower_time_chunk_drift():
 
     out = arr.map_blocks(sentinel, dtype="int64", chunks=(1,), meta=np.array((), dtype="int64"))
 
-    np.testing.assert_array_equal(out.compute(scheduler="sync"), np.array([4, 4]))
+    assert_eq(out, np.array([4, 4]), scheduler="sync")
     assert sorted(calls) == [
         ((4,), (0,), [(0, 4)]),
         ((4,), (1,), [(4, 8)]),
@@ -279,4 +280,4 @@ def test_map_blocks_auto_freeze_leaves_no_graph_residue_without_drift():
     pinned_graph = pinned.__dask_graph__()
     assert not any("chunks-freeze" in str(k) for k in pinned_graph)
     assert len(pinned_graph) == len(unpinned.__dask_graph__())
-    np.testing.assert_array_equal(pinned.compute(), np.full((8, 2), 2.0))
+    assert_eq(pinned, np.full((8, 2), 2.0))

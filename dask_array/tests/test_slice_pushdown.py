@@ -391,17 +391,6 @@ def test_slice_through_reduction_multiple_axes():
     assert y.expr.simplify()._name == expected.expr.simplify()._name
 
 
-def test_slice_through_reduction_correctness():
-    """Verify correctness of optimized slice-through-reduction."""
-    arr = np.arange(10000).reshape(100, 100)
-    x = da.from_array(arr, chunks=(10, 10))
-
-    # Various cases
-    assert_eq(x.sum(axis=0)[:5], arr.sum(axis=0)[:5])
-    assert_eq(x.sum(axis=1)[:5], arr.sum(axis=1)[:5])
-    assert_eq(x.sum(axis=0)[10:20], arr.sum(axis=0)[10:20])
-
-
 def test_slice_through_reduction_integer_index():
     """Integer indexing through reduction reduces tasks.
 

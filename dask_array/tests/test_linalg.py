@@ -561,8 +561,8 @@ def _check_lu_result(p, l, u, A):
     assert np.allclose(p.dot(l).dot(u), A)
 
     # check triangulars
-    assert_eq(l, da.tril(l), check_graph=False)
-    assert_eq(u, da.triu(u), check_graph=False)
+    assert_eq(l, da.tril(l))
+    assert_eq(u, da.triu(u))
 
 
 def test_lu_1():
@@ -583,9 +583,9 @@ def test_lu_1():
         dA = da.from_array(A, chunks=(chunk, chunk))
         p, l, u = scipy.linalg.lu(A)
         dp, dl, du = da.linalg.lu(dA)
-        assert_eq(p, dp, check_graph=False)
-        assert_eq(l, dl, check_graph=False)
-        assert_eq(u, du, check_graph=False)
+        assert_eq(p, dp)
+        assert_eq(l, dl)
+        assert_eq(u, du)
         _check_lu_result(dp, dl, du, A)
 
     A3 = np.array(
@@ -609,7 +609,7 @@ def test_lu_1():
 
 @pytest.mark.slow
 @pytest.mark.parametrize("size", [10, 20, 30, 50])
-@pytest.mark.filterwarnings("ignore:Increasing:dask.array.core.PerformanceWarning")
+@pytest.mark.filterwarnings("ignore:Increasing number of chunks:dask_array._core_utils.PerformanceWarning")
 def test_lu_2(size):
     rng = np.random.default_rng(10)
     A = rng.integers(0, 10, (size, size))
@@ -744,24 +744,24 @@ def test_solve(shape, chunk):
     db = da.from_array(b, chunk)
 
     res = da.linalg.solve(dA, db)
-    assert_eq(res, scipy.linalg.solve(A, b), check_graph=False)
-    assert_eq(dA.dot(res), b.astype(float), check_graph=False)
+    assert_eq(res, scipy.linalg.solve(A, b))
+    assert_eq(dA.dot(res), b.astype(float))
 
     # tall-and-skinny matrix
     b = rng.integers(1, 10, (shape, 5))
     db = da.from_array(b, (chunk, 5))
 
     res = da.linalg.solve(dA, db)
-    assert_eq(res, scipy.linalg.solve(A, b), check_graph=False)
-    assert_eq(dA.dot(res), b.astype(float), check_graph=False)
+    assert_eq(res, scipy.linalg.solve(A, b))
+    assert_eq(dA.dot(res), b.astype(float))
 
     # matrix
     b = rng.integers(1, 10, (shape, shape))
     db = da.from_array(b, (chunk, chunk))
 
     res = da.linalg.solve(dA, db)
-    assert_eq(res, scipy.linalg.solve(A, b), check_graph=False)
-    assert_eq(dA.dot(res), b.astype(float), check_graph=False)
+    assert_eq(res, scipy.linalg.solve(A, b))
+    assert_eq(dA.dot(res), b.astype(float))
 
 
 @pytest.mark.parametrize(("shape", "chunk"), [(20, 10), (50, 10)])
@@ -772,8 +772,8 @@ def test_inv(shape, chunk):
     dA = da.from_array(A, (chunk, chunk))
 
     res = da.linalg.inv(dA)
-    assert_eq(res, scipy.linalg.inv(A), check_graph=False)
-    assert_eq(dA.dot(res), np.eye(shape, dtype=float), check_graph=False)
+    assert_eq(res, scipy.linalg.inv(A))
+    assert_eq(dA.dot(res), np.eye(shape, dtype=float))
 
 
 def _get_symmat(size):
@@ -806,34 +806,34 @@ def test_solve_assume_a(shape, chunk):
     db = da.from_array(b, chunk)
 
     res = da.linalg.solve(dA, db, assume_a="pos")
-    assert_eq(res, _scipy_linalg_solve(A, b, assume_a="pos"), check_graph=False)
-    assert_eq(dA.dot(res), b.astype(float), check_graph=False)
+    assert_eq(res, _scipy_linalg_solve(A, b, assume_a="pos"))
+    assert_eq(dA.dot(res), b.astype(float))
 
     # tall-and-skinny matrix
     b = rng.integers(1, 10, (shape, 5))
     db = da.from_array(b, (chunk, 5))
 
     res = da.linalg.solve(dA, db, assume_a="pos")
-    assert_eq(res, _scipy_linalg_solve(A, b, assume_a="pos"), check_graph=False)
-    assert_eq(dA.dot(res), b.astype(float), check_graph=False)
+    assert_eq(res, _scipy_linalg_solve(A, b, assume_a="pos"))
+    assert_eq(dA.dot(res), b.astype(float))
 
     # matrix
     b = rng.integers(1, 10, (shape, shape))
     db = da.from_array(b, (chunk, chunk))
 
     res = da.linalg.solve(dA, db, assume_a="pos")
-    assert_eq(res, _scipy_linalg_solve(A, b, assume_a="pos"), check_graph=False)
-    assert_eq(dA.dot(res), b.astype(float), check_graph=False)
+    assert_eq(res, _scipy_linalg_solve(A, b, assume_a="pos"))
+    assert_eq(dA.dot(res), b.astype(float))
 
     with pytest.warns(FutureWarning, match="sym_pos keyword is deprecated"):
         res = da.linalg.solve(dA, db, sym_pos=True)
-        assert_eq(res, _scipy_linalg_solve(A, b, assume_a="pos"), check_graph=False)
-        assert_eq(dA.dot(res), b.astype(float), check_graph=False)
+        assert_eq(res, _scipy_linalg_solve(A, b, assume_a="pos"))
+        assert_eq(dA.dot(res), b.astype(float))
 
     with pytest.warns(FutureWarning, match="sym_pos keyword is deprecated"):
         res = da.linalg.solve(dA, db, sym_pos=False)
-        assert_eq(res, _scipy_linalg_solve(A, b, assume_a="gen"), check_graph=False)
-        assert_eq(dA.dot(res), b.astype(float), check_graph=False)
+        assert_eq(res, _scipy_linalg_solve(A, b, assume_a="gen"))
+        assert_eq(dA.dot(res), b.astype(float))
 
 
 @pytest.mark.parametrize(("shape", "chunk"), [(20, 10), (12, 3), (30, 3), (30, 6)])
@@ -843,13 +843,11 @@ def test_cholesky(shape, chunk):
     assert_eq(
         da.linalg.cholesky(dA).compute(),
         scipy.linalg.cholesky(A),
-        check_graph=False,
         check_chunks=False,
     )
     assert_eq(
         da.linalg.cholesky(dA, lower=True),
         scipy.linalg.cholesky(A, lower=True),
-        check_graph=False,
         check_chunks=False,
     )
 
