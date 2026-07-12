@@ -43,8 +43,9 @@ Top-level `_*.py` modules are shared machinery, not op homes:
   task graph, the single choke point), `_rechunk.py`
 - Collection layer: `_collection.py` (`Array` wrapper + methods),
   `_new_collection.py`
-- Chunk-level kernels and helpers: `_chunk.py`, `_core_utils.py`, `_utils.py`,
-  `_dispatch.py`, `_chunk_types.py`, `_numpy_compat.py`, `_backends*.py`
+- Chunk-level kernels and helpers: `_chunk.py` (and `chunk.py`, its public
+  legacy namespace), `_core_utils.py`, `_utils.py`, `_dispatch.py`,
+  `_chunk_types.py`, `_numpy_compat.py`, `_backends*.py`
 - Frameworks that generate operations rather than being one: `_map_blocks.py`,
   `_overlap.py`, `_gufunc.py`, `_ufunc.py` (the elemwise operator table),
   `_einsum.py`, `_shuffle.py`, `_histogram.py`, and `_broadcast_to.py`
@@ -54,6 +55,8 @@ Top-level `_*.py` modules are shared machinery, not op homes:
   `_diagnostics.py`, `_templates.py`
 - Interop: `_xarray.py`/`xarray.py`, `_frisky/` (one Rust-backed layer wrapper
   per expression kind; see AGENTS.md)
+- Test support: `_test_utils.py` (`assert_eq` — what the suite imports
+  instead of legacy `dask.array.utils`)
 
 ## Import rules — who may import `_collection` at module top
 
@@ -68,8 +71,8 @@ those modules must defer any `_collection` import into function bodies.
   `_broadcast_to.py`, `_rechunk.py`, `_chunk.py`, `_utils.py`,
   `_core_utils.py`, `_dispatch.py`, `_chunk_types.py`, `_new_collection.py`,
   `_templates.py`. The standard pattern is a function-local
-  `from dask_array._collection import asarray` inside the user-facing
-  function (see `stacking/_stack.py`).
+  `from dask_array._collection import asanyarray, concatenate` inside the
+  user-facing function (see `stacking/_block.py`).
 - **May import at top**: everything outside that closure — `creation/`,
   `linalg/`, `random/`, `reductions/`, `routines/`, `fft.py`, `_ufunc.py`,
   `_gufunc.py`, `_map_blocks.py`, `_overlap.py`, `_histogram.py`,
@@ -84,10 +87,12 @@ those modules must defer any `_collection` import into function bodies.
 
 When in doubt, measure: wrap `builtins.__import__`, snapshot
 `sorted(m for m in sys.modules if m.startswith("dask_array"))` the moment
-`dask_array._collection` finishes executing, and import the package —
-anything in the snapshot (that isn't merely mid-load above `_collection` on
-the import stack, like `fft.py`, which triggers it) is in the closure and
-must defer.
+`dask_array._collection` finishes executing, and import the package. The
+snapshot overcounts by two artifact classes — modules `__init__.py` merely
+preloads before `_collection` starts (`_backends`, `_diagnostics`, `chunk`)
+and modules mid-load above `_collection` on the import stack (`fft.py`,
+which triggers it) — everything else in it is in the closure and must
+defer.
 
 ## Adding operation N+1
 
