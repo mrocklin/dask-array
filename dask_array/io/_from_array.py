@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import uuid
 from itertools import product
 
 import numpy as np
@@ -276,7 +277,7 @@ class FromArray(IO):
         # the cached/pickled token keeps a parent's view of this node identical
         # to the value baked into our own `_name`.
         if not self._determ_token:
-            from dask.tokenize import _tokenize_deterministic
+            from dask.tokenize import TokenizationError, _tokenize_deterministic
 
             # Handle non-serializable locks by using their id()
             # Locks are identity-based objects, so using id() is semantically correct
@@ -290,7 +291,27 @@ class FromArray(IO):
                 self._determ_token = (type(self), self.operand("_name_override"))
             else:
                 operands = [lock_token if p == "lock" else self.operand(p) for p in self._parameters]
-                self._determ_token = _tokenize_deterministic(type(self), *operands)
+                try:
+                    self._determ_token = _tokenize_deterministic(type(self), *operands)
+                except TokenizationError:
+                    # An operand with no deterministic tokenize handler — an
+                    # h5py dataset source, most commonly — gets a random token
+                    # instead of an error, like upstream from_array's
+                    # non-strict tokenize(x, ...). It is computed once — here,
+                    # during construction — and cached/pickled through
+                    # `_determ_token` like any other token, so this instance's
+                    # name never flaps. The cost, upstream as here, is that
+                    # two from_array calls on the same object get different
+                    # names and don't dedup. (Blockwise's fallback uses id()
+                    # instead; for a data source a uuid is safer — ids can be
+                    # reused after GC.) Upstream's strictness knob still
+                    # applies: with tokenize.ensure-deterministic set, this
+                    # stays an error.
+                    from dask import config
+
+                    if config.get("tokenize.ensure-deterministic"):
+                        raise
+                    self._determ_token = uuid.uuid4().hex
         return self._determ_token
 
     def _simplify_up(self, parent, dependents):
