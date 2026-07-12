@@ -10,6 +10,7 @@ from dask_array.manipulation._expand import (
 from dask_array.manipulation._flip import flip, fliplr, flipud, rot90
 from dask_array.manipulation._reshape import ravel, reshape, reshape_blockwise
 from dask_array.manipulation._roll import roll
+from dask_array.manipulation._squeeze import Squeeze, squeeze
 from dask_array.manipulation._transpose import (
     moveaxis,
     rollaxis,
@@ -34,4 +35,6 @@ __all__ = [
     "reshape",
     "reshape_blockwise",
     "ravel",
+    "Squeeze",
+    "squeeze",
 ]

@@ -270,5 +270,7 @@ This is critical because it means slicing happens at read time, not after loadin
 | `slicing/_bool_index.py` | `BooleanIndexFlattened` |
 | `slicing/_blocks.py` | `Blocks` for `.blocks` accessor |
 | `slicing/_setitem.py` | `SetItem` for `x[idx] = val` |
-| `slicing/_squeeze.py` | `Squeeze` for dimension removal |
 | `slicing/_utils.py` | `_slice_1d`, `fuse_slice`, `normalize_slice`, etc. |
+
+`Squeeze` lives with its dual `ExpandDims` in `manipulation/`
+(`manipulation/_squeeze.py`).

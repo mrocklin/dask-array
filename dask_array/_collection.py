@@ -1758,4 +1758,4 @@ from dask_array.manipulation._reshape import ravel, reshape, reshape_blockwise
 from dask_array.manipulation._transpose import swapaxes
 
 # Import squeeze from its module
-from dask_array.slicing import squeeze
+from dask_array.manipulation._squeeze import squeeze

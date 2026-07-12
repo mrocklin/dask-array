@@ -25,7 +25,6 @@ from dask_array.slicing._setitem import (
     concatenate_array_chunks_expr,
     setitem_array_expr,
 )
-from dask_array.slicing._squeeze import Squeeze, squeeze
 from dask_array.slicing._vindex import (
     VIndexArray,
     _numpy_vindex,
@@ -56,9 +55,6 @@ __all__ = [
     "SetItem",
     "concatenate_array_chunks_expr",
     "setitem_array_expr",
-    # Squeeze
-    "Squeeze",
-    "squeeze",
     # Vindex
     "VIndexArray",
     "_numpy_vindex",
