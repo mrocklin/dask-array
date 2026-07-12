@@ -208,7 +208,7 @@ def unique(ar, return_index=False, return_inverse=False, return_counts=False):
     if return_index:
         result.append(aggregated["indices"])
     if return_inverse:
-        from dask_array._reshape import reshape
+        from dask_array.manipulation._reshape import reshape
 
         matches = (ar[:, None] == aggregated["values"][None, :]).astype(np.intp)
         inverse = (matches * aggregated["inverse"]).sum(axis=1)

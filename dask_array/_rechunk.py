@@ -749,7 +749,7 @@ class Rechunk(ArrayExpr):
         already-lowered ``TasksRechunk`` never pushes.
         """
         from dask_array._blockwise import Elemwise
-        from dask_array._concatenate import Concatenate
+        from dask_array.stacking._concatenate import Concatenate
         from dask_array.manipulation._expand import ExpandDims
         from dask_array.manipulation._transpose import Transpose
 
@@ -1025,7 +1025,7 @@ class Rechunk(ArrayExpr):
         Skipped if method='p2p' is explicitly requested - user wants
         distributed shuffle.
         """
-        from dask_array._concatenate import Concatenate
+        from dask_array.stacking._concatenate import Concatenate
         from dask_array._new_collection import new_collection
 
         if not isinstance(self.array, Concatenate) or self.method == "p2p":

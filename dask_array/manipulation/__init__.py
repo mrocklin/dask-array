@@ -8,6 +8,7 @@ from dask_array.manipulation._expand import (
     expand_dims,
 )
 from dask_array.manipulation._flip import flip, fliplr, flipud, rot90
+from dask_array.manipulation._reshape import ravel, reshape, reshape_blockwise
 from dask_array.manipulation._roll import roll
 from dask_array.manipulation._transpose import (
     moveaxis,
@@ -15,16 +16,6 @@ from dask_array.manipulation._transpose import (
     swapaxes,
     transpose,
 )
-
-
-def __getattr__(name):
-    """Lazy import of reshape and ravel to avoid circular imports."""
-    if name in ("reshape", "ravel"):
-        from dask_array import _collection
-
-        return getattr(_collection, name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
 
 __all__ = [
     "flip",
@@ -41,5 +32,6 @@ __all__ = [
     "atleast_3d",
     "roll",
     "reshape",
+    "reshape_blockwise",
     "ravel",
 ]

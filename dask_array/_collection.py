@@ -29,8 +29,8 @@ except ImportError:
 from dask_array._broadcast import broadcast_to
 
 # Import concatenate and stacking
-from dask_array._concatenate import concatenate
-from dask_array._stack import stack
+from dask_array.stacking._concatenate import concatenate
+from dask_array.stacking._stack import stack
 from dask_array.core._blockwise_funcs import blockwise, elemwise
 
 # Import core conversion functions from their module
@@ -1841,7 +1841,7 @@ class Array(DaskMethodsMixin):
 
 # Import rechunk, reshape, ravel from their modules
 from dask_array._rechunk import rechunk
-from dask_array._reshape import ravel, reshape, reshape_blockwise
+from dask_array.manipulation._reshape import ravel, reshape, reshape_blockwise
 
 # Import swapaxes
 from dask_array.manipulation._transpose import swapaxes
