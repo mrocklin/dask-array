@@ -17,7 +17,7 @@ from dask.core import flatten
 import frisky.dask as fdask
 from frisky import Client, LocalCluster
 
-from dask_array._frisky import collect_task_records
+from dask_array._frisky.collect import collect_task_records
 
 
 def build(blocks):

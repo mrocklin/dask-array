@@ -29,7 +29,7 @@ from io import StringIO
 
 from dask.core import flatten
 
-from dask_array._frisky import collect_task_records
+from dask_array._frisky.collect import collect_task_records
 from frisky import Client, LocalCluster
 
 
