@@ -537,6 +537,19 @@ def histogramdd(sample, bins, range=None, normed=None, weights=None, density=Non
     if isinstance(bins, int):
         bins = (bins,) * D
 
+    # Bin *counts* (ints) need a range to derive their edges, and dask cannot
+    # infer the range lazily from the data. Mirror dask.array.histogram and
+    # raise a clear error rather than treating a count as bin edges and failing
+    # later with an opaque "len() of unsized object" TypeError. This fires on
+    # the all-counts case (the same shape the range branch below handles); a
+    # mix of counts and edge arrays is a separate, pre-existing gap.
+    if range is None and all(isinstance(b, (int, np.integer)) for b in bins):
+        raise ValueError(
+            "dask.array.histogramdd requires either specifying "
+            "bins as a sequence of arrays of bin edges or specifying "
+            "both a range and the number of bins per dimension"
+        )
+
     # Compute edges
     if all(isinstance(b, int) for b in bins) and range is not None and all(len(r) == 2 for r in range):
         edges = [np.linspace(r[0], r[1], b + 1) for b, r in zip(bins, range)]

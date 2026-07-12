@@ -4,6 +4,7 @@ import contextlib
 import itertools
 import pickle
 import sys
+import time
 import warnings
 from numbers import Number
 
@@ -1166,6 +1167,28 @@ def test_histogramdd_raise_incompat_shape():
         da.histogramdd(data, bins=4, range=((-3, 3),))
 
 
+@pytest.mark.parametrize("bins", [4, (4, 5, 6), [4, 5, 6]])
+def test_histogramdd_scalar_bins_requires_range(bins):
+    # A bin count needs a range to derive edges lazily; without one histogramdd
+    # used to fail with an opaque "len() of unsized object" TypeError. Mirror
+    # dask.array.histogram and raise a clear ValueError instead.
+    data = da.random.default_rng().random(size=(10, 3), chunks=(5, 3))
+    with pytest.raises(ValueError, match="requires either specifying"):
+        da.histogramdd(data, bins=bins)
+
+
+def test_histogramdd_scalar_bins_with_range_works():
+    # The same scalar/count bins are fine once a range is supplied.
+    data = da.random.default_rng().random(size=(10, 3), chunks=(5, 3))
+    ranges = ((0, 1),) * 3
+    a1, edges1 = da.histogramdd(data, bins=4, range=ranges)
+    a2, edges2 = np.histogramdd(data.compute(), bins=4, range=ranges)
+    assert_eq(a1, a2)
+    assert a1.shape == (4, 4, 4)
+    for e1, e2 in zip(edges1, edges2):
+        assert_eq(e1, e2)
+
+
 def test_histogramdd_edges():
     data = da.random.default_rng().random(size=(10, 3), chunks=(5, 3))
     edges = [
@@ -1666,11 +1689,6 @@ def test_take():
     assert same_keys(da.take(a, [3, 4, 5], axis=-1), da.take(a, [3, 4, 5], axis=-1))
 
 
-@pytest.mark.skip(
-    reason="da.take's no-op check materializes a full-axis-length arange "
-    "(slicing/_basic.py take()); construction is O(axis length), minutes at 1e12 "
-    "elements. Verified 2026-07-11: hangs in graph construction, before compute."
-)
 def test_take_large():
     a = da.arange(1_000_000_000_000, chunks=(200_000_000,), dtype="int64")
 
@@ -1679,6 +1697,22 @@ def test_take_large():
 
     x = np.arange(50, 300, dtype="int64")
     assert_eq(da.take(a, x, axis=0), x)
+
+
+def test_take_construction_cheap_on_huge_axis():
+    # Regression: take's no-op check must not materialize a full-axis-length
+    # arange. On a ~1e12-element axis that arange is terabytes and takes minutes
+    # (it hangs) at graph-construction time. A short index against a huge axis
+    # can never be the identity permutation, so building the graph stays cheap.
+    a = da.arange(1_000_000_000_000, chunks=(200_000_000,), dtype="int64")
+    idx = np.arange(20, dtype="int64")
+
+    start = time.perf_counter()
+    result = da.take(a, idx, axis=0)
+    elapsed = time.perf_counter() - start
+
+    assert result.shape == (20,)
+    assert elapsed < 5.0, f"take construction took {elapsed:.1f}s (was O(axis length))"
 
 
 def test_take_dask_from_numpy():

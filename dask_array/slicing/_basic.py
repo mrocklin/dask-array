@@ -310,9 +310,16 @@ def take(x, index, axis=0):
         # No-op check only for numpy arrays (dask array comparison triggers warnings)
         # Use is_dask_collection to catch both array-expr and legacy dask Arrays
         if not is_dask_collection(index):
-            arange = arange_safe(np.sum(x.chunks[axis]), like=index)
-            if len(index) == len(arange) and np.abs(index - arange).sum() == 0:
-                return x
+            # take(x, [0, 1, ..., n-1]) over a full axis returns x unchanged.
+            # Guard the identity comparison behind a cheap length check so we
+            # never materialize a full-axis-length arange when index is shorter
+            # than the axis: at ~1e12 elements that arange is terabytes, built
+            # here at graph-construction time (see test_take_large).
+            axis_len = int(np.sum(x.chunks[axis]))
+            if len(index) == axis_len:
+                arange = arange_safe(axis_len, like=index)
+                if np.abs(index - arange).sum() == 0:
+                    return x
 
         # If index is a dask collection, use lazy blockwise approach
         if is_dask_collection(index):
