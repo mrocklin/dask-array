@@ -141,6 +141,36 @@ class Stack(ArrayExpr):
             *shuffled_arrays[1:],
         )
 
+    def _lower(self):
+        """Re-assert the non-empty input alignment ``_layer`` relies on.
+
+        ``_layer`` maps each output block to one input block by index, so on a
+        non-empty axis every input must share one chunk layout. The user-facing
+        ``stack`` establishes that by unifying chunks (and asserts it), but a
+        shuffle's advertised chunks are not stable under optimization (a shuffle
+        over an ``Elemwise`` re-optimizes to a different layout than one over a
+        ``FromArray``), so distributing a shuffle over the inputs -- whether
+        pushed through here by ``_accept_shuffle`` or written by the user as
+        ``stack([x[idx], y[idx]])`` -- can drift them apart and make the layer
+        emit source keys no task produces. Pin each input's non-empty axes back
+        to the first input's layout; ``ChunksFreeze`` bridges with a rechunk
+        only where a layout actually moved. (Empty axes are left alone -- a
+        rechunk cannot re-block a zero-length axis -- but ``stack`` requires all
+        inputs to share one shape and layout, so they already agree there; only
+        the non-empty axes ever drift.)
+        """
+        from dask_array._expr import ChunksFreeze
+
+        ref = self.array.chunks
+
+        def pin(a):
+            return tuple(a.chunks[n] if sum(ref[n]) == 0 else ref[n] for n in range(len(ref)))
+
+        if all(a.chunks == pin(a) for a in self.args):
+            return None
+        frozen = [ChunksFreeze(a, pin(a)) for a in self.args]
+        return type(self)(frozen[0], self.axis, self._meta, *frozen[1:])
+
     def _accept_slice(self, slice_expr):
         """Accept a slice being pushed through Stack.
 

@@ -69,18 +69,34 @@ class Concatenate(ArrayExpr):
         axis = self.axis
         cum_dims = [0] + list(accumulate(add, [len(a.chunks[axis]) for a in self.args]))
         keys = list(product([self._name], *[range(len(bd)) for bd in self.chunks]))
+
+        # A zero-length non-concat axis can carry a different block count per
+        # input (e.g. after concatenating empties) that ``unify_chunks`` leaves
+        # unaligned, so an output block index can exceed the source's on that
+        # axis. Clamp it into the source's range there -- every such block is
+        # empty, so any of the source's zero-blocks is an equally-correct (and
+        # cheaper than a rechunk, which cannot split a zero-block) stand-in.
+        # Precompute the clamp bound per source so the common (no empty axis)
+        # path stays plain block-index routing.
+        empties = [
+            {n: len(a.chunks[n]) - 1 for n in range(self.ndim) if n != axis and sum(a.chunks[n]) == 0}
+            for a in self.args
+        ]
         names = [a.name for a in self.args]
 
         dsk = {}
         for key in keys:
-            source_name = names[bisect(cum_dims, key[axis + 1]) - 1]
-            source_key = (
-                (source_name,)
-                + key[1 : axis + 1]
-                + (key[axis + 1] - cum_dims[bisect(cum_dims, key[axis + 1]) - 1],)
-                + key[axis + 2 :]
-            )
-            dsk[key] = Alias(key, source_key)
+            src_i = bisect(cum_dims, key[axis + 1]) - 1
+            concat_coord = key[axis + 1] - cum_dims[src_i]
+            empty = empties[src_i]
+            if empty:
+                coords = tuple(
+                    concat_coord if n == axis else (min(key[n + 1], empty[n]) if n in empty else key[n + 1])
+                    for n in range(self.ndim)
+                )
+            else:
+                coords = key[1 : axis + 1] + (concat_coord,) + key[axis + 2 :]
+            dsk[key] = Alias(key, (names[src_i], *coords))
 
         return dsk
 
@@ -131,6 +147,37 @@ class Concatenate(ArrayExpr):
             self._meta,
             *shuffled_arrays[1:],
         )
+
+    def _lower(self):
+        """Re-assert the non-empty input alignment ``_layer`` relies on.
+
+        ``_layer`` maps each output block to a source block by index, reusing
+        the output's non-concat coordinates as the source's, so on a non-empty
+        non-concat axis every input must share one chunk layout. The user-facing
+        ``concatenate`` establishes that by unifying chunks, but a shuffle's
+        advertised chunks are not stable under optimization (a shuffle over an
+        ``Elemwise`` re-optimizes to a different layout than one over a
+        ``FromArray``), so distributing a shuffle over the inputs -- whether
+        pushed through here by ``_accept_shuffle`` or written by the user as
+        ``concatenate([x[idx], y[idx]])`` -- can drift them apart and make the
+        layer emit source keys no task produces. Pin each input's non-empty
+        non-concat axes back to the first input's layout; ``ChunksFreeze``
+        bridges with a rechunk only where a layout actually moved. (Empty axes
+        are left alone here -- a rechunk cannot re-block a zero-length axis --
+        and handled directly in ``_layer``.)
+        """
+        from dask_array._expr import ChunksFreeze
+
+        axis = self.axis
+        ref = self.args[0].chunks
+
+        def pin(a):
+            return tuple(a.chunks[n] if (n == axis or sum(ref[n]) == 0) else ref[n] for n in range(len(ref)))
+
+        if all(a.chunks == pin(a) for a in self.args):
+            return None
+        frozen = [ChunksFreeze(a, pin(a)) for a in self.args]
+        return type(self)(frozen[0], axis, self._meta, *frozen[1:])
 
     def _accept_slice(self, slice_expr):
         """Accept a slice being pushed through Concatenate.
