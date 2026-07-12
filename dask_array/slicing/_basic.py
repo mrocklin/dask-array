@@ -311,13 +311,11 @@ def take(x, index, axis=0):
         # Use is_dask_collection to catch both array-expr and legacy dask Arrays
         if not is_dask_collection(index):
             # take(x, [0, 1, ..., n-1]) over a full axis returns x unchanged.
-            # Guard the identity comparison behind a cheap length check so we
-            # never materialize a full-axis-length arange when index is shorter
-            # than the axis: at ~1e12 elements that arange is terabytes, built
-            # here at graph-construction time (see test_take_large).
-            axis_len = int(np.sum(x.chunks[axis]))
-            if len(index) == axis_len:
-                arange = arange_safe(axis_len, like=index)
+            # Only build the identity arange when the lengths already match —
+            # a full-axis arange at graph-construction time is terabytes for
+            # ~1e12-element axes (see test_take_large).
+            if len(index) == x.shape[axis]:
+                arange = arange_safe(len(index), like=index)
                 if np.abs(index - arange).sum() == 0:
                     return x
 
