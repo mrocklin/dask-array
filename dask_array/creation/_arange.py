@@ -38,6 +38,63 @@ class Arange(ArrayExpr):
     def chunks(self):
         return normalize_chunks(self.operand("chunks"), (self.num_rows,), dtype=self.dtype)
 
+    def _simplify_up(self, parent, dependents):
+        """Let a slice push into the arange (see ``_accept_slice``)."""
+        from dask_array.slicing import SliceSlicesIntegers
+
+        if isinstance(parent, SliceSlicesIntegers):
+            return self._slice_pushdown(parent, dependents)
+        return None
+
+    def _accept_slice(self, slice_expr):
+        """Accept a slice by folding it into the arange's start/step.
+
+        ``arange`` is affine in its position: element ``p`` has value
+        ``start + p * step``.  A slice ``[a:b:k]`` selects positions
+        ``a, a+k, a+2k, ...``, which is itself an evenly spaced sequence -- so
+        the result is another arange, with ``new_start = start + a*step`` and
+        ``new_step = step * k``.  This is the valuable case (a strided or
+        reversed slice of a huge arange becomes a tiny arange, culling the
+        graph to the reachable blocks) and it stays exact for negative steps.
+
+        We keep the slice node's own output chunks (already computed by
+        ``SliceSlicesIntegers``) and pin the resolved ``dtype`` so the rewrite
+        can never shift start/step across a dtype boundary.  An integer index
+        drops to a 0-d scalar, which is no longer an arange; we decline it
+        (return ``None``) and let it stay a ``getitem``.
+        """
+        from numbers import Integral
+
+        # Arange is always 1-D, so the (padded) index is a single element.
+        (index,) = slice_expr.index
+        if isinstance(index, Integral):
+            return None
+
+        start, stop, step = index.indices(self.num_rows)
+        count = len(range(start, stop, step))
+        new_start = self.start + start * self.step
+        new_step = self.step * step
+        # ``stop`` only feeds ``num_rows`` -- the per-block ``_layer`` and the
+        # Frisky layer build values from start/step/chunks, never stop.
+        # Re-deriving the length as ``ceil((stop - start) / step)`` from a float
+        # ``stop`` is fragile: for a non-dyadic float step, ``count * new_step``
+        # divides back to ``count + eps``, ``ceil`` rounds it to ``count + 1``,
+        # and that disagrees with the concrete chunks we pin (which sum to
+        # ``count``), tripping ``normalize_chunks``.  Put ``stop`` at the
+        # midpoint between the last selected element and the next-would-be one
+        # so ``ceil`` recovers exactly ``count`` regardless of float error and
+        # for either sign of ``new_step`` (the ratio is always ``count - 0.5``).
+        new_stop = new_start + (count - 0.5) * new_step
+        return self.substitute_parameters(
+            {
+                "start": new_start,
+                "stop": new_stop,
+                "step": new_step,
+                "chunks": slice_expr.chunks,
+                "dtype": self.dtype,
+            }
+        )
+
     def _frisky_layer(self):
         from dask_array._frisky.arange import ArangeLayer
 

@@ -38,6 +38,44 @@ class Linspace(Arange):
 
         return float(range_) / div
 
+    def _accept_slice(self, slice_expr):
+        """Accept a slice by folding it into a smaller linspace.
+
+        Like ``arange``, ``linspace`` is affine in its position: element ``p``
+        has value ``start + p * step`` (``step`` already encodes ``endpoint``),
+        so a slice selects an evenly spaced subset -- another linspace.  We
+        can't reuse ``Arange._accept_slice`` because ``Linspace`` is
+        parameterised by ``num``/``endpoint`` rather than ``step`` (a derived
+        property), so substituting ``step`` there would be silently dropped and
+        leave ``num`` inconsistent with the sliced chunks.  We rebuild an
+        endpoint-inclusive linspace over the selected first/last values with
+        ``num`` equal to the selected count.  Integer indices drop to a 0-d
+        scalar (no longer a linspace); we decline those.
+        """
+        from numbers import Integral
+
+        (index,) = slice_expr.index
+        if isinstance(index, Integral):
+            return None
+
+        start, stop, step = index.indices(self.num_rows)
+        count = len(range(start, stop, step))
+        new_start = self.start + start * self.step
+        new_step = self.step * step
+        # Endpoint-inclusive linspace over [new_start, last_value] with `count`
+        # points reproduces exactly new_start + j*new_step for j in [0, count).
+        new_stop = new_start + (count - 1) * new_step
+        return self.substitute_parameters(
+            {
+                "start": new_start,
+                "stop": new_stop,
+                "num": count,
+                "endpoint": True,
+                "chunks": slice_expr.chunks,
+                "dtype": self.dtype,
+            }
+        )
+
     def _frisky_layer(self):
         from dask_array._frisky.linspace import LinspaceLayer
 

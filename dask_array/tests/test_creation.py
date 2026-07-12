@@ -183,6 +183,35 @@ def test_linspace(endpoint):
     assert_eq(darr, nparr)
 
 
+@pytest.mark.parametrize("endpoint", [True, False])
+@pytest.mark.parametrize("chunks", [7, 13])
+@pytest.mark.parametrize(
+    "index",
+    [
+        slice(0, 30),
+        slice(None, None, 7),
+        slice(0, None, 100),
+        slice(None, None, -1),
+        slice(950, 10, -3),
+        slice(20, 20),
+        slice(-5, None),
+        slice(3, 500, 13),
+    ],
+)
+def test_linspace_slice_pushdown(endpoint, chunks, index):
+    # A strided/reversed slice of a linspace folds into a smaller linspace and
+    # culls to one task per output block, matching numpy (endpoint-aware).
+    x = da.linspace(2.5, 97.5, 1000, endpoint=endpoint, chunks=chunks)
+    y = x[index]
+    assert_eq(y, np.linspace(2.5, 97.5, 1000, endpoint=endpoint)[index])
+
+    from dask_array.creation._linspace import Linspace
+
+    assert isinstance(y.expr.simplify(), Linspace)
+    graph = y.optimize().__dask_graph__()
+    assert len(graph) == int(np.prod([len(c) for c in y.chunks]))
+
+
 @pytest.mark.xfail(reason="dask scalars as linspace bounds are not supported", raises=TypeError)
 @pytest.mark.parametrize("endpoint", [True, False])
 def test_linspace_dask_scalar_bounds(endpoint):
@@ -254,6 +283,66 @@ def test_arange():
         da.arange(10, chunks=-1, whatsthis=1)
 
     assert da.arange(10).chunks == ((10,),)
+
+
+@pytest.mark.parametrize("chunks", [10, 37, (13, 20, 100, 867)])
+@pytest.mark.parametrize(
+    "index",
+    [
+        slice(0, 30),  # contiguous
+        slice(5, 45),  # off-grid contiguous
+        slice(None, None, 7),  # strided
+        slice(0, None, 100),  # stride wider than a chunk
+        slice(None, None, -1),  # full reverse
+        slice(950, 10, -3),  # negative step, off-grid
+        slice(20, 20),  # empty slice
+        slice(-5, None),  # negative start
+        slice(3, 500, 13),  # strided off-grid
+    ],
+)
+def test_arange_slice_pushdown(chunks, index):
+    # A strided/contiguous/reversed slice of an arange folds into a *smaller*
+    # arange (element p has value start + p*step, so the selected positions are
+    # themselves evenly spaced). The result matches numpy and the optimized
+    # graph culls to exactly one task per output block -- no getitem layer over
+    # the full-size arange.
+    x = da.arange(1000, chunks=chunks)
+    y = x[index]
+    assert_eq(y, np.arange(1000)[index])
+
+    from dask_array.creation._arange import Arange
+
+    assert isinstance(y.expr.simplify(), Arange)  # fully absorbed, still an arange
+    graph = y.optimize().__dask_graph__()
+    assert len(graph) == int(np.prod([len(c) for c in y.chunks]))
+
+
+@pytest.mark.parametrize(
+    "start,stop,step",
+    [
+        (0, 10, 0.5),  # dyadic float step (exact in binary)
+        (2, 100, 2),  # integer, non-zero start
+        (5, 0, -1),  # descending integer
+        (0, 2, 0.1),  # non-dyadic float step: count*new_step re-derives length
+        (0, 10, 0.3),  # to count+eps under ceil -- must not trip normalize_chunks
+        (1, 0, -0.01),  # descending non-dyadic float step
+        (2.5, -2.5, -0.05),  # descending non-dyadic, non-zero start
+    ],
+)
+@pytest.mark.parametrize(
+    "index",
+    [slice(None, None, 3), slice(None, None, -2), slice(2, None), slice(3, 17, 2), slice(None, None, 7)],
+)
+def test_arange_slice_pushdown_start_step(start, stop, step, index):
+    # start/step arithmetic stays exact for non-zero starts, dyadic AND
+    # non-dyadic float steps, and aranges that already descend. The non-dyadic
+    # steps guard a real regression: the folded arange must not re-derive its
+    # length from a float `stop` and disagree with the pinned chunks.
+    x = da.arange(start, stop, step, chunks=4)
+    y = x[index]
+    y.compute()  # would raise "Chunks do not add up to shape" on the regression
+    assert_eq(y, np.arange(start, stop, step)[index])
+    assert y.dtype == np.arange(start, stop, step).dtype
 
 
 arange_dtypes = [

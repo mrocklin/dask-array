@@ -97,60 +97,26 @@ class BroadcastTrick(ArrayExpr):
     def _accept_slice(self, slice_expr):
         """Accept a slice by creating a smaller BroadcastTrick.
 
-        For ones, zeros, full, empty - just create a new instance with
-        the sliced shape and chunks.
+        A creation expression (ones/zeros/full/empty) has the same constant
+        value at every position, so slicing it by *any* index -- contiguous,
+        strided, integer, or negative-step -- just yields a smaller creation
+        of the same value.  ``SliceSlicesIntegers`` already computes the
+        result's output shape and chunks (dropping integer-indexed dims,
+        counting strided elements), so we read them straight off the slice
+        node rather than recomputing per dimension.  This is what lets a
+        single integer or strided index cull the graph down to the reachable
+        blocks instead of leaving every original block behind an unreachable
+        ``getitem``.
+
+        ``slice_expr`` is always a ``SliceSlicesIntegers`` whose index holds
+        only slices and integers; any ``None`` newaxis is peeled into an
+        enclosing ``ExpandDims`` before this pushdown runs, so it never
+        reaches here.
         """
-        from numbers import Integral
-
-        index = slice_expr.index
-        old_shape = self.shape
-        old_chunks = self.chunks
-
-        # Pad index to full length
-        full_index = index + (slice(None),) * (len(old_shape) - len(index))
-
-        # Handle integers and newaxis - for now, only handle simple slices
-        if any(idx is None for idx in full_index):
-            return None
-        if any(isinstance(idx, Integral) for idx in full_index):
-            return None
-
-        # Compute new shape and chunks from slices
-        new_shape = []
-        new_chunks = []
-        for i, idx in enumerate(full_index):
-            if isinstance(idx, slice):
-                # Normalize slice
-                start, stop, step = idx.indices(old_shape[i])
-                if step != 1:
-                    return None  # Don't handle non-unit steps
-                new_dim = max(0, stop - start)
-                new_shape.append(new_dim)
-
-                # Compute new chunks for this dimension
-                old_axis_chunks = old_chunks[i]
-                axis_chunks = []
-                cumsum = 0
-                for chunk_size in old_axis_chunks:
-                    chunk_start = cumsum
-                    chunk_end = cumsum + chunk_size
-                    cumsum = chunk_end
-
-                    # Intersection of [chunk_start, chunk_end) with [start, stop)
-                    overlap_start = max(chunk_start, start)
-                    overlap_end = min(chunk_end, stop)
-                    if overlap_end > overlap_start:
-                        axis_chunks.append(overlap_end - overlap_start)
-
-                new_chunks.append(tuple(axis_chunks) if axis_chunks else (0,))
-            else:
-                return None  # Unexpected index type
-
-        # Substitute shape and chunks, clear name for new expression
         return self.substitute_parameters(
             {
-                "shape": tuple(new_shape),
-                "chunks": tuple(new_chunks),
+                "shape": slice_expr.shape,
+                "chunks": slice_expr.chunks,
                 "name": None,
             }
         )

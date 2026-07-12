@@ -106,11 +106,12 @@ def test_transpose_slice_task_count():
 
     opt_graph = dict(Array(result.expr.optimize()).__dask_graph__())
 
-    # The transpose is eliminated: only ones(6) + getitem(2) remain. Lowering now
-    # folds Transpose(ones) straight into ones, so the transpose never reaches the
-    # materialized graph and there is no larger un-optimized graph to compare to.
+    # The transpose is eliminated (Transpose(ones) folds into ones at lowering),
+    # and the integer index now folds into the creation too: x.T[0] collapses all
+    # the way to ones((4,)) -- two size-2 blocks, no transpose and no getitem.
     assert not any("transpose" in key[0] for key in opt_graph)
-    assert len(opt_graph) == 8, f"Expected 8 tasks (6 ones + 2 getitem), got {len(opt_graph)}"
+    assert not any("getitem" in key[0] for key in opt_graph)
+    assert len(opt_graph) == 2, f"Expected 2 tasks (ones((4,)) in two blocks), got {len(opt_graph)}"
 
     assert_eq(result, da.ones((4, 6)).T[0])
 

@@ -285,7 +285,11 @@ def test_chained_getitem_after_list_indexer():
 
 
 def test_slicing_with_negative_step_flops_keys():
-    x = da.arange(10, chunks=5)
+    # Use from_array (not a creation expr): a negative-step slice over ones/
+    # arange now folds into the creation itself, leaving no getitem to inspect.
+    # This test is about the getitem mechanism reversing block order, so it
+    # needs a source that keeps the slice as a getitem.
+    x = da.from_array(np.arange(10), chunks=5)
     y = x[:1:-1]
     assert (x.name, 1) in y.dask[(y.name, 0)].dependencies
     assert (x.name, 0) in y.dask[(y.name, 1)].dependencies
@@ -508,35 +512,90 @@ def test_index_with_bool_dask_array_2():
 
 
 @pytest.mark.parametrize(
-    "slc",
+    "slc, n_tasks",
     [
-        slice(0, 30),
-        pytest.param(
-            1,
-            marks=pytest.mark.xfail(
-                reason="integer indices don't push into creation expressions; the "
-                "materialized graph keeps every Ones task even though only one is "
-                "reachable from the output key",
-                raises=AssertionError,
-            ),
-        ),
-        pytest.param(
-            slice(0, None, 100),
-            marks=pytest.mark.xfail(
-                reason="strided slices don't push into creation expressions; the "
-                "materialized graph keeps every Ones task plus one getitem per "
-                "selected chunk",
-                raises=AssertionError,
-            ),
-        ),
+        # Contiguous, strided, and integer slices all push into the creation
+        # expression: it has the same constant value everywhere, so the slice
+        # becomes a smaller `ones` and the graph culls down to exactly the
+        # reachable blocks (no leftover unreachable `Ones` tasks behind a
+        # `getitem`).
+        (slice(0, 30), 3),  # 3 chunks of 10 kept
+        (1, 1),  # integer index -> scalar (one 0-d block)
+        (slice(0, None, 100), 10),  # every 100th elem -> 10 size-1 blocks
+        (slice(5, 45), 5),  # off-grid contiguous -> 5 partial chunks
     ],
 )
-def test_cull(slc):
+def test_cull(slc, n_tasks):
     # Slicing should shrink the optimized graph: only tasks for the needed
-    # input chunks remain.
+    # input chunks remain, and the value must match numpy.
     x = da.ones(1000, chunks=(10,))
     y = x[slc]
-    assert len(y.optimize().__dask_graph__()) < len(x.optimize().__dask_graph__())
+    graph = y.optimize().__dask_graph__()
+    assert len(graph) < len(x.optimize().__dask_graph__())
+    assert len(graph) == n_tasks
+    assert_eq(y, np.ones(1000)[slc])
+
+
+@pytest.mark.parametrize(
+    "index",
+    [
+        slice(0, 30),  # contiguous
+        slice(5, 45),  # off-grid contiguous
+        slice(None, None, 7),  # strided
+        slice(0, None, 100),  # stride wider than a chunk
+        slice(None, None, -1),  # full reverse (negative step)
+        slice(950, 10, -3),  # negative step, off-grid
+        1,  # integer -> scalar
+        -1,  # negative integer
+        999,  # last element
+        slice(20, 20),  # empty slice
+        slice(-5, None),  # negative-start slice
+    ],
+)
+def test_slice_into_creation_absorbs_and_matches_numpy(index):
+    # A slice over a creation expression pushes all the way in: the optimized
+    # graph is a pure creation with exactly one task per output block (no
+    # separate getitem layer), and the value matches numpy for every index
+    # kind -- including strided and negative-step slices.
+    x = da.ones(1000, chunks=(10,))
+    y = x[index]
+
+    expected = np.ones(1000)[index]
+    assert_eq(y, expected)
+
+    graph = y.optimize().__dask_graph__()
+    n_blocks = int(np.prod([len(c) for c in y.chunks])) if y.ndim else 1
+    assert len(graph) == n_blocks  # fully absorbed: no leftover slice tasks
+
+
+@pytest.mark.parametrize("creation", ["ones", "zeros", "full"])
+@pytest.mark.parametrize(
+    "index",
+    [
+        (3,),  # integer drops leading axis
+        (slice(None), 2),  # integer drops trailing axis
+        (2, 3),  # both integers -> scalar
+        (slice(0, 20), slice(None, None, 3)),  # mixed slice + stride
+        (slice(None, None, -1), slice(None, None, -2)),  # negative steps
+    ],
+)
+def test_slice_into_creation_2d(creation, index):
+    # The same absorption works across creation kinds and multiple dimensions,
+    # including integer indices that drop axes.
+    shape = (40, 50)
+    if creation == "full":
+        x = da.full(shape, 7.5, chunks=(10, 10))
+        expected = np.full(shape, 7.5)[index]
+    else:
+        x = getattr(da, creation)(shape, chunks=(10, 10))
+        expected = getattr(np, creation)(shape)[index]
+
+    y = x[index]
+    assert_eq(y, expected)
+
+    graph = y.optimize().__dask_graph__()
+    n_blocks = int(np.prod([len(c) for c in y.chunks])) if y.ndim else 1
+    assert len(graph) == n_blocks
 
 
 @pytest.mark.parametrize("shape", [(2,), (2, 3), (2, 3, 5)])
