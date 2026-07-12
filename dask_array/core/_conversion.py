@@ -12,7 +12,7 @@ import numpy as np
 from dask_array._core_utils import getter_inline
 from dask_array._utils import meta_from_array
 from dask.base import is_dask_collection
-from dask.utils import SerializableLock, derived_from
+from dask.utils import SerializableLock
 
 
 def _as_dtype(a, dtype):
@@ -414,8 +414,16 @@ def asanyarray(a, dtype=None, order=None, *, like=None, inline_array=False):
     return _as_dtype(a, dtype)
 
 
-@derived_from(np)
 def array(x, dtype=None, ndmin=None, *, like=None):
+    """Create a dask array from an array-like object.
+
+    Unlike :func:`numpy.array`, only the ``dtype``, ``ndmin``, and ``like``
+    arguments are supported (no ``copy``/``order``/``subok``).
+
+    See Also
+    --------
+    numpy.array
+    """
     x = asarray(x, like=like)
     while ndmin is not None and x.ndim < ndmin:
         x = x[None, :]

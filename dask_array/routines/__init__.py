@@ -3,6 +3,7 @@
 # Direct imports from submodules
 # Re-exports from other modules
 from dask_array._blockwise import outer  # noqa: F401
+from dask_array._collection import asanyarray, asarray  # noqa: F401
 from dask_array.core._conversion import array
 from dask_array._ufunc import (  # noqa: F401
     allclose,

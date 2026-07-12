@@ -20,20 +20,32 @@ the result reproducible, ``_ensure_registered`` mutates the cached dict
 returned by ``list_chunkmanagers()`` so that our manager is always the one
 stored under the "dask" key.
 
-This module is imported lazily -- never by ``import dask_array`` itself
-(which must not pull in xarray or pandas).  It loads through exactly two
-paths, both of which run ``_ensure_registered`` via the module-level call
-at the bottom:
+This module is imported lazily -- never by a plain ``import dask_array``
+(which must not pull in xarray or pandas).  It loads through three paths,
+all of which run ``_ensure_registered`` via the module-level call at the
+bottom:
 
 1. Explicitly, via ``dask_array.xarray.register()``.
-2. By xarray itself: ``list_chunkmanagers`` loads every entry point in the
+2. By ``import dask_array`` when xarray is *already* in ``sys.modules``
+   (the package __init__ pins eagerly then -- xarray is loaded, so it
+   costs nothing).
+3. By xarray itself: ``list_chunkmanagers`` loads every entry point in the
    "xarray.chunkmanagers" group on first chunked-array use, and ours points
    here.  In that mid-discovery case the reentrant ``list_chunkmanagers()``
    call builds and caches the registry (reentrant ``lru_cache`` calls win
-   the cache slot), we pin our manager into it, and every later lookup sees
-   ours regardless of entry-point enumeration order.  Only the single
-   in-flight discovery still sees the enumeration-order winner -- the same
-   guarantee the old eager registration at ``import dask_array`` gave.
+   the cache slot) and we pin our manager into it, so every lookup after
+   the in-flight one sees ours regardless of enumeration order.
+
+Known window (path 3 only): the in-flight discovery still uses its own
+un-pinned dict, whose "dask" slot goes to whichever entry point enumerates
+*last* -- a per-environment installation detail.  If dask_array was imported
+before xarray and the built-in entry point enumerates last, the single
+chunked op that triggered discovery returns a legacy dask.array-backed
+result, and touching that object through xarray again raises TypeError
+(the now-pinned registry has no manager claiming legacy arrays).  Every
+later chunked op engages dask_array.  Calling
+``dask_array.xarray.register()`` before first use eliminates the window in
+every import order.
 """
 
 from __future__ import annotations

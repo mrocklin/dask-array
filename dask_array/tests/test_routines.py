@@ -39,8 +39,10 @@ def test_array_return_type():
 
 
 def test_derived_docstrings():
-    assert "This docstring was copied from numpy.array" in da.routines.array.__doc__
-    assert "Create an array." in da.routines.array.__doc__
+    # array() is hand-written (its signature deliberately drops numpy's
+    # copy/order/subok, so a derived_from docstring would overclaim).
+    assert da.routines.array is da.array
+    assert "numpy.array" in da.routines.array.__doc__
 
 
 @pytest.mark.parametrize("funcname", ["atleast_1d", "atleast_2d", "atleast_3d"])

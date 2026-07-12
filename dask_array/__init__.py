@@ -1,4 +1,5 @@
 # ruff: noqa: F405 -- __all__ lists ufunc/gufunc names that arrive via star imports
+import sys as _sys
 from importlib.metadata import PackageNotFoundError as _PackageNotFoundError
 from importlib.metadata import version as _dist_version
 
@@ -251,10 +252,18 @@ float64 = _np.float64
 complex64 = _np.complex64
 complex128 = _np.complex128
 
-# xarray integration is registered lazily: our "dask" chunkmanager entry point
-# makes xarray import dask_array._xarray on first chunked-array use, and that
-# module pins our manager over the built-in DaskManager. See _xarray.py.
-# Importing dask_array must not import xarray (or pandas).
+# xarray integration is lazy: importing dask_array must not import xarray (or
+# pandas). Our "dask" chunkmanager entry point makes xarray import
+# dask_array._xarray on first chunked-array use, and that module pins our
+# manager over the built-in DaskManager (guarantees and the residual
+# enumeration-order window: see _xarray.py). When xarray is already imported,
+# pinning costs nothing -- do it now so the very first chunked op engages us
+# in every entry-point enumeration order.
+if "xarray" in _sys.modules:
+    try:
+        xarray.register()
+    except ImportError:
+        pass
 
 # Star-import surface: public functions, classes, and constants only.
 # Submodules (io, xarray, random, ...) are deliberately excluded so that
