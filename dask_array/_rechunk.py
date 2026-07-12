@@ -538,6 +538,9 @@ def _balance_chunksizes(chunks: tuple[int, ...]) -> tuple[int, ...]:
     new_chunks : tuple[int, ...]
         New chunks for Dask array with balanced sizes.
     """
+    if min(chunks) == 0:
+        return chunks
+
     median_len = np.median(chunks).astype(int)
     n_chunks = len(chunks)
     eps = median_len // 2
@@ -668,10 +671,6 @@ class Rechunk(ArrayExpr):
     def chunks(self):
         x = self.array
         chunks = self.operand("_chunks")
-
-        # don't rechunk if array is empty
-        if x.ndim > 0 and all(s == 0 for s in x.shape):
-            return x.chunks
 
         if isinstance(chunks, dict):
             chunks = {validate_axis(c, x.ndim): v for c, v in chunks.items()}

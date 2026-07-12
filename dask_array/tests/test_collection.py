@@ -715,6 +715,31 @@ def test_optimize_empty_array():
     assert_eq(result, np.zeros((0, 5)))
 
 
+def test_optimized_empty_stack_and_concatenate_have_no_missing_dependencies():
+    x = da.from_array(np.arange(1.0).reshape((1, 1, 1)), chunks=((1,), (1,), (1,)))
+    sliced = x[slice(1, 1), slice(1, 1), 0]
+
+    empty = np.empty((0, 0))
+    rows = da.concatenate([sliced, da.from_array(empty, chunks=((0,), (0,)))], axis=0)
+    result = da.concatenate([rows, da.from_array(empty, chunks=((0,), (0,)))], axis=1)
+    stacked = da.stack(
+        [
+            da.from_array(empty, chunks=((0, 0), (0,))),
+            da.from_array(empty, chunks=((0,), (0,))),
+        ],
+        axis=0,
+    )
+
+    for array in (result, stacked):
+        graph = dict(array.optimize().__dask_graph__())
+        for key, task in graph.items():
+            for dep in getattr(task, "dependencies", ()):
+                assert dep in graph, (key, dep)
+
+    assert_eq(result, empty)
+    assert_eq(stacked, np.stack([empty, empty]))
+
+
 def test_optimize_3d_transpose():
     """Verify transpose composition works for 3D arrays."""
     np.random.seed(42)

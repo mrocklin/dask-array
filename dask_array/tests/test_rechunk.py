@@ -116,6 +116,20 @@ def test_rechunk_below_limit_unchanged():
     assert keys_default == keys_unbounded
 
 
+def test_rechunk_balance_preserves_empty_chunk_layouts():
+    x = da.from_array(np.empty((0, 0)), chunks=((0,), (0,)))
+
+    assert x.rechunk(((0,), (0,)), balance=True).chunks == ((0,), (0,))
+
+    y = x.rechunk(((0, 0), (0,)), balance=True)
+    assert y.chunks == ((0, 0), (0,))
+    assert_eq(y, np.empty((0, 0)))
+
+    z = da.from_array(np.arange(1), chunks=((0, 1),)).rechunk(((0, 1),), balance=True)
+    assert z.chunks == ((0, 1),)
+    assert_eq(z, np.arange(1))
+
+
 def test_rechunk_split_tasks_copy_small_selections():
     """Split tasks must use chunk.getitem (copy-if-small), not operator.getitem.
 

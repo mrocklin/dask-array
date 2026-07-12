@@ -507,9 +507,6 @@ class ArrayExpr(SingletonExpr):
         balance=False,
         method=None,
     ):
-        if self.ndim > 0 and all(s == 0 for s in self.shape):
-            return self
-
         from dask_array._rechunk import Rechunk
         from dask_array._core_utils import normalize_chunks
         from dask_array._utils import validate_axis
@@ -847,7 +844,13 @@ def unify_chunks_expr(*args, warn=True):
             pass  # Skip scalars, literals, ArrayBlockwiseDep
         else:
             chunks = tuple(
-                (chunkss[j] if a.shape[n] > 1 else (a.shape[n],) if not np.isnan(sum(chunkss[j])) else None)
+                (
+                    chunkss[j]
+                    if a.shape[n] > 1 or a.shape[n] == 0
+                    else (a.shape[n],)
+                    if not np.isnan(sum(chunkss[j]))
+                    else None
+                )
                 for n, j in enumerate(i)
             )
             if chunks != a.chunks and all(a.chunks):
