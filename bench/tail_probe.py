@@ -4,9 +4,7 @@ lowered expr tree and report which expr classes still lack a `_frisky_layer`
 the remaining tail — cluster-free and fast (it only lowers + walks; it does not
 compute).
 
-    PYTHONPATH=/Users/mrocklin/workspace/dask-array \
-      MATURIN_IMPORT_HOOK_ENABLED=0 \
-      /Users/mrocklin/workspace/frisky/.venv/bin/python bench/tail_probe.py
+    uv run --extra test python bench/tail_probe.py
 """
 
 from collections import Counter
@@ -69,7 +67,7 @@ def cases():
     yield ("nansum", lambda: da.nansum(fa(), axis=0))
     yield ("nanmean", lambda: da.nanmean(fa()))
     yield ("percentile", lambda: da.percentile(fv(), [50]))
-    yield ("quantile", lambda: fa().__getattribute__("rechunk")((6, 8)) and None)  # placeholder
+    yield ("quantile axis", lambda: da.quantile(fa(), 0.5, axis=0))
     yield ("cov", lambda: da.cov(fa()))
     yield ("corrcoef", lambda: da.corrcoef(fa()))
     yield ("digitize", lambda: da.digitize(fv(), bins=[2, 4, 6]))
@@ -125,14 +123,29 @@ def walk(expr):
     return uncovered, total
 
 
+def warn_if_native_build_stale():
+    """When ``dask_array._rust`` is missing or its build generation mismatches
+    the source, every ``_frisky_layer()`` raises ImportError and every op below
+    reads as GAP — a coverage collapse that is really just a stale build.
+    Surface it up front."""
+    try:
+        import dask_array._frisky.base  # noqa: F401  (import runs the generation check)
+    except ImportError as exc:
+        print("!" * 76)
+        print("! WARNING: native extension unavailable — every op below will read as GAP")
+        print("! (`raises ImportError`); coverage numbers are MEANINGLESS until you rebuild:")
+        print(f"!   {exc}")
+        print("!   fix: uv run --extra test maturin develop")
+        print("!" * 76)
+
+
 def main():
+    warn_if_native_build_stale()
     fully, partial, errored = [], [], []
     culprit_classes = Counter()
     for label, build in cases():
         try:
             coll = build()
-            if coll is None:
-                continue
             # multi-output ops may return a tuple
             if isinstance(coll, tuple):
                 coll = coll[0]

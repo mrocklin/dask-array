@@ -1,17 +1,19 @@
-"""Client->scheduler submission benchmark for dask-array graphs.
+"""Client->scheduler submission benchmark for the LEGACY dask-array path:
+Python ``_layer()`` materialization plus ``translate_graph`` (per-task pickle).
 
-This is the feedback loop for the Rust-layer task-generation work. It measures
-the cost of turning a dask-array collection into Frisky tasks and the size of
-the resulting wire payload, broken down by component. As the new
-``__frisky_tasks__()`` route comes online it will compare old vs new here.
+It measures the cost of turning a dask-array collection into Frisky tasks the
+old way and the size of the resulting wire payload, broken down by component —
+the baseline the records path (``Array.__frisky_graph__()`` ->
+``Client.submit_tasks``) was built to beat. ``bench_records.py`` runs the
+old-vs-new comparison on a live cluster; ``profile_pipeline.py`` breaks down
+the records path itself.
 
-Run it with Frisky's venv (it imports ``frisky``); ``dask_array`` resolves from
-this checkout via the editable install:
+Run it with Frisky's venv (it imports ``frisky``):
 
     FRISKY_PY=/Users/mrocklin/workspace/frisky/.venv/bin/python
-    $FRISKY_PY bench/bench_submission.py                  # ~10k tasks, fast loop
-    $FRISKY_PY bench/bench_submission.py --blocks 1000    # ~1M tasks, headline
-    $FRISKY_PY bench/bench_submission.py --graph from_array
+    PYTHONPATH=$PWD $FRISKY_PY bench/bench_submission.py               # ~10k tasks
+    PYTHONPATH=$PWD $FRISKY_PY bench/bench_submission.py --blocks 1000 # ~1M tasks
+    PYTHONPATH=$PWD $FRISKY_PY bench/bench_submission.py --graph from_array
 
 Phase times come from the spans ``translate_graph`` records, so they match what
 a dashboard would show for the same graph.

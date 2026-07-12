@@ -1,13 +1,14 @@
 """Differential correctness: for a large, diverse batch of ops, compute each via
-the Frisky records path AND via forced stock-dask (records path disabled), and
-assert the two results are identical.
+the transparent Frisky path (expression submission, falling back to task
+records — both spied, see ``_spy.py``) AND via forced stock-dask synchronous,
+and assert the two results are identical.
 
-This is the strongest signal for the GraphRecordsLayer auto-fallback: it checks
-the records path is *faithful to dask itself*, not to numpy — so approximate ops
-(percentile, multi-chunk reductions) don't produce false mismatches, and many
-diverse ops can be thrown at it to flush out any silent divergence.
+This is the strongest signal for Frisky-path faithfulness: it checks against
+*dask itself*, not numpy — so approximate ops (percentile, multi-chunk
+reductions) don't produce false mismatches, and many diverse ops can be thrown
+at it to flush out any silent divergence.
 
-    PYTHONPATH=/Users/mrocklin/workspace/dask-array MATURIN_IMPORT_HOOK_ENABLED=0 \
+    PYTHONPATH=$PWD MATURIN_IMPORT_HOOK_ENABLED=0 \
       /Users/mrocklin/workspace/frisky/.venv/bin/python bench/diff_records.py
 """
 
@@ -15,7 +16,7 @@ import numpy as np
 
 import dask
 import dask_array as da
-import frisky.dask as fdask
+from _spy import TAGS, frisky_spy
 from frisky import Client, LocalCluster
 
 
@@ -156,46 +157,38 @@ def _set(x, idx, val):
 
 
 def main():
-    orig = fdask._frisky_compute_collections
-    used = {"n": 0}
-
-    def spy(client, collections):
-        out = orig(client, collections)
-        used["n"] += out is not None
-        return out
-
     same = diff = err = norec = 0
-    with LocalCluster(n_workers=2) as cluster:
-        with Client(cluster.scheduler):
-            for label, build in ops():
-                print(f"  ... {label}", flush=True)
-                try:
-                    fdask._frisky_compute_collections = spy
-                    before = used["n"]
-                    (rec,) = dask.compute(build())
-                    took_records = used["n"] > before
-                    # Reference: plain dask synchronous (no Frisky) — the true dask
-                    # semantics, bypassing the patch and Frisky's legacy get() path.
-                    (ref,) = dask.compute(build(), scheduler="synchronous")
-                except Exception as e:  # noqa: BLE001
-                    print(f"  ERR  {label:<22} {type(e).__name__}: {str(e)[:50]}")
-                    err += 1
-                    continue
-                finally:
-                    fdask._frisky_compute_collections = orig
-                rec_a, ref_a = np.asarray(rec), np.asarray(ref)
-                match = rec_a.shape == ref_a.shape and np.allclose(rec_a, ref_a, equal_nan=True)
-                tag = "REC" if took_records else "dask"
-                if not took_records:
-                    norec += 1
-                if match:
-                    same += 1
-                else:
-                    diff += 1
-                print(f"  {'OK ' if match else 'DIFF'} [{tag:>4}] {label:<22} match={match}")
+    with frisky_spy() as spy:
+        with LocalCluster(n_workers=2) as cluster:
+            with Client(cluster.scheduler):
+                for label, build in ops():
+                    print(f"  ... {label}", flush=True)
+                    try:
+                        before = spy.snapshot()
+                        (rec,) = dask.compute(build())
+                        path = spy.path_since(before)
+                        # Reference: plain dask synchronous (no Frisky) — the true dask
+                        # semantics; _frisky_scheduler declines it, so the spy can't fire.
+                        (ref,) = dask.compute(build(), scheduler="synchronous")
+                    except Exception as e:  # noqa: BLE001
+                        print(f"  ERR  {label:<22} {type(e).__name__}: {str(e)[:50]}")
+                        err += 1
+                        continue
+                    rec_a, ref_a = np.asarray(rec), np.asarray(ref)
+                    match = rec_a.shape == ref_a.shape and np.allclose(rec_a, ref_a, equal_nan=True)
+                    if path == "none":
+                        norec += 1
+                    if match:
+                        same += 1
+                    else:
+                        diff += 1
+                    print(f"  {'OK ' if match else 'DIFF'} [{TAGS[path]}] {label:<22} match={match}")
 
-    fdask._frisky_compute_collections = orig
-    print(f"\n{same} faithful, {diff} divergent, {err} errored; {norec} did not take records path")
+    print(
+        f"\n{same} faithful, {diff} divergent, {err} errored; "
+        f"engaged: {spy.counts['expression']} expression, {spy.counts['records']} records; "
+        f"{norec} fell back to dask"
+    )
 
 
 if __name__ == "__main__":

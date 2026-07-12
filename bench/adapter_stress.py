@@ -3,8 +3,11 @@
 riskiest property of the adapter is cross-layer key consistency — its records'
 keys/deps must match the canonical (plain-int) form the Rust/from_array layers
 emit. Each case computes through a real Frisky cluster and checks numpy.
+Engagement is spied on both Frisky paths (see ``_spy.py``); note the preferred
+expression path expands scheduler-side, so most cases exercise the adapter
+there rather than through client-side records.
 
-    PYTHONPATH=/Users/mrocklin/workspace/dask-array MATURIN_IMPORT_HOOK_ENABLED=0 \
+    PYTHONPATH=$PWD MATURIN_IMPORT_HOOK_ENABLED=0 \
       /Users/mrocklin/workspace/frisky/.venv/bin/python bench/adapter_stress.py
 """
 
@@ -12,7 +15,7 @@ import numpy as np
 
 import dask
 import dask_array as da
-import frisky.dask as fdask
+from _spy import TAGS, frisky_spy
 from frisky import Client, LocalCluster
 
 
@@ -94,36 +97,29 @@ def _npset(arr, idx, val):
 
 
 def main():
-    calls = {"n": 0}
-    orig = fdask._frisky_compute_collections
-
-    def spy(client, collections):
-        out = orig(client, collections)
-        calls["n"] += out is not None
-        return out
-
-    fdask._frisky_compute_collections = spy
     ok_count = bad = 0
-    with LocalCluster(n_workers=2) as cluster:
-        with Client(cluster.scheduler):
-            for label, build, expected in cases():
-                before = calls["n"]
-                try:
-                    (got,) = dask.compute(build())
-                    used = calls["n"] > before
-                    match = np.allclose(np.asarray(got), expected) and np.shape(got) == np.shape(expected)
-                except Exception as e:  # noqa: BLE001
-                    print(f"  ERR  {label:<24} {type(e).__name__}: {str(e)[:55]}")
-                    bad += 1
-                    continue
-                tag = "REC" if used else "dask"
-                flag = "OK " if match else "BAD"
-                ok_count += match
-                bad += not match
-                print(f"  {flag} [{tag:>4}] {label:<24} match={match}")
+    with frisky_spy() as spy:
+        with LocalCluster(n_workers=2) as cluster:
+            with Client(cluster.scheduler):
+                for label, build, expected in cases():
+                    before = spy.snapshot()
+                    try:
+                        (got,) = dask.compute(build())
+                        path = spy.path_since(before)
+                        match = np.allclose(np.asarray(got), expected) and np.shape(got) == np.shape(expected)
+                    except Exception as e:  # noqa: BLE001
+                        print(f"  ERR  {label:<24} {type(e).__name__}: {str(e)[:55]}")
+                        bad += 1
+                        continue
+                    flag = "OK " if match else "BAD"
+                    ok_count += match
+                    bad += not match
+                    print(f"  {flag} [{TAGS[path]}] {label:<24} match={match}")
 
-    fdask._frisky_compute_collections = orig
-    print(f"\n{ok_count} correct, {bad} wrong/errored")
+    print(
+        f"\n{ok_count} correct, {bad} wrong/errored; "
+        f"engaged: {spy.counts['expression']} expression, {spy.counts['records']} records"
+    )
 
 
 if __name__ == "__main__":

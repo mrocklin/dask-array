@@ -14,7 +14,10 @@ assumptions:
   - empty results / zero-size blocks
   - tuple-returning ops (gradient, nonzero) - skipped (non-array)
 
-    PYTHONPATH=/Users/mrocklin/workspace/dask-array MATURIN_IMPORT_HOOK_ENABLED=0 \
+Engagement is spied on both Frisky paths (expression + records, see
+``_spy.py``); the reference run is forced stock-dask synchronous.
+
+    PYTHONPATH=$PWD MATURIN_IMPORT_HOOK_ENABLED=0 \
       /Users/mrocklin/workspace/frisky/.venv/bin/python bench/diff_adversarial.py
 """
 
@@ -22,7 +25,7 @@ import numpy as np
 
 import dask
 import dask_array as da
-import frisky.dask as fdask
+from _spy import TAGS, frisky_spy
 from frisky import Client, LocalCluster
 
 
@@ -116,11 +119,13 @@ def _obj_take():
 
 
 def _histdd(fa):
-    # histogramdd needs sample columns; build a 2-col sample
+    # histogramdd needs a 2-col sample chunked along axis 0 only (it rejects
+    # column-chunked samples), and an explicit range (like da.histogram, a
+    # data-dependent range can't be computed lazily).
     x = fa[:, 0]
     y = fa[:, 1]
-    s = da.stack([x.flatten(), y.flatten()], axis=1)
-    return da.histogramdd(s, bins=4)[0]
+    s = da.stack([x.flatten(), y.flatten()], axis=1).rechunk((3, 2))
+    return da.histogramdd(s, bins=4, range=((0.0, 51.0), (1.0, 52.0)))[0]
 
 
 def _mb_blockinfo(x):
@@ -133,57 +138,50 @@ def _mb_blockinfo(x):
 
 
 def main():
-    orig = fdask._frisky_compute_collections
-    used = {"n": 0}
-
-    def spy(client, collections):
-        out = orig(client, collections)
-        used["n"] += out is not None
-        return out
-
     same = diff = err = norec = 0
     diffs = []
-    with LocalCluster(n_workers=2) as cluster:
-        with Client(cluster.scheduler):
-            for label, build in ops():
-                print(f"  ... {label}", flush=True)
-                try:
-                    fdask._frisky_compute_collections = spy
-                    before = used["n"]
-                    (rec,) = dask.compute(build())
-                    took_records = used["n"] > before
-                    (ref,) = dask.compute(build(), scheduler="synchronous")
-                except Exception as e:  # noqa: BLE001
-                    print(f"  ERR  {label:<28} {type(e).__name__}: {str(e)[:60]}")
-                    err += 1
-                    continue
-                finally:
-                    fdask._frisky_compute_collections = orig
-                rec_a, ref_a = np.asarray(rec), np.asarray(ref)
-                try:
-                    if (
-                        rec_a.dtype.kind in "OUS"
-                        or ref_a.dtype.kind in "OUS"
-                        or np.issubdtype(rec_a.dtype, np.datetime64)
-                    ):
-                        match = rec_a.shape == ref_a.shape and bool(np.all(rec_a == ref_a))
+    with frisky_spy() as spy:
+        with LocalCluster(n_workers=2) as cluster:
+            with Client(cluster.scheduler):
+                for label, build in ops():
+                    print(f"  ... {label}", flush=True)
+                    try:
+                        before = spy.snapshot()
+                        (rec,) = dask.compute(build())
+                        path = spy.path_since(before)
+                        (ref,) = dask.compute(build(), scheduler="synchronous")
+                    except Exception as e:  # noqa: BLE001
+                        print(f"  ERR  {label:<28} {type(e).__name__}: {str(e)[:60]}")
+                        err += 1
+                        continue
+                    rec_a, ref_a = np.asarray(rec), np.asarray(ref)
+                    try:
+                        if (
+                            rec_a.dtype.kind in "OUS"
+                            or ref_a.dtype.kind in "OUS"
+                            or np.issubdtype(rec_a.dtype, np.datetime64)
+                        ):
+                            match = rec_a.shape == ref_a.shape and bool(np.all(rec_a == ref_a))
+                        else:
+                            match = rec_a.shape == ref_a.shape and np.allclose(rec_a, ref_a, equal_nan=True)
+                    except Exception as e:  # noqa: BLE001
+                        match = False
+                        print(f"       compare-fail {type(e).__name__}: {e}")
+                    tag = TAGS[path]
+                    if path == "none":
+                        norec += 1
+                    if match:
+                        same += 1
                     else:
-                        match = rec_a.shape == ref_a.shape and np.allclose(rec_a, ref_a, equal_nan=True)
-                except Exception as e:  # noqa: BLE001
-                    match = False
-                    print(f"       compare-fail {type(e).__name__}: {e}")
-                tag = "REC" if took_records else "dask"
-                if not took_records:
-                    norec += 1
-                if match:
-                    same += 1
-                else:
-                    diff += 1
-                    diffs.append((label, tag, rec_a.shape, ref_a.shape))
-                print(f"  {'OK ' if match else 'DIFF'} [{tag:>4}] {label:<28} match={match}")
+                        diff += 1
+                        diffs.append((label, tag, rec_a.shape, ref_a.shape))
+                    print(f"  {'OK ' if match else 'DIFF'} [{tag}] {label:<28} match={match}")
 
-    fdask._frisky_compute_collections = orig
-    print(f"\n{same} faithful, {diff} divergent, {err} errored; {norec} did not take records path")
+    print(
+        f"\n{same} faithful, {diff} divergent, {err} errored; "
+        f"engaged: {spy.counts['expression']} expression, {spy.counts['records']} records; "
+        f"{norec} fell back to dask"
+    )
     for label, tag, rs, fs in diffs:
         print(f"  DIFF {label} [{tag}] rec_shape={rs} ref_shape={fs}")
 

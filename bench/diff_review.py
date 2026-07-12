@@ -2,16 +2,17 @@
 
 Differences from the existing sweeps:
   - exact dtype + exact value equality (not np.allclose), so a dtype/precision
-    divergence in the records path can't hide behind a tolerance;
-  - asserts the records path *actually fired* per op (a silent fallback to dask
-    is reported as FELL-BACK, not counted as a pass) — a pass that fell back is
-    not evidence the records path is correct;
+    divergence in the Frisky path can't hide behind a tolerance;
+  - asserts a Frisky path (expression or records — both spied, see ``_spy.py``)
+    *actually fired* per op (a silent fallback to dask is reported as FELL,
+    not counted as a pass) — a pass that fell back is not evidence the Frisky
+    path is correct;
   - targets edge cases a final review must rule out: object/structured/datetime/
     bool/complex dtypes, masked arrays, empty/zero-size pieces, key-collision
     bait, dict-container nodes, large-fan reductions, persist round-trips.
 
 Run:
-  PYTHONPATH=/Users/mrocklin/workspace/dask-array MATURIN_IMPORT_HOOK_ENABLED=0 \
+  PYTHONPATH=$PWD MATURIN_IMPORT_HOOK_ENABLED=0 \
     /Users/mrocklin/workspace/frisky/.venv/bin/python bench/diff_review.py
 """
 
@@ -19,7 +20,7 @@ import numpy as np
 
 import dask
 import dask_array as da
-import frisky.dask as fdask
+from _spy import TAGS, frisky_spy
 from frisky import Client, LocalCluster
 
 
@@ -137,46 +138,40 @@ def _exact(rec, ref):
 
 
 def main():
-    orig = fdask._frisky_compute_collections
-    used = {"n": 0}
-
-    def spy(client, collections):
-        out = orig(client, collections)
-        used["n"] += out is not None
-        return out
-
     ok = bad = err = fellback = 0
     problems = []
-    with LocalCluster(n_workers=2) as cluster:
-        with Client(cluster.scheduler):
-            for label, build in ops():
-                try:
-                    fdask._frisky_compute_collections = spy
-                    before = used["n"]
-                    (rec,) = dask.compute(build())
-                    took = used["n"] > before
-                    (ref,) = dask.compute(build(), scheduler="synchronous")
-                except Exception as e:  # noqa: BLE001
-                    print(f"  ERR  {label:<24} {type(e).__name__}: {str(e)[:70]}")
-                    err += 1
-                    problems.append((label, "ERR", str(e)[:120]))
-                    continue
-                finally:
-                    fdask._frisky_compute_collections = orig
-                match, why = _exact(rec, ref)
-                tag = "REC " if took else "FELL"
-                if not took:
-                    fellback += 1
-                if match:
-                    ok += 1
-                else:
-                    bad += 1
-                    problems.append((label, tag.strip(), why))
-                flag = "OK  " if match else "BAD "
-                print(f"  {flag} [{tag}] {label:<24} {why if not match else ''}")
+    with frisky_spy() as spy:
+        with LocalCluster(n_workers=2) as cluster:
+            with Client(cluster.scheduler):
+                for label, build in ops():
+                    try:
+                        before = spy.snapshot()
+                        (rec,) = dask.compute(build())
+                        path = spy.path_since(before)
+                        (ref,) = dask.compute(build(), scheduler="synchronous")
+                    except Exception as e:  # noqa: BLE001
+                        print(f"  ERR  {label:<24} {type(e).__name__}: {str(e)[:70]}")
+                        err += 1
+                        problems.append((label, "ERR", str(e)[:120]))
+                        continue
+                    match, why = _exact(rec, ref)
+                    tag = TAGS[path] if path != "none" else "FELL"
+                    if path == "none":
+                        fellback += 1
+                        problems.append((label, "FELL", "fell back to dask (Frisky path NOT exercised)"))
+                    if match:
+                        ok += 1
+                    else:
+                        bad += 1
+                        problems.append((label, tag, why))
+                    flag = "OK  " if match else "BAD "
+                    print(f"  {flag} [{tag}] {label:<24} {why if not match else ''}")
 
-    fdask._frisky_compute_collections = orig
-    print(f"\n{ok} faithful, {bad} divergent, {err} errored; {fellback} fell back to dask (records path NOT exercised)")
+    print(
+        f"\n{ok} faithful, {bad} divergent, {err} errored; "
+        f"engaged: {spy.counts['expression']} expression, {spy.counts['records']} records; "
+        f"{fellback} fell back to dask (Frisky path NOT exercised)"
+    )
     for label, tag, why in problems:
         print(f"  >> {tag:<4} {label}: {why}")
 

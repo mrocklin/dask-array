@@ -1,15 +1,19 @@
-"""Coverage probe: which common dask-array operations take the Frisky records
-path end-to-end (vs. fall back to legacy dask because some node in the lowered
-tree lacks a `_frisky_layer`)?
+"""Coverage probe: which common dask-array operations does a transparent
+`dask.compute` hand to Frisky (scheduler-side expression submission, or
+client-side task records — both spied, see ``_spy.py``), and which fall back
+to stock dask?
 
-The records path is all-or-nothing: `dask.compute(op)` engages it only if EVERY
-expr in the lowered tree is covered. So `records=True` here means the whole
-operation — including all the layers it lowers to — is Rust-generated, and the
-result still matches numpy. `records=False` pinpoints an operation that hits an
-uncovered layer: the data-driven priority list for the remaining tail.
+Engagement is NOT all-or-nothing per layer: a lowered node without a native
+Rust layer rides the generic `GraphRecordsLayer` adapter (reusing the expr's
+Python `_layer()`), so a whole operation falls back only when
+`_check_frisky_supported` rejects its graph. A `dask` tag here therefore
+pinpoints an operation Frisky's paths decline outright; for the per-layer
+build-cost split (binary vs native-tuples vs adapter) use `tier_probe.py`.
+Every result is checked against numpy regardless of path, but note the
+summary line rolls up ENGAGEMENT only — scan the per-case lines for `BAD`
+value mismatches (the diff_* harnesses are the correctness sweeps).
 
-    PYTHONPATH=/Users/mrocklin/workspace/dask-array \
-      MATURIN_IMPORT_HOOK_ENABLED=0 \
+    PYTHONPATH=$PWD MATURIN_IMPORT_HOOK_ENABLED=0 \
       /Users/mrocklin/workspace/frisky/.venv/bin/python bench/coverage_probe.py
 """
 
@@ -17,7 +21,7 @@ import numpy as np
 
 import dask
 import dask_array as da
-import frisky.dask as fdask
+from _spy import TAGS, frisky_spy
 from frisky import Client, LocalCluster
 
 
@@ -135,47 +139,40 @@ def cases():
     yield ("fused -> reduction", lambda: da.sqrt(fa() * 2 + 1).sum().optimize(), np.sqrt(a * 2 + 1).sum())
     yield ("fused transpose chain", lambda: (fa().T * 2 + 1).optimize(), a.T * 2 + 1)
 
-    # --- known-uncovered (expect records=False, fall back) ---
-    yield ("cumsum [tail]", lambda: fa().cumsum(axis=0), a.cumsum(0))
-    yield ("argmin [tail]", lambda: fa().argmin(axis=0), a.argmin(0))
-    yield ("argmax ravel [tail]", lambda: fa().argmax(), np.array(a.argmax()))
+    # --- cumulative / arg reductions (natively covered now) ---
+    yield ("cumsum", lambda: fa().cumsum(axis=0), a.cumsum(0))
+    yield ("argmin", lambda: fa().argmin(axis=0), a.argmin(0))
+    yield ("argmax ravel", lambda: fa().argmax(), np.array(a.argmax()))
 
 
 def main():
-    calls = {"n": 0}
-    orig = fdask._frisky_compute_collections
-
-    def spy(client, collections):
-        out = orig(client, collections)
-        calls["n"] += out is not None
-        return out
-
-    fdask._frisky_compute_collections = spy
-
     covered, fellback, failed = [], [], []
-    with LocalCluster(n_workers=2) as cluster:
-        with Client(cluster.scheduler):
-            for label, build, expected in cases():
-                before = calls["n"]
-                try:
-                    (got,) = dask.compute(build())
-                    used = calls["n"] > before
-                    if expected is None:
-                        # random: no exact reference — just require finite output.
-                        ok = bool(np.all(np.isfinite(np.asarray(got))))
-                    else:
-                        ok = np.allclose(np.asarray(got), expected) and np.shape(got) == np.shape(expected)
-                except Exception as e:  # noqa: BLE001
-                    failed.append((label, f"{type(e).__name__}: {str(e)[:70]}"))
-                    print(f"  ERR  {label:<22} {type(e).__name__}: {str(e)[:60]}")
-                    continue
-                tag = "REC" if used else "dask"
-                (covered if used else fellback).append(label)
-                flag = "OK " if ok else "BAD"
-                print(f"  {flag} [{tag:>4}] {label:<22} match={ok}")
+    with frisky_spy() as spy:
+        with LocalCluster(n_workers=2) as cluster:
+            with Client(cluster.scheduler):
+                for label, build, expected in cases():
+                    before = spy.snapshot()
+                    try:
+                        (got,) = dask.compute(build())
+                        path = spy.path_since(before)
+                        if expected is None:
+                            # random: no exact reference — just require finite output.
+                            ok = bool(np.all(np.isfinite(np.asarray(got))))
+                        else:
+                            ok = np.allclose(np.asarray(got), expected) and np.shape(got) == np.shape(expected)
+                    except Exception as e:  # noqa: BLE001
+                        failed.append((label, f"{type(e).__name__}: {str(e)[:70]}"))
+                        print(f"  ERR  {label:<22} {type(e).__name__}: {str(e)[:60]}")
+                        continue
+                    (covered if path != "none" else fellback).append(label)
+                    flag = "OK " if ok else "BAD"
+                    print(f"  {flag} [{TAGS[path]}] {label:<22} match={ok}")
 
-    fdask._frisky_compute_collections = orig
-    print(f"\nrecords-path (fully Rust-generated): {len(covered)}/{len(covered) + len(fellback) + len(failed)}")
+    total = len(covered) + len(fellback) + len(failed)
+    print(
+        f"\nfrisky-handled: {len(covered)}/{total} "
+        f"({spy.counts['expression']} expression, {spy.counts['records']} records)"
+    )
     print("  fell back to dask:", ", ".join(fellback) or "(none)")
     if failed:
         print("  ERRORED:", ", ".join(l for l, _ in failed))

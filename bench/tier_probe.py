@@ -2,103 +2,34 @@
 
 For graph-build cost at scale the question isn't "which op lacks a Rust layer"
 (that's `tail_probe.py`), it's "how many *tasks* get emitted the cheap way?".
-Each lowered layer contributes its records one of four ways, in ascending
-client-side cost:
+The classifier is the production one — ``classify`` in
+``dask_array/_frisky/inventory.py`` (mirrors ``_walk_record_chunks``, covered
+by ``dask_array/tests/test_frisky_inventory.py``) — which sorts every lowered
+layer into four tiers of ascending client-side cost:
 
   - ``binary``        Rust ``to_records_chunk`` -> one ``bytes`` blob for the whole
                       layer. O(1) Python objects regardless of block count. The goal.
-  - ``native_tuples`` Rust layer exists but ``to_records_chunk`` declines, so
+  - ``native_tuples`` Rust layer exists but declines the binary chunk, so
                       ``to_task_records`` builds N Python tuples in Rust. O(tasks).
   - ``adapter``       no native layer -> ``GraphRecordsLayer`` runs the expr's
                       Python ``_layer()`` and translates it. O(tasks), most work.
   - ``fallback``      ``_check_frisky_supported`` rejects the whole graph -> stock
                       dask builds every task in Python. Worst case.
 
-Mirrors ``_walk_record_chunks`` (the production classifier in
-``dask_array/_frisky/collect.py``) so the numbers reflect what Frisky does.
 Cluster-free and fast: it lowers, walks, and attempts record *generation* (it
 never computes). Weighs each layer by its block count, so a single 1M-block
 Blockwise on ``native_tuples`` outranks 40 one-block tail nodes on ``adapter``.
+Drop your own expressions into ``corpus()``.
 
-    PYTHONPATH=/Users/mrocklin/workspace/dask-array \
-      MATURIN_IMPORT_HOOK_ENABLED=0 \
-      /Users/mrocklin/workspace/frisky/.venv/bin/python bench/tier_probe.py
+    uv run --extra test python bench/tier_probe.py
 """
 
-from __future__ import annotations
-
-import math
 from collections import Counter
 
 import numpy as np
 
 import dask_array as da
-
-BINARY, NATIVE_TUPLES, ADAPTER, FALLBACK = "binary", "native_tuples", "adapter", "fallback"
-
-
-def _numtasks(e):
-    try:
-        return math.prod(int(n) for n in e.numblocks) or 1
-    except Exception:
-        return 1
-
-
-def classify_node(e):
-    """The tier a single lowered node's records take, mirroring
-    ``_walk_record_chunks``: native binary chunk if the Rust backend emits one,
-    else native Python tuples, else the ``GraphRecordsLayer`` adapter. Does NOT
-    materialize the adapter (that's the expensive path we're measuring), so the
-    walk stays fast."""
-    make = getattr(e, "_frisky_layer", None)
-    layer = None
-    if make is not None:
-        try:
-            layer = make()
-        except (NotImplementedError, ImportError):
-            layer = None
-    if layer is None:
-        return ADAPTER
-    to_chunk = getattr(layer, "to_records_chunk", None)
-    if to_chunk is None:
-        return NATIVE_TUPLES
-    try:
-        to_chunk()
-        return BINARY
-    except NotImplementedError:
-        return NATIVE_TUPLES
-
-
-def classify(collection):
-    """Task-weighted tier breakdown for a whole collection: total tasks, tasks
-    per tier, and a per-(tier, class) task tally so the dominant non-binary
-    layers are named. If ``_check_frisky_supported`` rejects the graph, every
-    task is ``fallback``."""
-    try:
-        collection._check_frisky_supported()
-        rejected = None
-    except NotImplementedError as ex:
-        rejected = str(ex)[:40]
-
-    e0 = collection._lowered_expr
-    seen, stack = set(), [e0]
-    per_tier = Counter()
-    culprits = Counter()
-    while stack:
-        e = stack.pop()
-        if e._name in seen:
-            continue
-        seen.add(e._name)
-        tasks = _numtasks(e)
-        tier = FALLBACK if rejected else classify_node(e)
-        per_tier[tier] += tasks
-        if tier != BINARY:
-            culprits[(tier, type(e).__name__)] += tasks
-        try:
-            stack.extend(e.dependencies())
-        except Exception:
-            pass
-    return {"tiers": per_tier, "culprits": culprits, "rejected": rejected}
+from dask_array._frisky.inventory import BINARY, TIERS, classify
 
 
 def corpus():
@@ -162,7 +93,24 @@ def _flat(x):
     return x.ravel()
 
 
+def warn_if_native_build_stale():
+    """When ``dask_array._rust`` is missing or its build generation mismatches
+    the source, every ``_frisky_layer()`` raises ImportError and the whole
+    corpus silently classifies as ``adapter`` — a 0% binary readout that looks
+    like a regression but is just a stale build. Surface it up front."""
+    try:
+        import dask_array._frisky.base  # noqa: F401  (import runs the generation check)
+    except ImportError as exc:
+        print("!" * 76)
+        print("! WARNING: native extension unavailable — every layer below will read as")
+        print("! `adapter`; the binary% numbers are MEANINGLESS until you rebuild:")
+        print(f"!   {exc}")
+        print("!   fix: uv run --extra test maturin develop")
+        print("!" * 76)
+
+
 def main():
+    warn_if_native_build_stale()
     grand = Counter()
     grand_culprits = Counter()
     print(f"  {'op':<28} {'tasks':>9}  binary  ntuple  adapt  fallbk   status")
@@ -179,19 +127,18 @@ def main():
         grand.update(t)
         grand_culprits.update(r["culprits"])
         pct = lambda k: f"{100 * t.get(k, 0) / total:5.0f}%"
-        status = r["rejected"] or ("binary" if t.get(BINARY, 0) == total else "mixed")
-        print(
-            f"  {label:<28} {total:>9,}  {pct(BINARY)}  {pct(NATIVE_TUPLES)}  {pct(ADAPTER)}  {pct(FALLBACK)}   {status}"
-        )
+        rejected = next(iter(r["rejected"]), None)
+        status = rejected or ("binary" if t.get(BINARY, 0) == total else "mixed")
+        print(f"  {label:<28} {total:>9,}  {'  '.join(pct(k) for k in TIERS)}   {status[:40]}")
 
     gtotal = sum(grand.values()) or 1
     print(f"\n  === corpus rollup: {gtotal:,} tasks ===")
-    for tier in (BINARY, NATIVE_TUPLES, ADAPTER, FALLBACK):
+    for tier in TIERS:
         n = grand.get(tier, 0)
         print(f"    {tier:<14} {n:>12,}  {100 * n / gtotal:5.1f}%")
     print("\n  top non-binary layers by TASK volume (port these to move the needle):")
-    for (tier, cls), n in grand_culprits.most_common(15):
-        print(f"    {n:>12,}  {tier:<13} {cls}")
+    for (tier, cls, reason), n in grand_culprits.most_common(15):
+        print(f"    {n:>12,}  {tier:<13} {cls:<24} {reason}")
 
 
 if __name__ == "__main__":
