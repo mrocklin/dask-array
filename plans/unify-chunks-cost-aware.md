@@ -1,5 +1,12 @@
 # Cost-aware chunk unification
 
+Status: done 2026-07-05, kept as design record. Shipped as the `auto`
+unify-chunks policy: `_MERGE_COST_RATIO` + `moved_fraction` cost model in
+`dask_array/_expr.py` (`unify_chunks_expr`), config documented at the top of
+`dask_array/__init__.py`, behavior summarized in `.ai-docs/optimizations.md`
+("Rechunk Insertion"). The "Why" below is the design rationale; the opening
+description of the old fixed-direction rule is historical.
+
 When elemwise operands disagree on chunking, `unify_chunks_expr`
 (`dask_array/_expr.py`) picks a common layout and rechunks the operands to it.
 Today's rule (`coarse_blockdim`) merges nested chunkings up to the coarsest

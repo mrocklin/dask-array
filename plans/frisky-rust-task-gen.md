@@ -1,5 +1,19 @@
 # Rewrite dask graph generation in Rust
 
+Status: design record (executed; last status refresh 2026-06-21). The
+architecture, layer landscape, techniques, and recipe below remain the
+reference for this system, but the *status* content — layer counts, suite
+counts, probe scores — is a June 2026 snapshot and has drifted: `lib.rs` now
+registers 30 layer classes (not 22), the suite has grown well past the counts
+quoted below, and the binary records-chunk path
+(`plans/frisky-binary-records-gaps.md`) landed after this was written, making
+`dask_array/tests/test_frisky_protocol.py` + the CI `--scheduler=frisky` job
+the primary records-path validation (the `bench/` differentials are now ad-hoc
+deep checks). Terminology: what this document calls `PROTOCOL_REVISION` was
+since split into `NATIVE_BUILD_GENERATION` (local build-freshness token,
+synced between `_frisky/base.py` and Rust `lib.rs`) and
+`RECORDS_PROTOCOL_VERSION` (the Frisky-facing wire grammar, `common.rs`).
+
 We're migrating the Dask-Array project to use Rust for task graph generation,
 and for more efficient handing off between dask-array and frisky.
 
@@ -99,7 +113,7 @@ deps, aliases and per-block slices. Single-func/flat layers (blockwise,
 creation) are just the common case: one entry in `names`/`funcs`, every task a
 `Call{0}`.
 
-## Status — 22 Rust layers + generic tail adapter; completeness essentially done
+## Status (2026-06 snapshot; lib.rs registers 30 classes today) — Rust layers + generic tail adapter; completeness essentially done
 
 - **Coverage is broad and now mostly generic.** 22 native Rust layers cover the
   common composite ops on the fast path; the **`GraphRecordsLayer` adapter** (see
@@ -140,7 +154,9 @@ creation) are just the common case: one entry in `names`/`funcs`, every task a
   `binop` carry along the axis; four task-kinds/names in one layer), and **random**
   (`da.random.*` — a Python data-source layer like from_array; reuses the expr's
   `_task` and reads the flat record off each dask `Task`). ~22 of ~79
-  layer classes. PROTOCOL_REVISION 19.
+  layer classes at that point (30 registered in `lib.rs` today); the
+  build-freshness token (then named PROTOCOL_REVISION, now
+  NATIVE_BUILD_GENERATION) sat at 19.
 - dask-array suite green (**2808 pass**; the 3 masked-array failures are
   pre-existing — numpy-2.2.6 masked `.view('i1')` in dask's tokenize, fail at
   `main` too, pure numpy traceback with no layer code, fail standalone in a fresh
@@ -231,20 +247,29 @@ Mirror `blockwise.rs`/`creation.rs` and `_frisky/{blockwise,creation}.py`.
 
 1. **Rust layer** `crates/dask-array-python/src/<layer>.rs`: a `#[pyclass]`
    holding the layer's compact params; `#[new]` parses normalized params; a
-   private `expand()` builds the neutral form; `to_dask_graph`/`to_task_records`
-   delegate to `common::`. Register with `mod` + `add_class` in `lib.rs`.
+   private `expand()` builds the neutral form;
+   `to_dask_graph`/`to_task_records`/`to_records_chunk` delegate to `common::`
+   (the binary chunk is the goal — decline it only for constructs the grammar
+   can't express). Register with `mod` + `add_class` in `lib.rs`.
 2. **Python wrapper** `dask_array/_frisky/<layer>.py`: thin `Layer` subclass
-   building `self._rust = _rust.<Layer>(...)`; export in `_frisky/__init__.py`.
+   building `self._rust = _rust.<Layer>(...)`. Consumers import the submodule
+   directly (`from dask_array._frisky.<layer> import <Layer>`) — there is no
+   package-level export list to update.
 3. **Routing** on the expr (`_frisky_layer`
-   validate/normalize, NotImplementedError → fallback). Bump `PROTOCOL_REVISION`
-   (lib.rs + `_frisky/base.py`) if the Rust↔Python surface changes.
+   validate/normalize, NotImplementedError → fallback). Bump
+   `NATIVE_BUILD_GENERATION` (lib.rs + `_frisky/base.py`, kept in sync) after
+   any Rust change so a stale `.so` fails loudly; a grammar change additionally
+   bumps `RECORDS_PROTOCOL_VERSION` (`common.rs`, coordinated with Frisky).
 4. **Verify both paths.** A layer can have a correct `to_dask_graph` parity check
-   and still have a broken `to_task_records` (the two converters differ —
-   e.g. dask wraps nested deps in `_task_spec.List`, the records path uses a plain
-   list). So also run the records path with **distinct** data: `bench/diff_layers.py`
-   (records-vs-dask per key) is **required** for any layer that moves/slices/
-   concatenates blocks — `da.ones` can't catch a mis-assembly. Add a
-   `bench/roundtrip_layers.py` case for a real-Frisky check too.
+   and still have a broken `to_task_records`/`to_records_chunk` (the converters
+   differ — e.g. dask wraps nested deps in `_task_spec.List`, the records path
+   uses a plain list). Primary validation is the pytest suite: add a
+   `dask_array/tests/test_frisky_protocol.py` case pinning that the layer goes
+   binary (and matches the legacy graph), and run the full suite under
+   `--scheduler=frisky` (see docs/development.md). For layers that move/slice/
+   concatenate blocks, a distinct-data differential still catches mis-assembly
+   that `da.ones` can't — `bench/diff_layers.py` (records-vs-dask per key) and
+   `bench/roundtrip_layers.py` (real in-process Frisky) remain for that.
 
 **Two guiding principles (held up well in round 1):**
 - **Python plans, Rust expands.** Do a layer's one-time structural/planning math
@@ -474,9 +499,10 @@ Once the recipe is mechanical and the vocabulary is settled:
   downstream layer roundtrip on a real cluster; until then downstream layers can
   only be checked via the `diff_layers.py` local resolver.
 - One agent per layer (or small group); per-layer files keep contention low.
-  Shared files: `lib.rs` + `_frisky/__init__.py` are append-only; `common.rs`
-  `ArgSlot`/`Compute` is settled in round 1 (an agent needing to extend it
-  escalates to the lead).
+  The one shared file is `lib.rs` (append-only `mod` + `add_class` lines;
+  `_frisky/__init__.py` no longer carries an export list — wrappers are imported
+  by submodule); `common.rs` `ArgSlot`/`Compute` is settled in round 1 (an agent
+  needing to extend it escalates to the lead).
 - **Editable-install trap (confirmed in batch 1):** the venv resolves
   `dask_array` / `dask_array._rust` to the *main checkout*. Spawning agents with
   `isolation: worktree` did NOT isolate — all three agents' edits landed in the
@@ -484,17 +510,17 @@ Once the recipe is mechanical and the vocabulary is settled:
   *additive* (distinct new files + distinct routing files) and the shared-file
   appends (`lib.rs`, `__init__.py`, `diff_layers.py`) didn't lose updates this
   time. Do not rely on that. Safer patterns: (a) lead owns ALL shared-file edits
-  (`lib.rs` mod/add_class, `__init__.py`, `base.py` protocol) — agents only write
+  (`lib.rs` mod/add_class, `base.py` generation) — agents only write
   their own new files + routing and *report* the one-liners to add; or (b) give
   each agent a real separate clone+venv. Keep the batch small. Never `git stash`
   in an agent.
-- **Protocol bump is the lead's, once per batch.** Agents leave
-  `PROTOCOL_REVISION` alone (concurrent bumps collide); the lead bumps it once
-  after integrating the batch.
+- **Generation bump is the lead's, once per batch.** Agents leave
+  `NATIVE_BUILD_GENERATION` alone (concurrent bumps collide); the lead bumps it
+  once after integrating the batch.
 - **Per-agent template:** "Implement `<X>` per `plans/frisky-rust-task-gen.md`
   § Adding a layer; mirror blockwise/creation; your files
   `crates/.../<x>.rs`, `dask_array/_frisky/<x>.py`, routing in `<expr file>`;
-  append-only edits to `lib.rs`/`__init__.py`; validate conservatively
+  append-only edits to `lib.rs`; validate conservatively
   (NotImplementedError → fallback); verify the suite **and** the records path
   with distinct data (`diff_layers.py`) + a Frisky roundtrip; report the diff +
   test output. Deselect the two pre-existing masked-array flakes."

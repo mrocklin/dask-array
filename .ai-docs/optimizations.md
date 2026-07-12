@@ -37,7 +37,7 @@ The framework calls this recursively until no more changes occur.
 Remove no-op operations:
 
 ```python
-# Rechunk._simplify_down() in _rechunk.py:595
+# Rechunk._simplify_down() in _rechunk.py
 def _simplify_down(self):
     if not self.balance and self.chunks == self.array.chunks:
         return self.array  # No-op rechunk

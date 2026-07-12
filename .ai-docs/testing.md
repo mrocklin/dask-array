@@ -11,18 +11,23 @@ This guide covers testing patterns, TDD practices, and the critical `assert_eq` 
 
 ## Running Tests
 
+[docs/development.md](../docs/development.md) is the canonical home for test
+invocation (including the `--scheduler=frisky` variant). The short version —
+the extras matter (pytest itself lives in the `test` extra), and keeping them
+consistent between runs avoids `uv` environment rebuilds:
+
 ```bash
 # Run all tests
-uv run python -m pytest dask_array/tests/ -q
+uv run --extra test --extra complete --extra sparse python -m pytest dask_array/tests/ -q
 
 # Run specific test file
-uv run python -m pytest dask_array/tests/test_reductions.py -q
+uv run --extra test --extra complete --extra sparse python -m pytest dask_array/tests/test_reductions.py -q
 
 # Run in parallel (faster)
-uv run python -m pytest dask_array/tests/ -n auto
+uv run --extra test --extra complete --extra sparse python -m pytest dask_array/tests/ -q -n auto
 
 # Run specific test
-uv run python -m pytest dask_array/tests/test_collection.py::test_from_array -q
+uv run --extra test --extra complete --extra sparse python -m pytest dask_array/tests/test_collection.py::test_from_array -q
 ```
 
 ## Test Style
@@ -221,7 +226,7 @@ def test_slice_through_new_operation():
 ### 2. Run Test (Expect Failure)
 
 ```bash
-uv run python -m pytest dask_array/tests/test_new.py::test_slice_through_new_operation -v
+uv run --extra test --extra complete --extra sparse python -m pytest dask_array/tests/test_new.py::test_slice_through_new_operation -v
 ```
 
 ### 3. Implement Feature
@@ -231,7 +236,7 @@ Add `_accept_slice()` method to the new operation class.
 ### 4. Run Test (Expect Pass)
 
 ```bash
-uv run python -m pytest dask_array/tests/test_new.py::test_slice_through_new_operation -v
+uv run --extra test --extra complete --extra sparse python -m pytest dask_array/tests/test_new.py::test_slice_through_new_operation -v
 ```
 
 ### 5. Add Edge Cases

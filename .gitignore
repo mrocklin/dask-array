@@ -14,13 +14,20 @@ venv/
 
 # Testing
 .pytest_cache/
+.hypothesis/
 .coverage
 htmlcov/
+
+# Linting
+.ruff_cache/
 
 # IDE
 .idea/
 .vscode/
 *.swp
+
+# Claude Code (personal, machine-local settings)
+.claude/settings.local.json
 
 # Jupyter
 *.ipynb
@@ -31,7 +38,5 @@ htmlcov/
 
 # Rust
 /target/
-# Docker manylinux build artifacts (scripts/build-wheels.sh uses separate dirs)
-/target-linux-aarch64/
-/target-linux-x86_64/
 *.so
+*.pyd

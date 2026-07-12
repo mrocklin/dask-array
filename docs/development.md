@@ -47,6 +47,9 @@ AGENTS.md → "Frisky task-graph support" for the architecture.
 
 ## Testing
 
+This section is the canonical home for test invocation — AGENTS.md and
+`.ai-docs/testing.md` defer to it, so update commands here first.
+
 Default (dask scheduler):
 
 ```bash

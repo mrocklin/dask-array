@@ -1,5 +1,11 @@
 # Smooth dask_array + xarray Integration
 
+Status: external-dependency design record (last updated 2026-06-04). Phases 1-2
+live on branches in the sibling dask and xarray checkouts, not in released
+packages; this repo's side (phase 3, the chunk manager) is done. Kept as the
+cross-repo design reference until the upstream protocol work lands or is
+abandoned.
+
 ## Summary
 
 Use Dask as the owner of a generic composite-expression protocol, xarray as an

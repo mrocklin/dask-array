@@ -28,6 +28,7 @@ class FromArray(IO):
         "asarray",        # Force np.asarray on chunks
         "fancy",          # Source supports fancy indexing
         "_name_override", # Custom name prefix
+        "_name_is_exact", # Use _name_override verbatim as the name (pinned; opts out of singleton caching and lowering)
         "_region",        # Deferred slice region (internal)
     ]
 ```

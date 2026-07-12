@@ -1,5 +1,9 @@
 # Close the binary-records gaps (graph-build cost at scale)
 
+Status: complete 2026-07 (all slices landed), kept as design record. Slices 1,
+1b, and 1b-analytical are marked DONE inline below; Slices 2 and 3 also landed
+as proposed — see the notes on each.
+
 Follows on from `frisky-rust-task-gen.md`. That plan moved task-graph
 *generation* into Rust. This one is narrower and cost-driven: for very large
 graphs the client-side pain is building millions of task objects in Python, so
@@ -161,13 +165,24 @@ when the result is binary (the per-block loop), unless `_broadcast_spec`'s
 fast-path validates. Widening that fast-path cuts a hidden build cost on the
 happy path.
 
-### Slice 2 — ArgChunk binary
+### Slice 2 — ArgChunk binary — DONE
 
 argmax/argmin chunk step (`dask_array/reductions/_arg_reduction.py`), one task
-per block, always `native_tuples`. Verify the decline reason (compute shape or
-per-task kwarg) and port if small. Self-contained.
+per block, previously always `native_tuples`. Landed: `to_records_chunk` on the
+Rust `ArgChunkLayer` (`crates/dask-array-python/src/arg_chunk.rs`); pinned by
+`test_arg_reduction_chunk_uses_binary_records` in
+`dask_array/tests/test_frisky_protocol.py`.
 
-### Slice 3 — FromArray-getter binary (pervasive; needs frisky)
+### Slice 3 — FromArray-getter binary (pervasive; needs frisky) — DONE
+
+Landed as proposed: `FromArrayGetterLayer.to_records_chunk`
+(`crates/dask-array-python/src/from_array.rs`) emits the N getter tasks as one
+binary chunk, and the single source-array holder record rides alongside via
+`chunk_side_records` (`dask_array/_frisky/from_array.py`), which
+`_walk_record_chunks` appends to the plain-records side. The bare-name dep
+landed as a `Dep` with an empty coord (key `('original-<name>',)`) rather than
+a new SLOT tag; `RECORDS_PROTOCOL_VERSION` is now 3. Pinned by
+`test_from_array_getter_uses_binary_records_chunk`. Original proposal follows.
 
 Every lazy-IO read block is a Python tuple today: `FromArrayGetterLayer`
 (`crates/dask-array-python/src/from_array.rs`) implements `to_task_records` but
@@ -205,7 +220,7 @@ protocol change — keep them dask-array-only and land them first.
 
 - The adapter tail (setitem/histogram/diagonal/vindex) — `tier_probe` shows it's
   ~0.7% of tasks; irrelevant to build cost. Leave on the adapter.
-- The unknown-chunk fallback (`bool mask`, `unique`) — real but second-order
-  (~a few %); the guard in `_check_frisky_supported` is over-broad (records
-  generate fine with `nan` sizes, since structure is known), but it's a separate
-  track. Note it, don't bundle it here.
+- The unknown-chunk fallback (`bool mask`, `unique`) — since resolved on its own
+  track: the over-broad guard was removed and `_check_frisky_supported`
+  (`dask_array/_collection.py`) now accepts `nan` chunk sizes (records are keyed
+  by block coordinate; numblocks is known even when sizes are not).

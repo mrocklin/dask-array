@@ -373,8 +373,16 @@ This reduces computation by only processing the data needed for the final result
 | File | Purpose |
 |------|---------|
 | `reductions/_reduction.py` | `Reduction` and `PartialReduce` classes, `reduction()` function |
-| `reductions/_common.py` | `sum`, `mean`, `var`, `std`, `min`, `max`, nan-variants |
+| `reductions/_common.py` | The user-facing functions: `sum`, `mean`, `var`, `std`, `min`, `max`, nan-variants, plus `argmin`/`argmax` and `quantile`/`median` |
 | `reductions/_cumulative.py` | `cumsum`, `cumprod` |
-| `reductions/_arg_reduction.py` | `argmin`, `argmax` |
-| `reductions/_percentile.py` | `percentile`, `quantile`, `median` |
+| `reductions/_arg_reduction.py` | `ArgChunk` expression + `arg_reduction()` machinery backing argmin/argmax |
+| `reductions/_percentile.py` | `percentile`/`nanpercentile` and their chunk-merge machinery (`merge_percentiles`, t-digest); `quantile`/`median` do not use it — they rechunk the reduced axes to one chunk and apply numpy |
+| `reductions/_sliding_window.py` | `SlidingWindowReduction` / `MovingWindowReduction` (see Sliding-Window section) |
 | `_chunk.py` | Chunk-level numpy wrappers |
+
+Common reductions also pass `reduction_cls=<TypedSubclass>` to `reduction()`:
+each has a typed `Reduction` subclass (`Sum`, `Prod`, `Mean`, `Var`,
+`NanSum`, ... in `reductions/_reduction.py`) so the expression knows *which*
+reduction it is — the subclasses carry the per-reducer sliding-window kernels
+(`sliding_window_reducer`/`sliding_window_binop`/finalize) that the
+sliding-window fusion above dispatches on.

@@ -79,8 +79,6 @@ exclude = [
     "/docs/development.md",
     "/plans",
     "/target",
-    "/target-linux-aarch64",
-    "/target-linux-x86_64",
 ]
 
 # Native accelerator (opt-in). Build it into the source tree with
@@ -93,13 +91,12 @@ python-source = "."
 
 [tool.pytest.ini_options]
 testpaths = ["dask_array/tests"]
-addopts = "-v"
 markers = [
     "slow: Skipped unless --runslow passed",
     "gpu: Requires a GPU backend",
 ]
 filterwarnings = [
-    "error:::numpy[.*]",
+    'error:::numpy(\..*)?',
 ]
 
 [tool.ruff]
