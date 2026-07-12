@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import contextlib
 import itertools
 import pickle
@@ -1713,6 +1714,23 @@ def test_take_construction_cheap_on_huge_axis():
 
     assert result.shape == (20,)
     assert elapsed < 5.0, f"take construction took {elapsed:.1f}s (was O(axis length))"
+
+
+def test_take_construction_cheap_on_single_huge_chunk(monkeypatch):
+    import dask_array._shuffle as shuffle_module
+
+    def guarded_list(iterable=()):
+        if isinstance(iterable, range) and len(iterable) > 1000:
+            raise AssertionError("take should not materialize a full-chunk range")
+        return builtins.list(iterable)
+
+    monkeypatch.setattr(shuffle_module, "list", guarded_list, raising=False)
+
+    a = da.arange(1_000_000_000_000, chunks=(1_000_000_000_000,), dtype="int64")
+    result = da.take(a, np.arange(20, dtype="int64"), axis=0)
+
+    assert result.shape == (20,)
+    assert result.chunks == ((20,),)
 
 
 def test_take_dask_from_numpy():

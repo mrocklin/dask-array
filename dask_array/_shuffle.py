@@ -127,7 +127,7 @@ def _shuffle(x, indexer, axis, name):
         # check if the array is already shuffled the way we want
         ctr = 0
         for idx, c in zip(indexer, x.chunks[axis]):
-            if idx != list(range(ctr, ctr + c)):
+            if len(idx) != c or any(actual != expected for actual, expected in zip(idx, range(ctr, ctr + c))):
                 break
             ctr += c
         else:
