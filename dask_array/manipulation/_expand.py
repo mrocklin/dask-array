@@ -64,7 +64,7 @@ class ExpandDims(ArrayExpr):
 
     def _frisky_layer(self):
         """Describe this ExpandDims as an ExpandDimsLayer for direct task emission."""
-        from dask_array._frisky import ExpandDimsLayer
+        from dask_array._frisky.expand_dims import ExpandDimsLayer
 
         return ExpandDimsLayer(
             name=self._name,

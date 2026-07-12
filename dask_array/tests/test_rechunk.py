@@ -130,11 +130,7 @@ def test_rechunk_split_tasks_copy_small_selections():
 
     # Python-materialized graph path (_compute_rechunk).
     graph = dict(y.optimize().__dask_graph__())
-    split_tasks = [
-        task
-        for key, task in graph.items()
-        if "rechunk-split" in str(key) and hasattr(task, "func")
-    ]
+    split_tasks = [task for key, task in graph.items() if "rechunk-split" in str(key) and hasattr(task, "func")]
     assert split_tasks, "expected rechunk-split tasks in the graph"
     parent = np.ones((40, 40))
     for task in split_tasks:
@@ -143,10 +139,10 @@ def test_rechunk_split_tasks_copy_small_selections():
     assert piece.flags.owndata, "small split selection must be a copy"
 
     # Rust records path (TasksRechunk._frisky_layer -> RechunkLayer).
-    import dask_array._frisky as frisky_mod
+    import dask_array._frisky.rechunk as rechunk_mod
 
     captured = {}
-    real_layer = frisky_mod.RechunkLayer
+    real_layer = rechunk_mod.RechunkLayer
 
     class RecordingLayer:
         def __init__(self, getitem, concatenate3, steps, dtype):
@@ -156,14 +152,12 @@ def test_rechunk_split_tasks_copy_small_selections():
         def __getattr__(self, name):
             return getattr(self._wrapped, name)
 
-    frisky_mod.RechunkLayer = RecordingLayer
+    rechunk_mod.RechunkLayer = RecordingLayer
     try:
         expr = y.optimize().expr
-        rechunk_exprs = [
-            e for e in expr.walk() if type(e).__name__ == "TasksRechunk"
-        ]
+        rechunk_exprs = [e for e in expr.walk() if type(e).__name__ == "TasksRechunk"]
         assert rechunk_exprs, "expected a TasksRechunk node"
         rechunk_exprs[0]._frisky_layer()
     finally:
-        frisky_mod.RechunkLayer = real_layer
+        rechunk_mod.RechunkLayer = real_layer
     assert captured["getitem"] is chunk_getitem

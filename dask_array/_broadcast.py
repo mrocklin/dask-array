@@ -56,7 +56,7 @@ class BroadcastTo(ArrayExpr):
         Raises NotImplementedError for anything we don't fully handle; _layer
         catches that and falls back to the dask path.
         """
-        from dask_array._frisky import BroadcastLayer
+        from dask_array._frisky.broadcast import BroadcastLayer
 
         x = self.array
         try:

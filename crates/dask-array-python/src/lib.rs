@@ -56,7 +56,7 @@ mod stack;
 /// coordinate on is the binary records grammar (`common::RECORDS_PROTOCOL_VERSION`
 /// ↔ Frisky's `records_proto::CHUNK_GRAMMAR_VERSION`), which only moves when the
 /// chunk byte-grammar changes — not when a layer is added.
-const NATIVE_BUILD_GENERATION: usize = 42;
+const NATIVE_BUILD_GENERATION: usize = 43;
 
 #[pyfunction]
 fn native_build_generation() -> usize {
@@ -80,8 +80,15 @@ fn stamp_expected_nbytes<'py>(
 
 #[pymodule]
 fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // base.py's freshness check calls native_build_generation(); the module
+    // attribute exists for CI's build check (.github/workflows/ci.yml), which
+    // asserts both forms agree with base.py.
     m.add("NATIVE_BUILD_GENERATION", NATIVE_BUILD_GENERATION)?;
     m.add_function(wrap_pyfunction!(native_build_generation, m)?)?;
+    // The binary records grammar version (a Frisky-coordinated wire constant,
+    // unlike the local build generation above). Exported so tests assert
+    // against it instead of hardcoding the byte.
+    m.add("RECORDS_PROTOCOL_VERSION", common::RECORDS_PROTOCOL_VERSION)?;
     m.add_function(wrap_pyfunction!(stamp_expected_nbytes, m)?)?;
     m.add_class::<arange::ArangeLayer>()?;
     m.add_class::<arg_chunk::ArgChunkLayer>()?;

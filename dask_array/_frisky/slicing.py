@@ -10,9 +10,8 @@ from __future__ import annotations
 
 from numbers import Integral
 
-from dask_array import _rust
 from dask_array._chunk import getitem
-from dask_array._frisky.base import Layer
+from dask_array._frisky.base import Layer, _rust
 from dask_array.slicing._utils import _slice_1d
 
 

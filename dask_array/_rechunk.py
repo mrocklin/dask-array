@@ -3,7 +3,6 @@ from __future__ import annotations
 import heapq
 import itertools
 import math
-import operator
 from functools import reduce
 from itertools import chain, product
 from numbers import Integral
@@ -1173,7 +1172,7 @@ class TasksRechunk(Rechunk):
         """Describe this rechunk as a RechunkLayer. The intricate planning stays
         in Python (``plan_rechunk``); Rust does the per-block split/merge
         expansion. Unknown (nan) chunk sizes can't be expanded -> fall back."""
-        from dask_array._frisky import RechunkLayer
+        from dask_array._frisky.rechunk import RechunkLayer
 
         old_chunks = self.array.chunks
         new_chunks = self.chunks

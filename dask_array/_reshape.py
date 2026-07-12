@@ -443,7 +443,7 @@ class ReshapeLowered(ArrayExpr):
 
     def _frisky_layer(self):
         """Describe this lowered reshape as a ReshapeLayer for direct task emission."""
-        from dask_array._frisky import ReshapeLayer
+        from dask_array._frisky.reshape import ReshapeLayer
 
         return ReshapeLayer(
             name=self._name,
@@ -600,7 +600,7 @@ class ReshapeBlockwise(ArrayExpr):
 
     def _frisky_layer(self):
         """Describe this blockwise reshape as a ReshapeLayer for direct task emission."""
-        from dask_array._frisky import ReshapeLayer
+        from dask_array._frisky.reshape import ReshapeLayer
 
         return ReshapeLayer(
             name=self._name,

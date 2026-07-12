@@ -9,8 +9,7 @@ does the block-id math.
 
 from __future__ import annotations
 
-from dask_array import _rust
-from dask_array._frisky.base import Layer
+from dask_array._frisky.base import Layer, _rust
 
 
 class _BlockwiseBoundArgs:
@@ -43,10 +42,7 @@ class BlockwiseLayer(Layer):
         for pos, item in enumerate(args):
             if item[0] == "literal":
                 value = item[1]
-                fits_scalar = (
-                    (type(value) is int and -(1 << 63) <= value < (1 << 63))
-                    or type(value) is float
-                )
+                fits_scalar = (type(value) is int and -(1 << 63) <= value < (1 << 63)) or type(value) is float
                 if not fits_scalar:
                     bound[pos] = value
                     continue

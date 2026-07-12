@@ -14,8 +14,7 @@ from __future__ import annotations
 
 import math
 
-from dask_array import _rust
-from dask_array._frisky.base import Layer
+from dask_array._frisky.base import Layer, _rust
 
 
 def _stamp_args(chunks, total_itemsize):
@@ -30,7 +29,18 @@ def _stamp_args(chunks, total_itemsize):
 
 class SlidingWindowReductionLayer(Layer):
     def __init__(
-        self, name, x_name, reduce_func, total_func, axis, numblocks, keepdims, window_axis, plan, chunks, total_itemsize
+        self,
+        name,
+        x_name,
+        reduce_func,
+        total_func,
+        axis,
+        numblocks,
+        keepdims,
+        window_axis,
+        plan,
+        chunks,
+        total_itemsize,
     ):
         # plan rows per sliding-axis block: [out_len, band_offset, band_lo,
         # band_hi]; out_len 0 means the window trim consumed the block.

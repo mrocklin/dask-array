@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 
 import dask_array as da
-from dask_array._frisky import collect_task_records
+from dask_array._frisky.collect import collect_task_records
 from dask_array._test_utils import assert_eq
 
 

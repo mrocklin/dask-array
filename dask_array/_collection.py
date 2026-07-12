@@ -339,10 +339,12 @@ class Array(DaskMethodsMixin):
         (bytes) for the layers that support the fast Rust-to-Rust path, plus plain
         ``(key, func, args, kwargs, deps)`` records for the layers that don't
         (from_array source, generic fallback), plus ``chunk_groups`` — parallel to
-        ``chunks``, each the producing expr's ``(_name, metadata_json)`` so Frisky
-        groups a layer's tasks by their true identity and can display the layer's
-        shape/chunks/dtype. Frisky decodes both task sources and unions them under
-        one ``dask.order`` pass. Raises ``NotImplementedError`` if the graph can't
+        ``chunks``, each the producing expr's ``(_name, metadata_json,
+        upstream_group_names)``: its stable layer identity, an opaque JSON
+        description (shape/chunks/dtype/params) for display, and its child
+        layers' ``_name``s so Frisky can draw layer->layer data-flow edges.
+        Frisky decodes both task sources and unions them under one
+        ``dask.order`` pass. Raises ``NotImplementedError`` if the graph can't
         be represented at all (caller falls back to ``__frisky_graph__`` or the
         materialized-graph path). ``seen`` threads like ``__frisky_graph__``."""
         from dask_array._frisky.collect import collect_record_chunks

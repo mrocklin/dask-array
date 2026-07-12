@@ -17,6 +17,10 @@ from dask_array._overlap import overlap_internal
 
 
 def _decode_layer_chunk(chunk):
+    # Local import: chunks only exist when the Rust extension built them, but
+    # this module must import without it (the pure-Python CI lane).
+    from dask_array._rust import RECORDS_PROTOCOL_VERSION
+
     pos = 0
 
     def take(n):
@@ -67,7 +71,7 @@ def _decode_layer_chunk(chunk):
             return ("str", string())
         raise AssertionError(f"unknown slot tag {tag}")
 
-    assert u8() == 3  # RECORDS_PROTOCOL_VERSION (v3 adds expected_nbytes)
+    assert u8() == RECORDS_PROTOCOL_VERSION
     names = [string() for _ in range(u32())]
     dep_names = [string() for _ in range(u32())]
     for _ in range(u32()):
@@ -236,6 +240,95 @@ def test_frisky_graph_imports_frisky_modules():
 
     assert records
     assert "dask_array._frisky" in sys.modules
+
+
+def test_frisky_modules_route_rust_through_base_guard():
+    """Package code must get ``_rust`` via ``dask_array._frisky.base``
+    (``from dask_array._frisky.base import _rust``), whose import-time check
+    fails loudly on a stale native build. Any other import of the extension
+    bypasses that guard — from_array once had this hole, so a from_array-only
+    walk called a stale extension silently. AST-based so every import spelling
+    (aliased, parenthesized, relative) is caught; tests are exempt (they poke
+    the extension deliberately)."""
+    import ast
+    import pathlib
+
+    import dask_array
+
+    pkg_root = pathlib.Path(dask_array.__file__).parent
+
+    def rust_imports(path):
+        # The package a relative import resolves against: for __init__.py the
+        # module IS its package, for foo.py it's the containing package —
+        # either way, drop the last path component.
+        pkg_parts = ["dask_array", *path.relative_to(pkg_root).with_suffix("").parts[:-1]]
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.Import):
+                if any(a.name.split(".")[:2] == ["dask_array", "_rust"] for a in node.names):
+                    yield node
+            elif isinstance(node, ast.ImportFrom):
+                if node.level:
+                    anchor = pkg_parts[: len(pkg_parts) - (node.level - 1)]
+                    target = ".".join(anchor + (node.module.split(".") if node.module else []))
+                else:
+                    target = node.module or ""
+                if target.split(".")[:2] == ["dask_array", "_rust"] or (
+                    target == "dask_array" and any(a.name == "_rust" for a in node.names)
+                ):
+                    yield node
+
+    offenders = {}
+    for path in sorted(pkg_root.rglob("*.py")):
+        rel = path.relative_to(pkg_root)
+        if rel.parts[0] == "tests" or rel.as_posix() == "_frisky/base.py":
+            continue
+        lines = [f"line {n.lineno}" for n in rust_imports(path)]
+        if lines:
+            offenders[rel.as_posix()] = lines
+    assert not offenders, f"import _rust via dask_array._frisky.base, not directly: {offenders}"
+
+
+def test_stale_native_build_fails_loudly_on_from_array_import():
+    """A stale ``.so`` (Rust source changed, extension not rebuilt) must raise
+    on import of any layer module — here the from_array module, which once
+    bypassed the generation check in ``base`` — rather than silently calling
+    the stale extension with possibly-changed argument conventions."""
+    import subprocess
+
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+
+    code = (
+        "import sys\n"
+        "import dask_array._rust\n"
+        "# Precondition: the guard must not have run yet, or patching the\n"
+        "# generation below tests nothing (a failure here means dask_array\n"
+        "# started importing _frisky eagerly, losing laziness).\n"
+        "assert 'dask_array._frisky.base' not in sys.modules\n"
+        "dask_array._rust.native_build_generation = lambda: -1  # simulate a stale build\n"
+        "try:\n"
+        "    import dask_array._frisky.from_array\n"
+        "except ImportError as exc:\n"
+        "    assert 'native build generation' in str(exc), exc\n"
+        "else:\n"
+        "    raise SystemExit('stale native extension was not detected')\n"
+    )
+    proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr[-2000:]
+
+
+def test_records_protocol_version_pinned_to_frisky_grammar():
+    """``RECORDS_PROTOCOL_VERSION`` is a WIRE constant: it moves only in
+    lockstep with Frisky's ``records_proto::CHUNK_GRAMMAR_VERSION``, when the
+    chunk byte grammar itself changes (unlike the local build-freshness
+    generation, which moves on any Rust change). This pin forces a human to
+    acknowledge that cross-repo coordination on any bump."""
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+
+    from dask_array._rust import RECORDS_PROTOCOL_VERSION
+
+    assert RECORDS_PROTOCOL_VERSION == 3  # v3 added expected_nbytes
 
 
 def test_numeric_scalar_materialized_graph_uses_binary_alias_and_fused_chunk():

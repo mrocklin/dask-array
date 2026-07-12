@@ -9,8 +9,7 @@ layer serializes to a binary records chunk.
 
 from __future__ import annotations
 
-from dask_array import _rust
-from dask_array._frisky.base import Layer
+from dask_array._frisky.base import Layer, _rust
 
 
 class ExpandDimsLayer(Layer):

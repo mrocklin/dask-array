@@ -24,7 +24,7 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyString, PyTuple};
 
-use crate::common::{ArgSlot, Compute, Expanded, IndexElem, NeutralTask};
+use crate::common::{key_string, key_tuple, ArgSlot, Compute, Expanded, IndexElem, NeutralTask};
 
 /// Per-dimension chunk sizes and the region offset (start) applied to that
 /// dimension's slices. `offset` is 0 when there is no `_region`.
@@ -75,15 +75,16 @@ impl FromArrayGetterLayer {
     }
 
     /// The block index tuple `(start_i_0, ..., start_i_n)` in product order.
-    /// `numblocks` is the per-dim block count.
-    fn each_block(numblocks: &[usize]) -> impl Iterator<Item = Vec<usize>> + '_ {
+    /// `numblocks` is the per-dim block count. Coords are `u32` like everywhere
+    /// else in the records machinery (`NeutralTask::coord`).
+    fn each_block(numblocks: &[usize]) -> impl Iterator<Item = Vec<u32>> + '_ {
         let total: usize = numblocks.iter().product();
         let ndim = numblocks.len();
         (0..total).map(move |flat| {
-            let mut coord = vec![0usize; ndim];
+            let mut coord = vec![0u32; ndim];
             let mut rem = flat;
             for d in (0..ndim).rev() {
-                coord[d] = rem % numblocks[d];
+                coord[d] = (rem % numblocks[d]) as u32;
                 rem /= numblocks[d];
             }
             coord
@@ -241,8 +242,9 @@ impl FromArrayGetterLayer {
         for coord in Self::each_block(&numblocks) {
             let mut index: Vec<IndexElem> = Vec::with_capacity(self.dims.len());
             for (d, dim) in self.dims.iter().enumerate() {
-                let start: i64 = dim.offset + dim.sizes[..coord[d]].iter().sum::<i64>();
-                let stop = start + dim.sizes[coord[d]];
+                let i = coord[d] as usize;
+                let start: i64 = dim.offset + dim.sizes[..i].iter().sum::<i64>();
+                let stop = start + dim.sizes[i];
                 index.push(IndexElem::Slice {
                     start: Some(start),
                     stop: Some(stop),
@@ -252,7 +254,7 @@ impl FromArrayGetterLayer {
             tasks.push(NeutralTask {
                 nbytes: 0,
                 name_idx: 0,
-                coord: coord.iter().map(|&c| c as u32).collect(),
+                coord,
                 compute: Compute::Call { func_idx: 0 },
                 slots: vec![
                     ArgSlot::Dep {
@@ -275,36 +277,16 @@ impl FromArrayGetterLayer {
     }
 }
 
-/// `(name, *coord)` as a Python tuple key.
-fn key_tuple<'py>(py: Python<'py>, name: &str, coord: &[usize]) -> PyResult<Bound<'py, PyTuple>> {
-    let mut elems: Vec<Bound<'py, PyAny>> = Vec::with_capacity(coord.len() + 1);
-    elems.push(PyString::new(py, name).into_any());
-    for &c in coord {
-        elems.push(c.into_pyobject(py)?.into_any());
-    }
-    PyTuple::new(py, elems)
-}
-
-/// `str((name, *coord))`, matching Python's tuple repr (Frisky keys by string).
-fn key_string(name: &str, coord: &[usize]) -> String {
-    if coord.is_empty() {
-        format!("('{name}',)")
-    } else {
-        let inner: Vec<String> = coord.iter().map(|c| c.to_string()).collect();
-        format!("('{name}', {})", inner.join(", "))
-    }
-}
-
 /// The per-block index tuple `(dim_slices[0][coord[0]], ...)`.
 fn index_tuple<'py>(
     py: Python<'py>,
     dim_slices: &[Vec<Bound<'py, PyAny>>],
-    coord: &[usize],
+    coord: &[u32],
 ) -> PyResult<Bound<'py, PyTuple>> {
     let elems: Vec<Bound<'py, PyAny>> = coord
         .iter()
         .enumerate()
-        .map(|(d, &i)| dim_slices[d][i].clone())
+        .map(|(d, &i)| dim_slices[d][i as usize].clone())
         .collect();
     PyTuple::new(py, elems)
 }

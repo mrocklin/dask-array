@@ -11,8 +11,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from dask_array import _rust
-from dask_array._frisky.base import Layer
+from dask_array._frisky.base import Layer, _rust
 
 
 class SqueezeLayer(Layer):

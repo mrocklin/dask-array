@@ -16,8 +16,7 @@ from functools import partial
 
 import numpy as np
 
-from dask_array import _rust
-from dask_array._frisky.base import Layer
+from dask_array._frisky.base import Layer, _rust
 from dask_array.reductions._cumulative import _prefixscan_combine, _prefixscan_first
 
 
@@ -39,9 +38,7 @@ def _infer_itemsize_stamps(func, preop, binop, axis, input_dtype, output_dtype, 
         batch = preop(sample, axis=axis, keepdims=True)
         scan = binop(batch, batch)
         first = _prefixscan_first(func, sample, axis=axis, dtype=output_dtype)
-        combine = _prefixscan_combine(
-            func, binop, batch, sample, axis=axis, dtype=output_dtype
-        )
+        combine = _prefixscan_combine(func, binop, batch, sample, axis=axis, dtype=output_dtype)
         return (
             _itemsize(batch),
             _consistent_itemsize("scan", scan, binop(scan, batch), binop(batch, scan)),
@@ -53,9 +50,7 @@ def _infer_itemsize_stamps(func, preop, binop, axis, input_dtype, output_dtype, 
             ),
         )
     except Exception as exc:
-        raise NotImplementedError(
-            "could not infer Blelloch task dtypes for expected_nbytes"
-        ) from exc
+        raise NotImplementedError("could not infer Blelloch task dtypes for expected_nbytes") from exc
 
 
 class CumReductionBlellochLayer(Layer):

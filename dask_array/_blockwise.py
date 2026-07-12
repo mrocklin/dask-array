@@ -378,10 +378,11 @@ class Blockwise(ArrayExpr):
         Raises NotImplementedError for anything outside the same-grid /
         broadcast elementwise subset (contractions via concatenate, adjusted
         chunks that change counts, ArrayBlockwiseDep, or dask collections
-        embedded in args/kwargs); _layer catches that and falls back to
-        dask.blockwise.
+        embedded in args/kwargs); the records walk (_frisky/collect.py) catches
+        that and falls back to the generic GraphRecordsLayer over this
+        expression's legacy _layer() graph.
         """
-        from dask_array._frisky import BlockwiseLayer
+        from dask_array._frisky.blockwise import BlockwiseLayer
 
         # concatenate=True is a contraction: each output block depends on a LIST
         # of input blocks along the contracted axis, concatenated before func —

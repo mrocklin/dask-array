@@ -48,7 +48,7 @@ class BroadcastTrick(ArrayExpr):
         return result
 
     def _frisky_layer(self):
-        from dask_array._frisky import CreationLayer
+        from dask_array._frisky.creation import CreationLayer
 
         try:
             chunks = [[int(s) for s in c] for c in self.chunks]

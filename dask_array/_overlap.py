@@ -128,7 +128,7 @@ class OverlapInternal(ArrayExpr):
         return ensure_dict(graph)
 
     def _frisky_layer(self):
-        from dask_array._frisky import OverlapLayer
+        from dask_array._frisky.overlap import OverlapLayer
 
         return OverlapLayer(
             self._name,

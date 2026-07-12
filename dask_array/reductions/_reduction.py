@@ -986,7 +986,7 @@ class PartialReduce(ArrayExpr):
         """Describe this PartialReduce as a PartialReduceLayer for direct task
         emission. The Rust layer reproduces dask's lol_tuples nesting, so the
         structure matches ``_layer`` exactly."""
-        from dask_array._frisky import PartialReduceLayer
+        from dask_array._frisky.reduction import PartialReduceLayer
 
         x = self.array
         steps = [self.split_every.get(i, 0) for i in range(x.ndim)]

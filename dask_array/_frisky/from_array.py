@@ -1,12 +1,13 @@
-"""from_array data-source layer.
+"""from_array data-source layers.
 
 Unlike the computed layers (blockwise, reduction, rechunk, ...), from_array is a
-data *source*: each output block is a slice of the backing array. There is no
-per-task computation for Rust to accelerate — the work is numpy slicing, which is
-inherently Python — so this layer is plain Python, not a Rust layer. (I/O /
-source layers are the seam where records originate in Python.)
+data *source*: each output block is a slice of the backing array, so the
+per-task work is Python slicing either way. ``FromArrayGetterLayer`` (array-like
+sources) is Rust-backed only for the O(n_tasks) *expansion*;
+``FromArrayLayer`` (plain ndarrays, eager slices) is pure Python. (I/O / source
+layers are the seam where records originate in Python.)
 
-It mirrors dask's plain-ndarray path: eager per-block slices as data nodes
+``FromArrayLayer`` mirrors dask's plain-ndarray path: eager per-block slices as data nodes
 (`{(name, *idx): array[slc]}`; a single block is copied). The dask path emits the
 bare values; the records path wraps each in a `toolz.identity` task, since Frisky
 submits tasks, not bare data nodes. Any plain ndarray without a lock is handled
@@ -22,11 +23,11 @@ from itertools import product
 
 import toolz
 
-from dask_array import _rust
 from dask_array._core_utils import slices_from_chunks
+from dask_array._frisky.base import Layer, _rust
 
 
-class FromArrayGetterLayer:
+class FromArrayGetterLayer(Layer):
     """Array-like (zarr / h5py / icechunk / any slicing target) from_array.
 
     The native counterpart to dask's ``graph_from_arraylike(inline_array=...)``:
@@ -38,7 +39,10 @@ class FromArrayGetterLayer:
     plain-ndarray case stays on the eager-slice ``FromArrayLayer`` below.
 
     Faithful only for ``getitem`` = ``getter``/``getter_nofancy`` and no lock;
-    a user-supplied custom getter or a lock falls back upstream.
+    a user-supplied custom getter or a lock falls back upstream. The binary
+    ``to_records_chunk`` declines (``NotImplementedError``, so the walk uses
+    ``to_task_records``) for the inline-array and 5-arg-getter cases, which a
+    shared chunk can't express.
     """
 
     def __init__(self, name, array, chunks, getitem, asarray, inline_array, region):
@@ -57,17 +61,6 @@ class FromArrayGetterLayer:
         self._name = name
         self._array = array
         self._rust = _rust.FromArrayGetterLayer(name, array, getitem, dims, bool(inline_array), extra_args)
-
-    def to_dask_graph(self):
-        return self._rust.to_dask_graph()
-
-    def to_task_records(self):
-        return self._rust.to_task_records()
-
-    def to_records_chunk(self):
-        # Binary chunk for the N getter tasks (raises NotImplementedError for the
-        # inline / 5-arg-getter cases, so the walk falls back to to_task_records).
-        return self._rust.to_records_chunk()
 
     def chunk_side_records(self):
         """The source array as a single plain "holder" record, emitted alongside

@@ -14,8 +14,7 @@ from __future__ import annotations
 from functools import partial
 
 from dask_array import _chunk as chunk
-from dask_array import _rust
-from dask_array._frisky.base import Layer
+from dask_array._frisky.base import Layer, _rust
 
 
 class CoarsenLayer(Layer):

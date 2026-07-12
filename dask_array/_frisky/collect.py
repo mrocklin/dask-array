@@ -198,7 +198,9 @@ def _stamp_expected_nbytes(chunk, e):
     if meta is None:
         return chunk
 
-    from dask_array import _rust
+    # Via base, not dask_array._rust directly, so the build-freshness check in
+    # base.py is guaranteed to have run before we call into the extension.
+    from dask_array._frisky.base import _rust
 
     return _rust.stamp_expected_nbytes(chunk, *meta)
 
@@ -234,7 +236,8 @@ def _walk_record_chunks(roots, seen, chunks, records, chunk_groups):
     LAYER chunk (``to_records_chunk``, the fast Rust-to-Rust path) appended to
     ``chunks``, OR plain ``(key, func, args, kwargs, deps)`` records appended to
     ``records`` (the from_array source, generic ``GraphRecordsLayer`` fallback, or
-    any layer whose Rust backend doesn't yet emit chunks). Frisky decodes both and
+    any layer that declines the binary chunk — by design for literal-carrying
+    layers; see ``Layer.to_records_chunk``). Frisky decodes both and
     unions them under one ``dask.order`` pass, so a graph need not be all-or-nothing
     to get the speedup on the layers that support it.
 

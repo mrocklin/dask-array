@@ -8,9 +8,8 @@ block — an alias to the block (single output) or ``chunk.getitem(block, i)``
 
 from __future__ import annotations
 
-from dask_array import _rust
 from dask_array._chunk import getitem as chunk_getitem
-from dask_array._frisky.base import Layer
+from dask_array._frisky.base import Layer, _rust
 
 
 class GUfuncLeafLayer(Layer):

@@ -66,7 +66,7 @@ class Stack(ArrayExpr):
 
     def _frisky_layer(self):
         """Describe this Stack as a StackLayer for direct task emission."""
-        from dask_array._frisky import StackLayer
+        from dask_array._frisky.stack import StackLayer
 
         axis = self.axis
         out_numblocks = tuple(len(c) for c in self.chunks)

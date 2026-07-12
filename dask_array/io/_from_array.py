@@ -231,7 +231,7 @@ class FromArray(IO):
         A lock, or a user-supplied custom `getitem`, falls back to the dask path
         in `_layer` (the getter layer is faithful only for the default
         getter/getter_nofancy)."""
-        from dask_array._frisky import FromArrayGetterLayer, FromArrayLayer
+        from dask_array._frisky.from_array import FromArrayGetterLayer, FromArrayLayer
 
         if self.operand("lock"):
             raise NotImplementedError("from_array: lock is not supported on the records path")

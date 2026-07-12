@@ -1,11 +1,17 @@
 """Base ``Layer``: a thin wrapper over the Rust layer.
 
-The expansion and both converters live in Rust (``dask_array._rust``): each layer
+The expansion and the converters live in Rust (``dask_array._rust``): each layer
 expands (pure Rust) into a neutral form held as a Rust ``Vec``, and the generic
-Rust converters turn that into either a dask task graph (useful for focused
-parity checks) or the compact form the Frisky client serializes
-(``to_task_records``). Ordinary ``Expr._layer`` implementations stay on the
+Rust converters turn that into a dask task graph (useful for focused parity
+checks), the plain record tuples the Frisky client serializes
+(``to_task_records``), or one binary records LAYER chunk
+(``to_records_chunk``). Ordinary ``Expr._layer`` implementations stay on the
 Python Dask path; these layers are only used by the Frisky graph protocol.
+
+Every module that touches ``dask_array._rust`` must import it from here
+(``from dask_array._frisky.base import _rust``) so the build-freshness check
+below is guaranteed to have run first — enforced by a source-scan test in
+``test_frisky_protocol.py``.
 """
 
 from __future__ import annotations
@@ -20,7 +26,7 @@ from dask_array import _rust
 # any Rust change. This is a LOCAL build-freshness check, not a wire protocol;
 # the Frisky-coordinated version is the records grammar (common::RECORDS_PROTOCOL
 # _VERSION), which a plain layer addition does not touch.
-_NATIVE_BUILD_GENERATION = 42
+_NATIVE_BUILD_GENERATION = 43
 if _rust.native_build_generation() != _NATIVE_BUILD_GENERATION:
     raise ImportError(
         f"dask_array._rust is at native build generation {_rust.native_build_generation()}, "
@@ -42,10 +48,12 @@ class Layer:
     def to_records_chunk(self):
         """One binary records LAYER chunk (the protocol shared with Frisky's
         ``records_proto``), letting Frisky build task specs without materializing
-        Python record tuples. Raises ``NotImplementedError`` when this layer's
-        Rust backend hasn't implemented it (the walk then uses
-        ``to_task_records``), or when the layer holds a construct the binary
-        grammar can't express (a literal arg, per-task kwargs)."""
+        Python record tuples. Raises ``NotImplementedError`` when the layer can't
+        ride the binary grammar — a by-design decline, not a porting gap:
+        arbitrary Python literals (e.g. ``FromMapLayer``'s per-block values,
+        whose Rust backend has no ``to_records_chunk`` at all), per-task kwargs,
+        or an encoding capacity limit (>255-element coords/slots). The walk then
+        falls back to ``to_task_records`` for just this layer."""
         fn = getattr(self._rust, "to_records_chunk", None)
         if fn is None:
             raise NotImplementedError

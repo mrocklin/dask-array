@@ -12,9 +12,8 @@ from __future__ import annotations
 
 from functools import partial
 
-from dask_array import _rust
 from dask_array._chunk import arange as _arange
-from dask_array._frisky.base import Layer
+from dask_array._frisky.base import Layer, _rust
 
 
 def _arange_bound(blockstart, blockstop, size, *, step, dtype, like):

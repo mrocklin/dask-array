@@ -13,9 +13,8 @@ from __future__ import annotations
 
 from functools import partial
 
-from dask_array import _rust
 from dask_array._chunk import linspace as _linspace
-from dask_array._frisky.base import Layer
+from dask_array._frisky.base import Layer, _rust
 
 
 class LinspaceLayer(Layer):

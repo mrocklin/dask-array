@@ -145,7 +145,7 @@ pub struct Expanded<'a> {
 }
 
 /// Build the Python tuple key `(name, *coord)`.
-fn key_tuple<'py>(py: Python<'py>, name: &str, coord: &[u32]) -> PyResult<Bound<'py, PyTuple>> {
+pub fn key_tuple<'py>(py: Python<'py>, name: &str, coord: &[u32]) -> PyResult<Bound<'py, PyTuple>> {
     let mut elems: Vec<Bound<'py, PyAny>> = Vec::with_capacity(coord.len() + 1);
     elems.push(PyString::new(py, name).into_any());
     for c in coord {
@@ -156,7 +156,7 @@ fn key_tuple<'py>(py: Python<'py>, name: &str, coord: &[u32]) -> PyResult<Bound<
 
 /// Build the key string `str((name, *coord))`, matching Python's tuple repr so
 /// it agrees with keys/deps produced elsewhere (Frisky keys tasks by string).
-fn key_string(name: &str, coord: &[u32]) -> String {
+pub fn key_string(name: &str, coord: &[u32]) -> String {
     if coord.is_empty() {
         format!("('{name}',)")
     } else {

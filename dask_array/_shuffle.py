@@ -338,7 +338,7 @@ class Shuffle(ArrayExpr):
         )
 
     def _frisky_layer(self):
-        from dask_array._frisky import ShuffleLayer
+        from dask_array._frisky.shuffle import ShuffleLayer
 
         # The shuffle plan needs concrete chunk sizes (it maps element indices to
         # blocks). Unknown (nan) sizes can't be planned — decline so the walk
