@@ -33,10 +33,7 @@ def _count(expr, cls_name):
 def _mergeable_concat(n_blocks=5, shape=(8, 4)):
     # n single-self-contained-call from_delayed leaves -> each normalizes to a
     # 1-block FromMap, and concatenate merges them into one FromMap.
-    days = [
-        da.from_delayed(delayed(lambda i=i: np.zeros(shape))(), shape=shape, dtype="f8")
-        for i in range(n_blocks)
-    ]
+    days = [da.from_delayed(delayed(lambda i=i: np.zeros(shape))(), shape=shape, dtype="f8") for i in range(n_blocks)]
     return da.concatenate(days, axis=0)
 
 
@@ -45,12 +42,7 @@ def test_map_overlap_exposes_input_as_dependency():
     deps = y.expr.dependencies()
     assert deps, "MapOverlap must expose its input array as a dependency"
     # no Expr child may be hidden inside a collection operand
-    hidden = sum(
-        isinstance(it, Expr)
-        for o in y.expr.operands
-        if isinstance(o, (list, tuple))
-        for it in o
-    )
+    hidden = sum(isinstance(it, Expr) for o in y.expr.operands if isinstance(o, (list, tuple)) for it in o)
     assert hidden == 0
 
 

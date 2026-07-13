@@ -926,8 +926,7 @@ class FusedBlockwiseLayer:
             ais = by_key.get(ck)
             if ais and isinstance(task, Task):
                 args_fp = tuple(
-                    hole if i in ais else FusedBlockwiseLayer._canon_arg(a, {})
-                    for i, a in enumerate(task.args)
+                    hole if i in ais else FusedBlockwiseLayer._canon_arg(a, {}) for i, a in enumerate(task.args)
                 )
                 holed[ck] = (id(task.func), args_fp, FusedBlockwiseLayer._canon_arg(task.kwargs, {}))
             else:
