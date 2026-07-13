@@ -75,6 +75,9 @@ class ArrayExpr(SingletonExpr):
     # Whether this expression can be fused with other blockwise operations.
     # Override to True in subclasses that support fusion (Blockwise, Random, etc.)
     _is_blockwise_fusable = False
+    # Source and view-like nodes may pass along slices that touch every block;
+    # computed nodes keep those slices above them unless a whole block is culled.
+    _allow_no_cull_slice_pushdown = False
 
     def _all_input_block_ids(self, block_id):
         """Return all input block_ids for dependencies.
@@ -393,6 +396,38 @@ class ArrayExpr(SingletonExpr):
             return None
         return result
 
+    def _slice_pushdown_culls_block(self, slice_expr):
+        """Whether a slice omits at least one whole output block of this node."""
+        from numbers import Integral
+
+        from dask_array.slicing._utils import _slice_1d
+
+        try:
+            shape = self.shape
+            chunks = self.chunks
+        except (NotImplementedError, TypeError, ValueError):
+            return True
+
+        index = tuple(slice_expr.index)
+        if len(index) > self.ndim:
+            return True
+
+        full_index = index + (slice(None),) * (self.ndim - len(index))
+        for size, axis_chunks, idx in zip(shape, chunks, full_index):
+            if idx is None or not isinstance(idx, (slice, Integral)):
+                return True
+            if isinstance(idx, slice) and idx.step not in (None, 1):
+                return True
+            try:
+                if math.isnan(size) or any(math.isnan(c) for c in axis_chunks):
+                    return True
+                block_slices = _slice_1d(size, axis_chunks, idx)
+            except (TypeError, ValueError, IndexError):
+                return True
+            if len(block_slices) < len(axis_chunks):
+                return True
+        return False
+
     def _slice_pushdown(self, slice_expr, dependents):
         """Push ``slice_expr`` into ``self`` unless another parent needs
         ``self`` in full.
@@ -407,6 +442,12 @@ class ArrayExpr(SingletonExpr):
 
         others = self._other_dependents(slice_expr, dependents)
         if any(not isinstance(node, SliceSlicesIntegers) for node in others.values()):
+            return None
+        if (
+            not self._allow_no_cull_slice_pushdown
+            and self.dependencies()
+            and not self._slice_pushdown_culls_block(slice_expr)
+        ):
             return None
         result = self._accept_slice(slice_expr)
         result = self._preserve_grid_contract(slice_expr, result, dependents)

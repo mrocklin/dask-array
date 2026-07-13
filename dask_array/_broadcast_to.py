@@ -16,6 +16,7 @@ class BroadcastTo(ArrayExpr):
 
     _parameters = ["array", "_shape", "_chunks", "_meta_override"]
     _defaults = {"_meta_override": None}
+    _allow_no_cull_slice_pushdown = True
 
     @functools.cached_property
     def _name(self):

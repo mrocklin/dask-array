@@ -13,6 +13,7 @@ from dask_array._utils import meta_from_array
 
 class Transpose(Blockwise):
     _parameters = ["array", "axes"]
+    _allow_no_cull_slice_pushdown = True
     func = staticmethod(np.transpose)
     align_arrays = False
     adjust_chunks = None

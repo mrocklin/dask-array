@@ -85,6 +85,51 @@ def test_slice_through_elemwise():
     assert_eq(y, ((arr + 1) * 2)[0:2, 0:2])
 
 
+@pytest.mark.parametrize(
+    "name,make_array",
+    [
+        ("Elemwise", lambda x: x + 1),
+        ("Stack", lambda x: da.stack([x, x + 1], axis=1)),
+        ("Sum", lambda x: da.stack([x, x + 1], axis=1).sum(axis=1)),
+    ],
+)
+def test_no_cull_slice_stays_above_computed_nodes(name, make_array):
+    arr = np.arange(40.0)
+    x = da.from_array(arr, chunks=(8,), asarray=False)
+
+    result = make_array(x)
+    opt = result[7:39].expr.simplify()
+
+    assert isinstance(opt, SliceSlicesIntegers)
+    assert type(opt.array).__name__ == name
+    assert opt.array.chunks[0] == (8, 8, 8, 8, 8)
+    assert_eq(result[7:39], result.compute()[7:39])
+
+
+def test_block_culling_slice_still_pushes_through_computed_node():
+    arr = np.arange(40.0)
+    x = da.from_array(arr, chunks=(8,), asarray=False)
+
+    opt = (x + 1)[8:40].expr.simplify()
+
+    assert type(opt).__name__ == "Elemwise"
+    assert opt.chunks == ((8, 8, 8, 8),)
+    from_arrays = [node for node in opt.walk() if isinstance(node, FromArray)]
+    assert len(from_arrays) == 1
+    assert from_arrays[0].chunks == ((8, 8, 8, 8),)
+
+
+def test_no_cull_slice_still_pushes_into_from_array():
+    arr = np.arange(40.0)
+    x = da.from_array(arr, chunks=(8,), asarray=False)
+
+    opt = x[7:39].expr.simplify()
+
+    assert isinstance(opt, FromArray)
+    assert opt.chunks == ((1, 8, 8, 8, 7),)
+    assert_eq(x[7:39], arr[7:39])
+
+
 def test_nested_slices():
     """Nested slices fuse."""
     arr = np.arange(100).reshape(10, 10)

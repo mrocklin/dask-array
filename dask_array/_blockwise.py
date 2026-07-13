@@ -730,7 +730,7 @@ class Blockwise(ArrayExpr):
                 if first is None:
                     return None  # Out of bounds
                 block_ranges.append((first, last))
-                output_adjustments.append(pos_idx - cumsum[first])
+                output_adjustments.append(int(pos_idx - cumsum[first]))
             elif isinstance(idx, slice):
                 start, stop, step = idx.indices(dim_size)
                 if step != 1:
@@ -742,10 +742,10 @@ class Blockwise(ArrayExpr):
                     output_adjustments.append(slice(0, 0))
                 else:
                     block_ranges.append((first, last))
-                    coarse_start = cumsum[first]
-                    coarse_end = cumsum[last + 1]
-                    adj_start = start - coarse_start
-                    adj_stop = stop - coarse_start
+                    coarse_start = int(cumsum[first])
+                    coarse_end = int(cumsum[last + 1])
+                    adj_start = int(start - coarse_start)
+                    adj_stop = int(stop - coarse_start)
                     if adj_start == 0 and adj_stop == coarse_end - coarse_start:
                         output_adjustments.append(slice(None))
                     else:

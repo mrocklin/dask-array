@@ -23,7 +23,7 @@ def add_neighbors(x):
 
 
 # =============================================================================
-# Case 1: Slice on non-overlap axis (should push through)
+# Case 1: Slice on non-overlap axis
 # =============================================================================
 
 
@@ -58,17 +58,39 @@ def test_slice_through_overlap_middle_slice():
 
 
 def test_slice_through_overlap_correctness():
-    """Verify slice through overlap produces correct values."""
+    """A no-cull slice stays above overlap but still computes correct values."""
+    from dask_array._overlap import MapOverlap
+    from dask_array.slicing._basic import SliceSlicesIntegers
+
     arr = np.arange(64).reshape((8, 8)).astype(float)
     x = da.from_array(arr, chunks=(4, 4))
 
     result = x.map_overlap(add_neighbors, depth={0: 2, 1: 0}, boundary="none")
 
-    # Slice on axis 1
     sliced = result[:, 2:6]
-    expected = x[:, 2:6].map_overlap(add_neighbors, depth={0: 2, 1: 0}, boundary="none")
+    opt = sliced.expr.simplify()
 
-    assert sliced.expr.simplify()._name == expected.expr.simplify()._name
+    assert isinstance(opt, SliceSlicesIntegers)
+    assert isinstance(opt.array, MapOverlap)
+    assert_eq(sliced, result.compute()[:, 2:6])
+
+
+def test_no_cull_slice_stays_above_overlap_over_computed_input():
+    from dask_array._blockwise import Elemwise
+    from dask_array._overlap import MapOverlap
+    from dask_array.slicing._basic import SliceSlicesIntegers
+
+    arr = np.arange(40.0)
+    x = da.from_array(arr, chunks=(8,), asarray=False)
+
+    result = (x + 1).map_overlap(lambda block: block, depth={0: 1}, boundary="none")
+    opt = result[7:39].expr.simplify()
+
+    assert isinstance(opt, SliceSlicesIntegers)
+    assert isinstance(opt.array, MapOverlap)
+    assert isinstance(opt.array.array, Elemwise)
+    assert opt.array.array.chunks == ((8, 8, 8, 8, 8),)
+    assert_eq(result[7:39], result.compute()[7:39])
 
 
 # =============================================================================
@@ -177,18 +199,22 @@ def test_slice_through_1d_overlap_on_3d_array():
 
 
 def test_slice_through_asymmetric_overlap():
-    """Slice through asymmetric overlap (different left/right depth)."""
+    """A no-cull slice stays above asymmetric overlap."""
+    from dask_array._overlap import MapOverlap
+    from dask_array.slicing._basic import SliceSlicesIntegers
+
     arr = np.arange(64).reshape((8, 8)).astype(float)
     x = da.from_array(arr, chunks=(4, 4))
 
     # Asymmetric overlap on axis 0
     result = x.map_overlap(add_neighbors, depth={0: (2, 1), 1: 0}, boundary="none")
 
-    # Slice on axis 1 (no overlap)
     sliced = result[:, 2:6]
-    expected = x[:, 2:6].map_overlap(add_neighbors, depth={0: (2, 1), 1: 0}, boundary="none")
+    opt = sliced.expr.simplify()
 
-    assert sliced.expr.simplify()._name == expected.expr.simplify()._name
+    assert isinstance(opt, SliceSlicesIntegers)
+    assert isinstance(opt.array, MapOverlap)
+    assert_eq(sliced, result.compute()[:, 2:6])
 
 
 def test_slice_on_asymmetric_overlap_axis_pushes():

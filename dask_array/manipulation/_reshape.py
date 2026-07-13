@@ -270,6 +270,7 @@ class Reshape(ArrayExpr):
     """
 
     _parameters = ["array", "_shape"]
+    _allow_no_cull_slice_pushdown = True
 
     def __new__(cls, *args, **kwargs):
         # Call parent __new__ to create the instance

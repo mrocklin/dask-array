@@ -27,6 +27,7 @@ class ExpandDims(ArrayExpr):
     """
 
     _parameters = ["array", "axes"]
+    _allow_no_cull_slice_pushdown = True
 
     @functools.cached_property
     def _meta(self):

@@ -85,6 +85,8 @@ class FromArray(IO):
     }
     # FromArray reads static data, so rechunk can be pushed in safely
     _can_rechunk_pushdown = True
+    # Region reads should absorb slices even when every source block is touched.
+    _allow_no_cull_slice_pushdown = True
 
     def __new__(cls, *args, _determ_token=None, **kwargs):
         exact_index = cls._parameters.index("_name_is_exact")

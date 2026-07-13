@@ -895,6 +895,31 @@ def test_rechunk_composes_with_offgrid_slice():
     assert_eq(y, (a + 0)[7:39], scheduler="synchronous")
 
 
+def test_rechunk_composes_no_cull_slice_blocked_above_elemwise():
+    """A no-cull off-grid slice should wait for the writer-side rechunk.
+
+    Pushing ``[7:39]`` through the elemwise producer would not drop any source
+    block from five 8-row blocks; it would only re-grid the producer to
+    ``(1, 8, 8, 8, 7)``.  Leaving the slice above the computed node lets the
+    final rechunk compose it into the original grid frame instead.
+    """
+    from dask_array._rechunk import TasksRechunk
+    from dask_array.slicing._basic import SliceSlicesIntegers
+
+    a = np.random.RandomState(0).rand(40)
+    x = da.from_array(a, chunks=(8,), asarray=False) + 0
+    y = x[7:39].rechunk((8,))
+
+    opt = y.expr.optimize(fuse=False)
+
+    assert isinstance(opt, SliceSlicesIntegers)
+    inner = opt.array
+    assert isinstance(inner, TasksRechunk)
+    assert inner.chunks == ((7, 8, 8, 8, 8, 1),)
+    assert opt.chunks == ((8, 8, 8, 8),)
+    assert_eq(y, (a + 0)[7:39], scheduler="synchronous")
+
+
 def test_rechunk_slice_composition_does_not_push_into_shared_leaf():
     """The composed inner rechunk must not absorb into a shared FromArray.
 

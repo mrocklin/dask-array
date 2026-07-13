@@ -343,7 +343,7 @@ class MapOverlap(ArrayExpr):
                 # Compute trim slice to get original result
                 trim_start = start - expanded_start
                 trim_stop = trim_start + (stop - start)
-                output_trim_index.append(slice(trim_start, trim_stop))
+                output_trim_index.append(slice(None if trim_start == 0 else trim_start, trim_stop))
                 needs_trim = True
 
         # Slice all input arrays

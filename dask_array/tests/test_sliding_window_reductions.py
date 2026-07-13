@@ -358,7 +358,7 @@ def test_sliding_window_var_explicit_integer_dtype(reduction):
     assert_eq(result, expected)
 
 
-def test_sliding_window_reduction_slice_pushdown_preserves_reducer_kind():
+def test_sliding_window_reduction_slice_keeps_native_rewrite():
     data = (1 + (np.arange(96 * 8, dtype=np.float64) % 13) / 10).reshape(96, 8)
     data[::7, :] = np.nan
     x = da.from_array(data, chunks=(24, 4))
@@ -367,7 +367,8 @@ def test_sliding_window_reduction_slice_pushdown_preserves_reducer_kind():
     result = da.nanvar(windowed, axis=-1)[:10]
     expected = np.nanvar(np.lib.stride_tricks.sliding_window_view(data, 72, axis=0), axis=-1)[:10]
 
-    assert result.expr.simplify().sliding_window_reducer == "nanvar"
+    optimized = result.expr.simplify()
+    assert not _contains_sliding_window_view(optimized)
     assert_eq(result, expected)
 
 
