@@ -199,12 +199,172 @@ def test_manager_is_chunked_array():
 
 
 def test_manager_is_chunked_array_legacy_dask():
-    """Test that manager rejects legacy dask.array.Array."""
+    """The manager claims legacy dask.array.Array (and converts it on use).
+
+    In the adverse entry-point discovery order the first chunked xarray op in
+    a process yields a legacy-backed object; since our manager then owns the
+    "dask" registry slot, it must recognise that object or it becomes
+    permanently unusable through xarray.
+    """
     import dask.array as legacy_da
 
     manager = DaskArrayExprManager()
     arr = legacy_da.ones((10, 10), chunks=(5, 5))
-    assert not manager.is_chunked_array(arr)
+    assert manager.is_chunked_array(arr)
+
+
+def test_manager_is_chunked_array_does_not_import_legacy_dask():
+    """The legacy check is a passive sys.modules probe, never an import.
+
+    The subprocess forces entry-point discovery to see only our entry point,
+    so nothing else (the built-in DaskManager's __init__ imports dask.array
+    when instantiated) loads legacy dask.array and the not-imported
+    assertions cannot go vacuous.
+    """
+    import subprocess
+    import sys
+
+    code = (
+        "import sys\n"
+        "import numpy as np\n"
+        "import importlib.metadata\n"
+        "import xarray.namedarray.parallelcompat as pc\n"
+        "_eps = [ep for ep in importlib.metadata.entry_points(group='xarray.chunkmanagers')"
+        " if ep.value.startswith('dask_array')]\n"
+        "assert _eps\n"
+        "pc.entry_points = lambda group: _eps\n"
+        "import dask_array as da\n"
+        "from dask_array._xarray import DaskArrayExprManager\n"
+        "manager = DaskArrayExprManager()\n"
+        "assert 'dask.array' not in sys.modules\n"
+        "assert manager.is_chunked_array(da.ones((4,), chunks=2))\n"
+        "assert not manager.is_chunked_array(np.ones((4,)))\n"
+        "assert 'dask.array' not in sys.modules, 'is_chunked_array imported legacy dask.array'\n"
+    )
+    proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+
+
+@pytest.mark.parametrize(
+    "op",
+    [
+        "rechunk",
+        "compute",
+        "persist",
+        "reduction",
+        "scan",
+        "apply_gufunc",
+        "map_blocks",
+        "blockwise",
+        "unify_chunks",
+        "store",
+        "shuffle",
+    ],
+)
+def test_manager_methods_convert_legacy_dask(op):
+    """Every array-accepting manager method converts legacy inputs.
+
+    Dropping a conversion is not always loud -- e.g. map_blocks on an
+    unconverted legacy array used to succeed with silently corrupt metadata --
+    so each method is pinned to produce a dask_array-backed result (or plain
+    numpy for compute/store) with correct values.
+    """
+    import dask.array as legacy_da
+
+    manager = DaskArrayExprManager()
+    x = np.arange(6.0)
+    legacy = legacy_da.from_array(x, chunks=3)
+
+    if op == "rechunk":
+        result = manager.rechunk(legacy, (2,))
+        assert result.chunks == ((2, 2, 2),)
+        expected = x
+    elif op == "compute":
+        (computed,) = manager.compute(legacy)
+        assert type(computed) is np.ndarray
+        assert computed.dtype == legacy.dtype
+        np.testing.assert_array_equal(computed, x)
+        return
+    elif op == "persist":
+        (result,) = manager.persist(legacy)
+        assert result.chunks == legacy.chunks
+        expected = x
+    elif op == "reduction":
+        result = manager.reduction(legacy, np.sum, aggregate_func=np.sum, axis=0, dtype="f8", keepdims=True)
+        expected = x.sum(keepdims=True)
+    elif op == "scan":
+        result = manager.scan(np.cumsum, np.add, 0, legacy, axis=0, dtype="f8")
+        expected = np.cumsum(x)
+    elif op == "apply_gufunc":
+        result = manager.apply_gufunc(np.add, "(),()->()", legacy, 1.0, output_dtypes=["f8"])
+        expected = x + 1
+    elif op == "map_blocks":
+        result = manager.map_blocks(lambda b: b + 1, legacy, dtype="f8")
+        assert result.shape == (6,)
+        expected = x + 1
+    elif op == "blockwise":
+        result = manager.blockwise(np.add, "i", legacy, "i", 1.0, None, dtype="f8")
+        expected = x + 1
+    elif op == "unify_chunks":
+        _, (result,) = manager.unify_chunks(legacy, "i")
+        expected = x
+    elif op == "store":
+        target = np.zeros_like(x)
+        manager.store([legacy], [target])
+        np.testing.assert_array_equal(target, x)
+        return
+    elif op == "shuffle":
+        result = manager.shuffle(legacy, [[3, 1], [2, 0, 4, 5]], 0, "auto")
+        expected = x[[3, 1, 2, 0, 4, 5]]
+
+    assert isinstance(result, da.Array), type(result)
+    assert result.dtype == legacy.dtype
+    np.testing.assert_array_equal(result.compute(), expected)
+
+
+def test_manager_map_blocks_multi_output_converts_legacy_dask():
+    """Legacy inputs to map_blocks_multi_output convert like the siblings."""
+    import dask.array as legacy_da
+
+    manager = DaskArrayExprManager()
+    x = np.arange(8.0).reshape(4, 2)
+    legacy = legacy_da.from_array(x, chunks=(2, 2))
+
+    (double,) = manager.map_blocks_multi_output(
+        lambda spec, block: {"double": block * 2},
+        [legacy],
+        [("x", "y")],
+        ("x", "y"),
+        {(i, 0): None for i in range(2)},
+        [{"key": "double", "indices": ("x", "y"), "chunks": legacy.chunks, "dtype": legacy.dtype}],
+        token="convert-legacy",
+    )
+
+    assert isinstance(double, da.Array)
+    np.testing.assert_array_equal(double.compute(), x * 2)
+
+
+def test_manager_conversion_never_computes():
+    """Conversion is graph-wrapping: a legacy graph whose tasks raise still
+    converts; the tasks only run at compute time."""
+    import dask.array as legacy_da
+
+    def boom(_):
+        raise RuntimeError("task ran during conversion")
+
+    manager = DaskArrayExprManager()
+    legacy = legacy_da.map_blocks(
+        boom,
+        legacy_da.arange(6, chunks=3),
+        dtype="f8",
+        meta=np.array((), dtype="f8"),
+    )
+
+    converted = manager.rechunk(legacy, (6,))
+    assert isinstance(converted, da.Array)
+    assert converted.dtype == np.dtype("f8")
+    with pytest.raises(RuntimeError, match="task ran during conversion"):
+        converted.compute()
 
 
 def test_manager_chunks():

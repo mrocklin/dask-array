@@ -41,16 +41,30 @@ un-pinned dict, whose "dask" slot goes to whichever entry point enumerates
 *last* -- a per-environment installation detail.  If dask_array was imported
 before xarray and the built-in entry point enumerates last, the single
 chunked op that triggered discovery returns a legacy dask.array-backed
-result, and touching that object through xarray again raises TypeError
-(the now-pinned registry has no manager claiming legacy arrays).  Every
-later chunked op engages dask_array.  Calling
+result.  That object stays usable: the pinned manager also claims legacy
+``dask.array`` collections (``is_chunked_array`` -- both the classic and
+the query-planning flavor) and converts them at its array-accepting entry
+points (``_asexpr`` -- graph-wrapping via ``from_graph``, never compute),
+so everything routed through the manager succeeds: compute/load return
+correct numpy values, and ``.chunk``/persist/store/manager-dispatched
+computation yield dask_array-backed results with the same values, dtype,
+and chunks.  Operations xarray applies to the duck array directly -- plain
+arithmetic, most reductions -- keep producing legacy-backed results until
+one of those converting points; correct throughout, just unoptimized.
+Every later chunked op engages dask_array directly.  One limitation:
+combining a legacy-backed object with an expression-backed one in a single
+operation still fails -- a TypeError from the operator layer for plain
+arithmetic, xarray's "Mixing chunked array types" on manager-dispatched
+paths -- so ``.chunk()`` the legacy-backed object first.  Calling
 ``dask_array.xarray.register()`` before first use eliminates the window in
 every import order.
 """
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from itertools import product
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -58,6 +72,43 @@ from xarray.namedarray.parallelcompat import ChunkManagerEntrypoint
 
 if TYPE_CHECKING:
     from dask_array._collection import Array
+
+
+def _is_legacy_dask_array(data: Any) -> bool:
+    """Whether ``data`` is a legacy ``dask.array`` collection.
+
+    Matched structurally -- ``type(data)`` named ``Array`` in a ``dask.array``
+    module, the same shape ``from_array`` uses to reject these inputs -- so
+    both the classic ``dask.array.core.Array`` and the query-planning
+    ``dask.array._array_expr`` collection are recognised.  Deliberately avoids
+    importing ``dask.array``: its import registers global tokenize/dispatch
+    handlers as a side effect.  A legacy instance can only exist if the
+    package is already in ``sys.modules``, so the passive gate is sufficient
+    (and keeps the common no-legacy case a single dict lookup).
+    """
+    if "dask.array" not in sys.modules:
+        return False
+    t = type(data)
+    return t.__name__ == "Array" and t.__module__.startswith("dask.array")
+
+
+def _asexpr(data: Any) -> Any:
+    """Convert a legacy ``dask.array`` collection to a ``dask_array.Array``.
+
+    Graph-wrapping, never compute: the legacy array's task graph, meta,
+    chunks, and output keys are wrapped via ``from_graph`` (the sanctioned
+    external-graph interop), preserving values, dtype, and chunk structure
+    exactly.  Anything that is not a legacy dask array passes through
+    unchanged, so this can be applied blindly at every array-accepting
+    manager entry point.
+    """
+    if not _is_legacy_dask_array(data):
+        return data
+
+    from dask_array.core import from_graph
+
+    keys = [(data.name, *block_id) for block_id in product(*map(range, data.numblocks))]
+    return from_graph(dict(data.__dask_graph__()), data._meta, data.chunks, keys, data.name)
 
 
 class DaskArrayExprManager(ChunkManagerEntrypoint["Array"]):
@@ -77,10 +128,29 @@ class DaskArrayExprManager(ChunkManagerEntrypoint["Array"]):
         self.array_cls = Array
 
     def is_chunked_array(self, data: Any) -> bool:
-        return isinstance(data, self.array_cls)
+        # Also claim legacy dask.array collections: in the adverse discovery
+        # order (module docstring, "Known window") the first chunked op in a
+        # process produces a legacy-backed xarray object, and once our manager
+        # pins the "dask" registry slot no other manager would recognise it.
+        # Claiming it here -- and converting via _asexpr at the array-accepting
+        # entry points below -- keeps that object fully usable.
+        return isinstance(data, self.array_cls) or _is_legacy_dask_array(data)
 
     def chunks(self, data: Array) -> tuple[tuple[int, ...], ...]:
+        # Legacy dask arrays expose .chunks with identical semantics, and the
+        # result is plain tuples -- nothing to convert.
         return data.chunks
+
+    def rechunk(
+        self,
+        data: Array,
+        chunks: Any,
+        **kwargs: Any,
+    ) -> Array:
+        # The inherited implementation calls data.rechunk(...), which on a
+        # legacy dask array would return another legacy array. Convert first
+        # so the result is expression-backed.
+        return super().rechunk(_asexpr(data), chunks, **kwargs)
 
     def normalize_chunks(
         self,
@@ -141,8 +211,11 @@ class DaskArrayExprManager(ChunkManagerEntrypoint["Array"]):
         would run unfused and derive drifting keys; the materialized
         expression is fused and keeps the collection's names, so persist
         round-trips a Dataset's variables under their original names.
+
+        Legacy dask arrays are converted first (``_asexpr``) so they pin and
+        compute like any other expression-backed array.
         """
-        return tuple(d._pinned() if isinstance(d, self.array_cls) else d for d in data)
+        return tuple(d._pinned() if isinstance(d, self.array_cls) else d for d in map(_asexpr, data))
 
     @property
     def array_api(self) -> Any:
@@ -163,7 +236,7 @@ class DaskArrayExprManager(ChunkManagerEntrypoint["Array"]):
         from dask_array.reductions._reduction import reduction
 
         return reduction(
-            arr,
+            _asexpr(arr),
             chunk=func,
             combine=combine_func,
             aggregate=aggregate_func,
@@ -188,7 +261,7 @@ class DaskArrayExprManager(ChunkManagerEntrypoint["Array"]):
             func,
             binop,
             ident,
-            arr,
+            _asexpr(arr),
             axis=axis,
             dtype=dtype,
             **kwargs,
@@ -214,7 +287,7 @@ class DaskArrayExprManager(ChunkManagerEntrypoint["Array"]):
         return apply_gufunc(
             func,
             signature,
-            *args,
+            *map(_asexpr, args),
             axes=axes,
             axis=axis,
             keepdims=keepdims,
@@ -240,7 +313,7 @@ class DaskArrayExprManager(ChunkManagerEntrypoint["Array"]):
 
         return map_blocks(
             func,
-            *args,
+            *map(_asexpr, args),
             dtype=dtype,
             chunks=chunks,
             drop_axis=drop_axis,
@@ -261,9 +334,16 @@ class DaskArrayExprManager(ChunkManagerEntrypoint["Array"]):
     ) -> list[Array]:
         from dask_array._map_blocks import map_blocks_multi_output
 
+        # Inputs are expressions; convert any legacy dask array like the
+        # sibling methods do and unwrap the resulting collection to its expr.
+        converted = []
+        for x in input_exprs:
+            x = _asexpr(x)
+            converted.append(x.expr if isinstance(x, self.array_cls) else x)
+
         return map_blocks_multi_output(
             func,
-            input_exprs,
+            converted,
             input_indices,
             shared_indices,
             block_specs,
@@ -288,10 +368,11 @@ class DaskArrayExprManager(ChunkManagerEntrypoint["Array"]):
     ) -> Array:
         from dask_array import blockwise
 
+        # args alternate (array, index) pairs; _asexpr passes indices through.
         return blockwise(
             func,
             out_ind,
-            *args,
+            *map(_asexpr, args),
             name=name,
             token=token,
             dtype=dtype,
@@ -310,7 +391,8 @@ class DaskArrayExprManager(ChunkManagerEntrypoint["Array"]):
     ) -> tuple[dict[str, tuple[tuple[int, ...], ...]], list[Array]]:
         from dask_array import unify_chunks
 
-        return unify_chunks(*args, **kwargs)
+        # args alternate (array, index) pairs; _asexpr passes indices through.
+        return unify_chunks(*map(_asexpr, args), **kwargs)
 
     def store(
         self,
@@ -320,6 +402,10 @@ class DaskArrayExprManager(ChunkManagerEntrypoint["Array"]):
     ) -> Any:
         from dask_array import store
 
+        if isinstance(sources, (list, tuple)):
+            sources = type(sources)(map(_asexpr, sources))
+        else:
+            sources = _asexpr(sources)
         return store(
             sources=sources,
             targets=targets,
@@ -339,7 +425,7 @@ class DaskArrayExprManager(ChunkManagerEntrypoint["Array"]):
             chunks = "auto"
         if chunks != "auto":
             raise NotImplementedError("Only chunks='auto' is supported at present.")
-        return shuffle(x, indexer, axis, chunks="auto")
+        return shuffle(_asexpr(x), indexer, axis, chunks="auto")
 
     def get_auto_chunk_size(self) -> int:
         from dask import config as dask_config

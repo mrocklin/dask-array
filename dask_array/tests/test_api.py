@@ -164,13 +164,14 @@ assert ds["a"].sum().compute().item() == 45.0
     subprocess.run([sys.executable, "-c", code], check=True)
 
 
-def test_xarray_discovery_adverse_order_degrades_first_op_then_pins():
+def test_xarray_discovery_adverse_order_first_op_converts_on_next_use():
     # dask_array imported first (no register()), and the built-in "dask"
-    # entry point enumerates last: the documented degradation is that the
-    # single op that triggered discovery gets legacy dask.array-backed data
-    # (and that object then fails through xarray, since the pinned registry
-    # no longer claims legacy arrays), while every later chunked op engages
-    # dask_array. register() before first use avoids this entirely.
+    # entry point enumerates last: the single op that triggered discovery
+    # gets legacy dask.array-backed data (it ran against the in-flight,
+    # un-pinned registry). The pinned manager claims that legacy-backed
+    # object and converts it on its next use -- values, dtype, and chunks
+    # intact -- and every later chunked op engages dask_array directly.
+    # register() before first use avoids even the legacy-backed first result.
     pytest.importorskip("xarray")
     code = f"""
 import dask_array as da
@@ -188,19 +189,89 @@ from dask_array._xarray import DaskArrayExprManager
 from xarray.namedarray.parallelcompat import list_chunkmanagers
 
 assert isinstance(list_chunkmanagers()["dask"], DaskArrayExprManager)
-try:
-    ds["a"].compute()
-except TypeError:
-    pass
-else:
-    raise AssertionError("expected TypeError: no manager claims the legacy result")
 
-# ...so every later chunked op engages dask_array.
+# ...and the pinned manager claims the legacy-backed object: the next uses
+# convert it instead of failing.
+np.testing.assert_array_equal(ds["a"].compute().values, np.arange(10.0))
+
+rechunked = ds.chunk({{"x": 2}})
+assert isinstance(rechunked["a"].data, da.Array), type(rechunked["a"].data)
+assert rechunked["a"].data.chunks == ((2, 2, 2, 2, 2),)
+np.testing.assert_array_equal(rechunked["a"].compute().values, np.arange(10.0))
+
+# Plain arithmetic never consults the chunk manager (xarray applies the
+# operator to the duck array directly), so it stays legacy-backed -- but
+# compute on the result still converts and returns correct values.
+total = (ds["a"] + 1).sum()
+assert total.compute().item() == 55.0
+
+# Every later chunked op engages dask_array directly.
 ds2 = xr.Dataset({{"a": ("x", np.arange(10.0))}}).chunk({{"x": 5}})
 assert isinstance(ds2["a"].data, da.Array), type(ds2["a"].data)
 assert ds2["a"].sum().compute().item() == 45.0
 """
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_xarray_discovery_adverse_order_query_planning_converts():
+    # Same adverse window, but with dask's array query-planning enabled: the
+    # built-in DaskManager then produces dask.array._array_expr collections,
+    # which are NOT dask.array.core.Array instances. The structural claim in
+    # is_chunked_array must recognise that flavor too, and conversion must
+    # round-trip it.
+    pytest.importorskip("xarray")
+    code = f"""
+import dask
+
+dask.config.set({{"array.query-planning": True}})
+
+import dask_array as da
+import numpy as np
+import xarray as xr
+{_FORCE_ENTRY_POINT_ORDER.format(order="_ours + _builtin")}
+ds = xr.Dataset({{"a": ("x", np.arange(10.0))}}).chunk({{"x": 5}})
+
+# The first op is backed by the query-planning legacy collection.
+assert not isinstance(ds["a"].data, da.Array), type(ds["a"].data)
+assert type(ds["a"].data).__module__.startswith("dask.array"), type(ds["a"].data)
+
+np.testing.assert_array_equal(ds["a"].compute().values, np.arange(10.0))
+
+rechunked = ds.chunk({{"x": 2}})
+assert isinstance(rechunked["a"].data, da.Array), type(rechunked["a"].data)
+assert rechunked["a"].data.chunks == ((2, 2, 2, 2, 2),)
+np.testing.assert_array_equal(rechunked["a"].compute().values, np.arange(10.0))
+"""
+    subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_xarray_chunkmanager_cache_clear_keeps_objects_usable():
+    # xarray test suites call list_chunkmanagers.cache_clear(). Re-enumeration
+    # then hands the "dask" slot to whichever entry point enumerates last (our
+    # module is already imported, so its pin does not rerun). Existing chunked
+    # objects must stay usable under either winner: ours claims-and-converts
+    # both array types; the built-in claims our arrays as duck dask arrays
+    # and computes/rechunks them through their own dask-collection interface.
+    pytest.importorskip("xarray")
+    for order in ("_builtin + _ours", "_ours + _builtin"):
+        code = f"""
+import numpy as np
+import xarray as xr
+{_FORCE_ENTRY_POINT_ORDER.format(order=order)}
+import dask_array as da
+
+da.xarray.register()
+ds = xr.Dataset({{"a": ("x", np.arange(10.0))}}).chunk({{"x": 5}})
+assert isinstance(ds["a"].data, da.Array), type(ds["a"].data)
+
+from xarray.namedarray.parallelcompat import list_chunkmanagers
+
+list_chunkmanagers.cache_clear()
+
+np.testing.assert_array_equal(ds["a"].compute().values, np.arange(10.0))
+assert ds.chunk({{"x": 2}})["a"].data.chunks == ((2, 2, 2, 2, 2),)
+"""
+        subprocess.run([sys.executable, "-c", code], check=True)
 
 
 def test_import_after_xarray_pins_manager_eagerly():
