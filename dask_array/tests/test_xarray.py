@@ -69,7 +69,14 @@ def test_xarray_rolling_full_time_chunk_avoids_padding_rechunk():
         dims=("time", "latitude", "longitude"),
     )
 
-    result = (x > 0).rolling(time=72, min_periods=72).sum().max("time")
+    # Force the construct/sliding_window_view path this test guards. With
+    # bottleneck installed, xarray's rolling sum takes _bottleneck_reduce
+    # instead, whose dask branch (dask_rolling_wrapper, all xarray versions)
+    # declares the output dtype via dtypes.maybe_promote — object for bool
+    # input, for legacy dask just as for us (legacy merely hides it by
+    # computing float64 blocks that contradict its declared meta).
+    with xr.set_options(use_bottleneck=False):
+        result = (x > 0).rolling(time=72, min_periods=72).sum().max("time")
     optimized = result.data.expr.optimize()
 
     assert not _contains_expr_type(optimized, TasksRechunk)
