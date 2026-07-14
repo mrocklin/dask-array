@@ -191,10 +191,15 @@ def get_pad_shapes_chunks(array, pad_width, axes, mode):
     for d in axes:
         for i in range(2):
             pad_shapes[i][d] = pad_width[d][i]
-            if mode != "constant" or pad_width[d][i] == 0:
+            # For constant mode we split the pad region into chunks matching the
+            # array's block size along this axis. When the array is empty along
+            # this axis that block size is 0, so fall back to a single chunk
+            # holding the whole pad rather than dividing by zero.
+            block = max(pad_chunks[i][d])
+            if mode != "constant" or pad_width[d][i] == 0 or block == 0:
                 pad_chunks[i][d] = (pad_width[d][i],)
             else:
-                pad_chunks[i][d] = normalize_chunks((max(pad_chunks[i][d]),), (pad_width[d][i],))[0]
+                pad_chunks[i][d] = normalize_chunks((block,), (pad_width[d][i],))[0]
 
     pad_shapes = [tuple(s) for s in pad_shapes]
     pad_chunks = [tuple(c) for c in pad_chunks]

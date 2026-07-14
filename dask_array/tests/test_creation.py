@@ -937,6 +937,32 @@ def test_pad(shape, chunks, pad_width, mode, kwargs):
 
 
 @pytest.mark.parametrize(
+    "shape, chunks, pad_width, kwargs",
+    [
+        ((0,), (0,), (2, 3), {}),
+        ((0,), (0,), (2, 3), {"constant_values": 5}),
+        ((5, 0), (5, 0), ((1, 2), (2, 3)), {}),
+        ((0, 5), (0, 5), ((2, 3), (1, 1)), {"constant_values": 7}),
+        ((0, 0), (0, 0), ((2, 3), (1, 4)), {}),
+        # multi-chunk non-empty axis alongside an empty one: the non-padded
+        # axis must retain the array's chunking.
+        ((6, 0), (2, 0), ((0, 0), (2, 3)), {}),
+    ],
+)
+def test_pad_empty_array(shape, chunks, pad_width, kwargs):
+    # An empty axis has chunk size 0; the pad-region chunk math must not
+    # divide by that. numpy only supports "constant" (and "empty") on empty
+    # axes, so constant is the mode we mirror here. See ZeroDivisionError report.
+    np_a = np.ones(shape)
+    da_a = da.from_array(np_a, chunks=chunks)
+
+    np_r = np.pad(np_a, pad_width, mode="constant", **kwargs)
+    da_r = da.pad(da_a, pad_width, mode="constant", **kwargs)
+
+    assert_eq(np_r, da_r)
+
+
+@pytest.mark.parametrize(
     ["np_a", "pad_value"],
     (
         (np.arange(4, dtype="int64"), np.int64(1)),
