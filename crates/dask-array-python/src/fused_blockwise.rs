@@ -53,10 +53,14 @@ struct Projection {
     coords: Vec<Coord>,
 }
 
-/// An int leaf of a seed template: a constant or an output-block-dim reference.
+/// An int leaf of a seed template: a constant, an output-block-dim reference
+/// (`bid[o]`, a block id), or an output-block CHUNK SIZE (`chunks[a][bid[a]]`, the
+/// per-axis size of this output block — e.g. an inner `Ones`/`full` shape whose
+/// boundary blocks differ from the interior, as `diff` produces).
 enum IntExpr {
     Const(i64),
     Bid(usize),
+    Chunk(usize),
 }
 
 /// A compiled lifted-literal seed template. Its *shape* is fixed across blocks
@@ -82,10 +86,12 @@ enum SlotSource {
         seed_slots: Vec<Vec<ArgSlot>>,
     },
     /// Compact closed form — a projection per source site, and a template per
-    /// lifted seed. Rust generates every block's slots from these.
+    /// lifted seed. Rust generates every block's slots from these. `chunk_tables`
+    /// are the per-axis output chunk sizes, indexed by `Chunk` seed leaves.
     Projected {
         projections: Vec<Projection>,
         seeds: Vec<Seed>,
+        chunk_tables: Vec<Vec<i64>>,
     },
 }
 
@@ -99,43 +105,67 @@ pub struct FusedBlockwiseLayer {
     numblocks: Vec<usize>,
 }
 
-fn eval_int(expr: &IntExpr, bid: &[u32]) -> i64 {
+fn eval_int(expr: &IntExpr, bid: &[u32], chunk_tables: &[Vec<i64>]) -> i64 {
     match expr {
         IntExpr::Const(v) => *v,
         IntExpr::Bid(o) => bid[*o] as i64,
+        IntExpr::Chunk(a) => chunk_tables[*a][bid[*a] as usize],
     }
 }
 
-fn eval_seed(seed: &Seed, bid: &[u32]) -> ArgSlot {
+fn eval_seed(seed: &Seed, bid: &[u32], chunk_tables: &[Vec<i64>]) -> ArgSlot {
     match seed {
-        Seed::Scalar(e) => ArgSlot::Scalar(Num::Int(eval_int(e, bid))),
-        Seed::IntTuple(es) => ArgSlot::IntTuple(es.iter().map(|e| eval_int(e, bid)).collect()),
-        Seed::List(items) => ArgSlot::List(items.iter().map(|s| eval_seed(s, bid)).collect()),
-    }
-}
-
-/// Reject a seed template that references an output-block dim `>= ndim` (a
-/// mis-inferred template would index out of the block id at expansion time).
-fn check_seed_dims(seed: &Seed, ndim: usize) -> PyResult<()> {
-    let bad = pyo3::exceptions::PyNotImplementedError::new_err("seed template block-id dim out of range");
-    match seed {
-        Seed::Scalar(IntExpr::Bid(o)) if *o >= ndim => return Err(bad),
-        Seed::Scalar(_) => {}
+        Seed::Scalar(e) => ArgSlot::Scalar(Num::Int(eval_int(e, bid, chunk_tables))),
         Seed::IntTuple(es) => {
-            if es
-                .iter()
-                .any(|e| matches!(e, IntExpr::Bid(o) if *o >= ndim))
-            {
-                return Err(bad);
+            ArgSlot::IntTuple(es.iter().map(|e| eval_int(e, bid, chunk_tables)).collect())
+        }
+        Seed::List(items) => {
+            ArgSlot::List(items.iter().map(|s| eval_seed(s, bid, chunk_tables)).collect())
+        }
+    }
+}
+
+/// Reject a seed template whose leaf references an axis out of range, or a
+/// `Chunk` leaf whose axis has no (or too short a) chunk table — a mis-inferred
+/// template would index out of bounds at expansion time.
+fn check_int_expr(expr: &IntExpr, ndim: usize, chunk_tables: &[Vec<i64>], nb: &[usize]) -> PyResult<()> {
+    let bad = pyo3::exceptions::PyNotImplementedError::new_err("seed template axis out of range");
+    match expr {
+        IntExpr::Const(_) => Ok(()),
+        IntExpr::Bid(o) => {
+            if *o >= ndim {
+                Err(bad)
+            } else {
+                Ok(())
             }
+        }
+        IntExpr::Chunk(a) => {
+            // `bid[a]` ranges over `0..nb[a]`, so the chunk table must cover it.
+            if *a >= ndim || *a >= chunk_tables.len() || chunk_tables[*a].len() < nb[*a] {
+                Err(bad)
+            } else {
+                Ok(())
+            }
+        }
+    }
+}
+
+fn check_seed_dims(seed: &Seed, ndim: usize, chunk_tables: &[Vec<i64>], nb: &[usize]) -> PyResult<()> {
+    match seed {
+        Seed::Scalar(e) => check_int_expr(e, ndim, chunk_tables, nb),
+        Seed::IntTuple(es) => {
+            for e in es {
+                check_int_expr(e, ndim, chunk_tables, nb)?;
+            }
+            Ok(())
         }
         Seed::List(items) => {
             for it in items {
-                check_seed_dims(it, ndim)?;
+                check_seed_dims(it, ndim, chunk_tables, nb)?;
             }
+            Ok(())
         }
     }
-    Ok(())
 }
 
 /// True if `obj` is a leaf template node `("const", v)` / `("bid", o)` — as
@@ -145,7 +175,7 @@ fn check_seed_dims(seed: &Seed, ndim: usize) -> PyResult<()> {
 fn seed_tmpl_is_leaf(obj: &Bound<'_, PyAny>) -> bool {
     if let Ok(t) = obj.cast::<PyTuple>() {
         if let Ok(tag) = t.get_item(0).and_then(|x| x.extract::<String>()) {
-            return tag == "const" || tag == "bid";
+            return tag == "const" || tag == "bid" || tag == "chunk";
         }
     }
     false
@@ -158,23 +188,23 @@ fn parse_int_expr(obj: &Bound<'_, PyAny>) -> PyResult<IntExpr> {
     match tag.as_str() {
         "const" => Ok(IntExpr::Const(t.get_item(1)?.extract()?)),
         "bid" => Ok(IntExpr::Bid(t.get_item(1)?.extract()?)),
+        "chunk" => Ok(IntExpr::Chunk(t.get_item(1)?.extract()?)),
         _ => Err(pyo3::exceptions::PyNotImplementedError::new_err(
-            "seed template leaf must be ('const', int) or ('bid', int)",
+            "seed template leaf must be ('const'|'bid'|'chunk', int)",
         )),
     }
 }
 
-/// Compile a Python seed template — `("const", v)`, `("bid", o)`, or a container
-/// `("tuple"|"list", [children])` — into a [`Seed`], resolving the tuple/list
-/// collapsing exactly as `seed_to_slot` would after `_apply_template`.
+/// Compile a Python seed template — `("const", v)`, `("bid", o)`, `("chunk", a)`,
+/// or a container `("tuple"|"list", [children])` — into a [`Seed`], resolving the
+/// tuple/list collapsing exactly as `seed_to_slot` would after `_apply_template`.
 fn parse_seed(obj: &Bound<'_, PyAny>) -> PyResult<Seed> {
     let t = obj.cast::<PyTuple>().map_err(|_| {
         pyo3::exceptions::PyNotImplementedError::new_err("seed template node must be a 2-tuple")
     })?;
     let tag: String = t.get_item(0)?.extract()?;
     match tag.as_str() {
-        "const" => Ok(Seed::Scalar(IntExpr::Const(t.get_item(1)?.extract()?))),
-        "bid" => Ok(Seed::Scalar(IntExpr::Bid(t.get_item(1)?.extract()?))),
+        "const" | "bid" | "chunk" => Ok(Seed::Scalar(parse_int_expr(obj)?)),
         "tuple" | "list" => {
             let kids: Vec<Bound<'_, PyAny>> =
                 t.get_item(1)?.try_iter()?.collect::<PyResult<_>>()?;
@@ -190,7 +220,7 @@ fn parse_seed(obj: &Bound<'_, PyAny>) -> PyResult<Seed> {
             }
         }
         _ => Err(pyo3::exceptions::PyNotImplementedError::new_err(
-            "seed template node must be const/bid/tuple/list",
+            "seed template node must be const/bid/chunk/tuple/list",
         )),
     }
 }
@@ -313,9 +343,12 @@ impl FusedBlockwiseLayer {
     ///
     /// `projections`: per site `(dep_idx, [(kind, val)])`, kind `0` = constant
     /// block index `val`, kind `1` = track output block dim `val`. `seed_templates`:
-    /// the Python template objects (`("const", v)` / `("bid", o)` / a container
-    /// `("tuple"|"list", [children])`), compiled once here.
+    /// the Python template objects (`("const", v)` / `("bid", o)` / `("chunk", a)`
+    /// / a container `("tuple"|"list", [children])`), compiled once here.
+    /// `chunk_tables`: per-axis output chunk sizes, indexed by `("chunk", a)` seed
+    /// leaves (`chunks[a][bid[a]]`).
     #[staticmethod]
+    #[allow(clippy::too_many_arguments)]
     fn from_projections(
         py: Python<'_>,
         name: String,
@@ -324,6 +357,7 @@ impl FusedBlockwiseLayer {
         dep_names: Vec<String>,
         projections: Vec<(usize, Vec<(u8, u32)>)>,
         seed_templates: Vec<Py<PyAny>>,
+        chunk_tables: Vec<Vec<i64>>,
     ) -> PyResult<Self> {
         // Every validation failure here raises `NotImplementedError` (not
         // `ValueError`): a malformed spec should DECLINE to the Python
@@ -369,9 +403,10 @@ impl FusedBlockwiseLayer {
             .into_iter()
             .map(|obj| parse_seed(obj.bind(py)))
             .collect::<PyResult<Vec<_>>>()?;
-        // A block-id reference in a seed must land inside the output grid.
+        // A block-id/chunk reference in a seed must land inside the output grid
+        // and (for chunk leaves) have a chunk table covering that axis.
         for seed in &seeds {
-            check_seed_dims(seed, ndim)?;
+            check_seed_dims(seed, ndim, &chunk_tables, &numblocks)?;
         }
 
         Ok(Self {
@@ -382,6 +417,7 @@ impl FusedBlockwiseLayer {
             slots: SlotSource::Projected {
                 projections: projs,
                 seeds,
+                chunk_tables,
             },
             numblocks,
         })
@@ -431,7 +467,11 @@ impl FusedBlockwiseLayer {
                     }
                     s
                 }
-                SlotSource::Projected { projections, seeds } => {
+                SlotSource::Projected {
+                    projections,
+                    seeds,
+                    chunk_tables,
+                } => {
                     let mut s: Vec<ArgSlot> = projections
                         .iter()
                         .map(|p| ArgSlot::Dep {
@@ -447,7 +487,7 @@ impl FusedBlockwiseLayer {
                         })
                         .collect();
                     for seed in seeds {
-                        s.push(eval_seed(seed, &coord));
+                        s.push(eval_seed(seed, &coord, chunk_tables));
                     }
                     s
                 }

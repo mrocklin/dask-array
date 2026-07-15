@@ -556,6 +556,7 @@ def test_projected_fused_records_match_materialized_byte_for_byte():
         "einsum": da.einsum("ij,jk->ik", a, b),
         "overlap_seed": ones.map_overlap(lambda x: x + 1, depth=1, boundary="none"),
         "overlap_reflect": ones.map_overlap(lambda x: x + 1, depth=1, boundary="reflect"),
+        "diff_chunk_seed": da.diff(ones, axis=0),  # inner Ones shape -> chunk seed
     }
     checked = 0
     for label, coll in builds.items():
@@ -569,12 +570,13 @@ def test_projected_fused_records_match_materialized_byte_for_byte():
             projected += 1
             nb = tuple(int(n) for n in fb.numblocks)
             bids = list(product(*(range(n) for n in nb)))
+            chunks = [dim if dim is not None else [] for dim in layer._axis_chunks()]
             dep_slots = [
                 [(di, tuple(bid[co] if kind == "bid" else co for kind, co in pj)) for di, pj in spec.projections]
                 for bid in bids
             ]
             seed_slots = (
-                [[layer._apply_template(t, bid) for t in spec.seed_templates] for bid in bids]
+                [[layer._apply_template(t, bid, chunks) for t in spec.seed_templates] for bid in bids]
                 if spec.seed_templates
                 else []
             )
@@ -608,12 +610,17 @@ def test_seed_template_collapse_matches_materialized_for_crafted_shapes():
     projections = [(0, [(1, 0), (1, 1)])]  # one site tracking both output dims
     bids = list(product(*(range(n) for n in numblocks)))
     dep_slots = [[(0, [b0, b1])] for b0, b1 in bids]
+    # Per-axis output chunk sizes (ragged, so ``chunk`` leaves differ per block).
+    chunk_tables = [[7, 4], [5, 5, 6]]
 
     def C(v):
         return ("const", v)
 
     def Bd(o):
         return ("bid", o)
+
+    def Ch(a):
+        return ("chunk", a)
 
     def T(*xs):
         return ("tuple", list(xs))
@@ -625,19 +632,23 @@ def test_seed_template_collapse_matches_materialized_for_crafted_shapes():
         [],  # no seed
         [C(5)],  # scalar const
         [Bd(0)],  # scalar bid
+        [Ch(0)],  # scalar chunk size
         [T(Bd(0), C(7))],  # flat int tuple
         [L(Bd(1), C(2))],  # flat list-kind (collapses to a tuple, like seed_to_slot)
+        [T(Ch(0), Ch(1))],  # an inner Ones/full block-shape (chunk, chunk)
         [T()],  # empty tuple
         [L()],  # empty list
         [T(T(Bd(0), Bd(1)), T(C(2), C(3)))],  # (block_id, numblocks)
         [T(T(T(Bd(0))))],  # deep nesting
-        [T(Bd(0), T(C(1), Bd(1)))],  # mixed leaf + subcontainer -> outer List
+        [T(Bd(0), T(C(1), Ch(1)))],  # mixed leaf + subcontainer -> outer List
         [T(T(), C(4))],  # container holding an empty subcontainer
-        [C(1), T(Bd(0), Bd(1))],  # multiple seeds
+        [C(1), T(Ch(0), Ch(1))],  # multiple seeds incl. a block shape
     ]
     for templates in template_sets:
-        seed_slots = [[FusedBlockwiseLayer._apply_template(t, bid) for t in templates] for bid in bids]
-        proj = _rust.FusedBlockwiseLayer.from_projections("out", func, numblocks, dep_names, projections, templates)
+        seed_slots = [[FusedBlockwiseLayer._apply_template(t, bid, chunk_tables) for t in templates] for bid in bids]
+        proj = _rust.FusedBlockwiseLayer.from_projections(
+            "out", func, numblocks, dep_names, projections, templates, chunk_tables
+        )
         mat = _rust.FusedBlockwiseLayer("out", func, numblocks, dep_names, dep_slots, seed_slots)
         assert proj.to_records_chunk() == mat.to_records_chunk(), templates
 
@@ -1014,6 +1025,56 @@ def test_map_overlap_lifts_block_id_seed_to_binary_records():
     args_by_key = {key: args for key, _func, args, _kw, _deps in layer._build_rust(spec).to_task_records()}
     for bid in product(*(range(n) for n in nb)):
         assert args_by_key[str((fb._name, *bid))][-1] == [bid, nb]
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        pytest.param(lambda x: da.diff(x, axis=0), id="diff-axis0-ragged-first"),
+        pytest.param(lambda x: da.diff(x, axis=1), id="diff-axis1"),
+        pytest.param(lambda x: da.diff(da.diff(x, axis=0), axis=1), id="diff-both"),
+    ],
+)
+def test_diff_lifts_chunk_shape_seed_to_binary_records(build):
+    """A fused block that bakes an inner Ones/full whose SHAPE is the output block's
+    chunk shape declines the block-independent and affine fast paths — the shape
+    differs at a ragged chunk boundary and is not an affine function of the block
+    id. ``da.diff`` is the canonical case (it makes a ragged first chunk, so the
+    inner ``ones`` shape is e.g. ``(39, 40)`` at the boundary and ``(40, 40)``
+    elsewhere). ``_seed_spec`` lifts that shape to a per-block ``chunk`` seed
+    (``chunks[a][bid[a]]``), so the layer goes binary instead of the O(N)
+    ``_slow_records`` path — while computing identically to dask's own graph."""
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    from itertools import product
+
+    from dask.core import flatten
+    from dask.local import get_sync
+
+    from dask_array._frisky.fused_blockwise import _ProjSpec, FusedBlockwiseLayer
+
+    y = build(da.ones((240, 240), chunks=(40, 40)))
+    fb = [e for e in y._lowered_expr.walk() if type(e).__name__ == "FusedBlockwise"][0]
+    layer = FusedBlockwiseLayer(fb)
+
+    # Block-independent + affine paths decline; the seed path lifts a chunk leaf.
+    assert layer._analytical_site_spec() is None
+    spec = layer._seed_spec()
+    assert isinstance(spec, _ProjSpec)
+    assert any("chunk" in repr(t) for t in spec.seed_templates)
+    assert isinstance(layer.to_records_chunk(), bytes)  # binary, not a decline
+
+    # Each block's decoded seed is that block's chunk shape.
+    args_by_key = {key: args for key, _f, args, _kw, _d in layer._build_rust(spec).to_task_records()}
+    for bid in product(*(range(n) for n in fb.numblocks)):
+        want = tuple(fb.chunks[d][bid[d]] for d in range(len(bid)))
+        assert args_by_key[str((fb._name, *bid))][-1] == want
+
+    # End-to-end: the Rust-decoded graph computes identically to dask's own.
+    full = dict(y.__dask_graph__())
+    spliced = {**full, **layer._build_rust(spec).to_dask_graph()}
+    for key in flatten(fb.__dask_keys__()):
+        assert np.array_equal(get_sync(full, key), get_sync(spliced, key))
 
 
 def test_xarray_rolling_sum_where_literal_uses_binary_records():

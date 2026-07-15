@@ -43,6 +43,7 @@ before the fast path is taken — otherwise we fall back to the per-block path:
 
 from __future__ import annotations
 
+import math
 from collections import namedtuple
 from itertools import product
 
@@ -135,6 +136,9 @@ class FusedBlockwiseLayer:
             projections = [
                 (dep_idx, [(1 if kind == "bid" else 0, int(co)) for kind, co in pj]) for dep_idx, pj in spec.projections
             ]
+            # Per-axis chunk sizes for ``chunk`` seed leaves (unknown axes -> [],
+            # never indexed since such an axis yields no chunk leaf).
+            chunk_tables = [dim if dim is not None else [] for dim in self._axis_chunks()]
             return _rust.FusedBlockwiseLayer.from_projections(
                 self.expr._name,
                 spec.shared,
@@ -142,6 +146,7 @@ class FusedBlockwiseLayer:
                 spec.dep_names,
                 projections,
                 list(spec.seed_templates),
+                chunk_tables,
             )
         return _rust.FusedBlockwiseLayer(
             self.expr._name,
@@ -180,6 +185,7 @@ class FusedBlockwiseLayer:
         numblocks = self.expr.numblocks
         dep_names = spec.dep_names
         projected = isinstance(spec, _ProjSpec)
+        chunks = [dim if dim is not None else [] for dim in self._axis_chunks()] if projected else None
         records = []
         for i, bid in enumerate(product(*(range(n) for n in numblocks))):
             if projected:
@@ -187,9 +193,9 @@ class FusedBlockwiseLayer:
                     (dep_idx, tuple(bid[co] if kind == "bid" else co for kind, co in pj))
                     for dep_idx, pj in spec.projections
                 ]
-                # Lifted block_id seeds ride after the dep refs as plain values
-                # (not dependencies), matching the shared subgraph's inkeys order.
-                seeds = tuple(self._apply_template(tmpl, bid) for tmpl in spec.seed_templates)
+                # Lifted block_id/chunk seeds ride after the dep refs as plain
+                # values (not dependencies), matching the subgraph's inkeys order.
+                seeds = tuple(self._apply_template(tmpl, bid, chunks) for tmpl in spec.seed_templates)
             else:
                 slots = spec.dep_slots[i]
                 seeds = tuple(spec.seed_slots[i]) if spec.seed_slots else ()
@@ -564,9 +570,8 @@ class FusedBlockwiseLayer:
             for ai, arg in enumerate(task.args):
                 if self._pure_literal(arg) and self._lit_template(arg) is not None:
                     seed_val0[(ck, ai)] = arg
-        seed_tmpl = {}  # (ck, ai) -> nested int template, for the ones that vary
 
-        # Infer source-coord AND seed projections by bumping one output dim.
+        # Infer source-coord projections by bumping one output dim (affine reads).
         for o in range(len(nb)):
             if nb[o] <= 1:
                 continue
@@ -592,22 +597,19 @@ class FusedBlockwiseLayer:
             canon = self._canonical(t)
             if set(canon[0]) != set(canon0[0]) or canon[1] != canon0[1]:
                 return None
-            for (ck, ai), v0 in seed_val0.items():
-                task_c = canon[0].get(ck)
-                if task_c is None or ai >= len(task_c.args):
-                    return None
-                v = task_c.args[ai]
-                if v == v0:
-                    continue  # constant under this bump
-                if (ck, ai) not in seed_tmpl:
-                    seed_tmpl[(ck, ai)] = self._lit_template(v0)
-                seed_tmpl[(ck, ai)] = self._bump_template(seed_tmpl[(ck, ai)], v0, v, o)
-                if seed_tmpl[(ck, ai)] is None:
-                    return None
 
+        # Classify each candidate literal into a per-block template by scanning
+        # each output axis (see ``_classify_seeds``). A ragged axis (non-uniform
+        # chunks) is scanned fully, so a boundary chunk size at any position is
+        # seen and an inner Ones/full shape lifts to a ``chunk`` leaf; the common
+        # uniform-chunk case stays on a single per-axis bump.
+        chunks = self._axis_chunks()
+        seed_tmpl = self._classify_seeds(seed_val0, canon0, nb, chunks)
+        if seed_tmpl is None:
+            return None
         seeds = sorted(seed_tmpl)
         if not seeds:
-            return None  # no lifted literal -> not our case; let the slow path run
+            return None  # nothing block-dependent to lift -> let the slow path run
         projections = [(dep_idx[site_src[j]], proj[j]) for j in range(n_sites)]
         if len({(dep_i, tuple(pj)) for dep_i, pj in projections}) != n_sites:
             return None
@@ -634,7 +636,7 @@ class FusedBlockwiseLayer:
             if sorted(source_slots(bid)) != actual:
                 return None
             for ck, ai in seeds:
-                if self._apply_template(seed_tmpl[(ck, ai)], bid) != canon[0][ck].args[ai]:
+                if self._apply_template(seed_tmpl[(ck, ai)], bid, chunks) != canon[0][ck].args[ai]:
                     return None
 
         # Shared subgraph from a maximal block (source sites all distinct), with the
@@ -885,51 +887,153 @@ class FusedBlockwiseLayer:
         return None
 
     @staticmethod
-    def _bump_template(tmpl, v0, v, o):
-        """Refine ``tmpl`` (built from block-0 value ``v0``) given the value ``v`` at
-        the block with output dim ``o`` bumped by 1. An int leaf that rose by 1
-        starts tracking ``bid[o]``; one that stayed put stays constant; any other
-        delta (or a shape mismatch) is not an index-preserving projection and
-        returns ``None``."""
-        kind = tmpl[0]
-        if kind == "const":
-            if not isinstance(v, int) or isinstance(v, bool):
-                return None
-            if v == v0:
-                return tmpl
-            return ("bid", o) if v - v0 == 1 else None
-        if kind == "bid":
-            # Already tracks some dim; bumping ``o`` changes it iff that dim is ``o``.
-            if not isinstance(v, int) or isinstance(v, bool) or not isinstance(v0, int):
-                return None
-            expected = v0 + (1 if tmpl[1] == o else 0)
-            return tmpl if v == expected else None
-        # container
-        if not isinstance(v, (tuple, list)) or not isinstance(v0, (tuple, list)):
-            return None
-        children = tmpl[1]
-        if len(v) != len(children) or len(v0) != len(children):
-            return None
-        new_children = []
-        for c, x0, x in zip(children, v0, v):
-            nc = FusedBlockwiseLayer._bump_template(c, x0, x, o)
-            if nc is None:
-                return None
-            new_children.append(nc)
-        return (kind, new_children)
-
-    @staticmethod
-    def _apply_template(tmpl, bid):
+    def _apply_template(tmpl, bid, chunks=None):
         """Materialize a seed template for output block ``bid``: ``const`` leaves
-        keep their value, ``bid`` leaves take ``bid[o]``. Rebuilds the same
-        tuple/list nesting the original literal had."""
+        keep their value, ``bid`` leaves take ``bid[o]``, ``chunk`` leaves take the
+        output block's size along that axis (``chunks[a][bid[a]]``). Rebuilds the
+        same tuple/list nesting the original literal had."""
         kind = tmpl[0]
         if kind == "const":
             return tmpl[1]
         if kind == "bid":
             return bid[tmpl[1]]
-        parts = [FusedBlockwiseLayer._apply_template(c, bid) for c in tmpl[1]]
+        if kind == "chunk":
+            return chunks[tmpl[1]][bid[tmpl[1]]]
+        parts = [FusedBlockwiseLayer._apply_template(c, bid, chunks) for c in tmpl[1]]
         return tuple(parts) if kind == "tuple" else parts
+
+    def _axis_chunks(self):
+        """Per-axis output chunk sizes as int lists, or ``None`` for an axis with
+        any unknown (nan) size — a ``chunk`` seed leaf can't be inferred there.
+        Used to classify, validate, and reproduce inner Ones/full shape literals
+        (``chunks[a][bid[a]]``)."""
+        out = []
+        for dim in self.expr.chunks:
+            vals = []
+            known = True
+            for c in dim:
+                try:
+                    if math.isnan(c):
+                        known = False
+                        break
+                except TypeError:
+                    pass
+                vals.append(int(c))
+            out.append(vals if known else None)
+        return out
+
+    def _classify_seeds(self, seed_val0, canon0, nb, chunks):
+        """Classify each candidate seed literal into a per-block template, keeping
+        only the ones that actually VARY across blocks (those that must be lifted).
+
+        Each int leaf is scanned per output axis and becomes ``("const", v)``,
+        ``("bid", o)`` (equals the block id ``bid[o]``), or ``("chunk", a)`` (equals
+        the output block's size ``chunks[a][bid[a]]`` — an inner Ones/full/zeros
+        shape). A leaf that depends on more than one axis, or on an axis in some
+        other way, makes the whole spec unliftable (``None``).
+
+        A *ragged* axis (non-uniform chunks) is scanned in full, so a boundary
+        chunk size at any position is observed — a single ``bump`` would miss a
+        ragged last/middle chunk and mis-read a ragged first chunk as affine. A
+        *uniform* axis needs only one bump (a leaf that varies there is a block id;
+        a chunk size is constant, hence never varies). The common overlap/rolling
+        case has uniform chunks, so it never pays for a full scan.
+
+        Returns ``{}`` when nothing varies (block-independent — another spec owns
+        it) or ``None`` when a candidate isn't liftable."""
+        e = self.expr
+        zero = (0,) * len(nb)
+        # scanned[key][o] = leaf-arg value at (0..j..0) for j over the axis: the
+        # full range for a ragged axis, else just (0, 1) for a single bump.
+        scanned = {key: {} for key in seed_val0}
+        for o in range(len(nb)):
+            if nb[o] <= 1:
+                continue
+            ragged = chunks[o] is not None and len(set(chunks[o])) > 1
+            for j in range(nb[o]) if ragged else (0, 1):
+                if j == 0:
+                    for key in seed_val0:
+                        scanned[key].setdefault(o, []).append(seed_val0[key])
+                    continue
+                bid = list(zero)
+                bid[o] = j
+                t = e._task((e._name, *bid), tuple(bid))
+                if t.func is not _execute_subgraph or len(t.args) < 3:
+                    return None
+                canon = self._canonical(t)
+                if set(canon[0]) != set(canon0[0]) or canon[1] != canon0[1]:
+                    return None
+                for ck, ai in seed_val0:
+                    task_c = canon[0].get(ck)
+                    if task_c is None or ai >= len(task_c.args):
+                        return None
+                    scanned[(ck, ai)][o].append(task_c.args[ai])
+
+        seed_tmpl = {}
+        for key, v0 in seed_val0.items():
+            tmpl = self._classify_leaf(v0, scanned[key], chunks, nb)
+            if tmpl is None:
+                return None
+            if self._template_varies(tmpl):
+                seed_tmpl[key] = tmpl
+        return seed_tmpl
+
+    @staticmethod
+    def _classify_leaf(node0, per_axis, chunks, nb):
+        """Recursively classify a candidate literal ``node0`` (block-0 value) given
+        ``per_axis[o]`` — the list of its values as output axis ``o`` varies (others
+        held at 0), a full scan for a ragged axis or a single bump ``[v0, v1]`` for a
+        uniform one. Returns a nested template or ``None`` if not liftable."""
+        if isinstance(node0, bool):
+            return None
+        if isinstance(node0, int):
+            controlling = None
+            for o, series in per_axis.items():
+                if any(v != node0 for v in series):
+                    if controlling is not None:
+                        return None  # depends on >1 output axis — not separable
+                    controlling = o
+            if controlling is None:
+                return ("const", node0)
+            series = per_axis[controlling]
+            if len(series) == nb[controlling]:  # a full ragged-axis scan
+                ch = chunks[controlling]
+                if ch is not None and list(series) == list(ch):
+                    return ("chunk", controlling)
+                if all(series[j] == j for j in range(len(series))):
+                    return ("bid", controlling)
+                return None
+            # uniform axis (a single bump): only a block id (0 -> 1) is liftable
+            return ("bid", controlling) if series[0] == 0 and series[1] == 1 else None
+        if isinstance(node0, (tuple, list)):
+            kind = "tuple" if isinstance(node0, tuple) else "list"
+            children = []
+            for i, child0 in enumerate(node0):
+                sub = {}
+                for o, series in per_axis.items():
+                    vals = []
+                    for v in series:
+                        if not isinstance(v, (tuple, list)) or i >= len(v):
+                            return None  # structure not stable across blocks
+                        vals.append(v[i])
+                    sub[o] = vals
+                child = FusedBlockwiseLayer._classify_leaf(child0, sub, chunks, nb)
+                if child is None:
+                    return None
+                children.append(child)
+            return (kind, children)
+        return None
+
+    @staticmethod
+    def _template_varies(tmpl):
+        """True if ``tmpl`` has any block-dependent leaf (``bid`` or ``chunk``); a
+        wholly-``const`` template is block-independent and is not lifted."""
+        kind = tmpl[0]
+        if kind in ("bid", "chunk"):
+            return True
+        if kind == "const":
+            return False
+        return any(FusedBlockwiseLayer._template_varies(c) for c in tmpl[1])
 
     @staticmethod
     def _actual_key(subgraph, canon_key):
