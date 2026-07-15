@@ -43,6 +43,7 @@ before the fast path is taken — otherwise we fall back to the per-block path:
 
 from __future__ import annotations
 
+from collections import namedtuple
 from itertools import product
 
 from dask._task_spec import Task, TaskRef, _execute_subgraph
@@ -52,6 +53,18 @@ from dask_array._blockwise import _broadcast_block_id
 # One shared empty-kwargs dict so Frisky's per-task func cache (keyed on the
 # (func, kwargs) object identities) hits across every fused record.
 _EMPTY_KWARGS: dict = {}
+
+# A fast-path spec comes in two shapes. The exact fallbacks
+# (``_fast_spec_uniform`` / ``_site_based_spec``) read each block's real coords,
+# so they carry the fully materialized per-block ``dep_slots`` / ``seed_slots``.
+# The common analytical paths (``_analytical_site_spec`` / ``_seed_spec``) derive
+# a closed form from probe blocks, so they carry the *compact* ``projections``
+# (one per source site) + ``seed_templates`` (one per lifted literal) and let
+# Rust generate every block's slots — the per-block O(blocks) materialization
+# never runs in Python. Both share ``shared`` (the block-independent fused
+# callable) and ``dep_names``.
+_MatSpec = namedtuple("_MatSpec", ["shared", "dep_names", "dep_slots", "seed_slots"])
+_ProjSpec = namedtuple("_ProjSpec", ["shared", "dep_names", "projections", "seed_templates"])
 
 
 class _FusedSubgraph:
@@ -107,20 +120,36 @@ class FusedBlockwiseLayer:
         return rust.to_records_chunk()
 
     def _build_rust(self, spec):
-        """Build the Rust ``FusedBlockwiseLayer`` from a fast spec
-        ``(shared, dep_names, dep_slots, seed_slots)``. ``seed_slots`` is ``[]``
-        for the common case (no lifted ``block_id`` literals) and one seed-value
-        list per output block otherwise."""
-        shared, dep_names, dep_slots, seed_slots = spec
+        """Build the Rust ``FusedBlockwiseLayer`` from a fast spec.
+
+        A :class:`_ProjSpec` (the common analytical/seed paths) ships the compact
+        projections + seed templates and Rust generates every block's slots; a
+        :class:`_MatSpec` (the exact uniform/site-based fallbacks) ships the
+        already-materialized per-block ``dep_slots`` / ``seed_slots``."""
         from dask_array._frisky.base import _rust
 
+        numblocks = [int(n) for n in self.expr.numblocks]
+        if isinstance(spec, _ProjSpec):
+            # Encode each projection coord as (kind, val): kind 1 = track output
+            # block dim ``val``, kind 0 = constant block index ``val``.
+            projections = [
+                (dep_idx, [(1 if kind == "bid" else 0, int(co)) for kind, co in pj]) for dep_idx, pj in spec.projections
+            ]
+            return _rust.FusedBlockwiseLayer.from_projections(
+                self.expr._name,
+                spec.shared,
+                numblocks,
+                spec.dep_names,
+                projections,
+                list(spec.seed_templates),
+            )
         return _rust.FusedBlockwiseLayer(
             self.expr._name,
-            shared,
-            [int(n) for n in self.expr.numblocks],
-            dep_names,
-            dep_slots,
-            seed_slots,
+            spec.shared,
+            numblocks,
+            spec.dep_names,
+            spec.dep_slots,
+            spec.seed_slots,
         )
 
     def _slow_records(self):
@@ -135,21 +164,39 @@ class FusedBlockwiseLayer:
         ]
 
     def _fast_records(self):
-        fast = self._fast_spec()
-        if fast is None:
+        """Pure-Python records for the fast spec (the fallback used when the Rust
+        extension is absent). Materializes each block's slots — from the compact
+        projections/templates for a :class:`_ProjSpec`, or straight from the
+        stored per-block lists for a :class:`_MatSpec`. The load-bearing parts —
+        the record keys and the dependency key-strings — match the Rust path
+        exactly (same arithmetic); the two paths differ only in arg *representation*
+        (a ``TaskRef`` wraps the key string here vs. the key tuple in Rust; a nested
+        seed renders as a tuple here vs. a list in Rust — the ``seed_to_slot``
+        fidelity note), neither of which affects cross-process key agreement."""
+        spec = self._fast_spec()
+        if spec is None:
             return None
-        shared, dep_names, dep_slots, seed_slots = fast
         name = self.expr._name
         numblocks = self.expr.numblocks
+        dep_names = spec.dep_names
+        projected = isinstance(spec, _ProjSpec)
         records = []
-        for i, (bid, slots) in enumerate(zip(product(*(range(n) for n in numblocks)), dep_slots)):
+        for i, bid in enumerate(product(*(range(n) for n in numblocks))):
+            if projected:
+                slots = [
+                    (dep_idx, tuple(bid[co] if kind == "bid" else co for kind, co in pj))
+                    for dep_idx, pj in spec.projections
+                ]
+                # Lifted block_id seeds ride after the dep refs as plain values
+                # (not dependencies), matching the shared subgraph's inkeys order.
+                seeds = tuple(self._apply_template(tmpl, bid) for tmpl in spec.seed_templates)
+            else:
+                slots = spec.dep_slots[i]
+                seeds = tuple(spec.seed_slots[i]) if spec.seed_slots else ()
             dep_keys = [self._dep_key(dep_names, slot) for slot in slots]
             refs = [TaskRef(dep_key) for dep_key in dep_keys]
-            # Lifted block_id seeds ride after the dep refs as plain values (not
-            # dependencies), matching the shared subgraph's inkeys order.
-            seeds = tuple(seed_slots[i]) if seed_slots else ()
             args = tuple(refs) + seeds
-            records.append((str((name, *bid)), shared, args, _EMPTY_KWARGS, dep_keys))
+            records.append((str((name, *bid)), spec.shared, args, _EMPTY_KWARGS, dep_keys))
         return records
 
     def _fast_spec(self):
@@ -218,7 +265,7 @@ class FusedBlockwiseLayer:
                 ]
                 for bid in product(*(range(n) for n in numblocks))
             ]
-            return shared, dep_names, dep_slots, []
+            return _MatSpec(shared, dep_names, dep_slots, [])
 
         # Contraction / non-broadcast fallback: read each block's source coords
         # exactly. Block-independence (canonical) is validated on a PROBE sample
@@ -254,7 +301,7 @@ class FusedBlockwiseLayer:
                 slots_by_label[label] = slot
             dep_slots.append([slots_by_label[label] for label in labels0])
 
-        return shared, dep_names, dep_slots, []
+        return _MatSpec(shared, dep_names, dep_slots, [])
 
     def _site_based_spec(self):
         """Fast-path spec that also admits a source read more than once per block.
@@ -335,7 +382,7 @@ class FusedBlockwiseLayer:
 
         if maximal is None:
             return None
-        return _FusedSubgraph(*maximal), dep_names, dep_slots, []
+        return _MatSpec(_FusedSubgraph(*maximal), dep_names, dep_slots, [])
 
     def _analytical_site_spec(self):
         """Analytical fast path: infer each input SITE's per-dimension coord
@@ -465,11 +512,9 @@ class FusedBlockwiseLayer:
         ordered = [projections[site_of[ik]] for ik in inkeys]
         shared = _FusedSubgraph(tm.args[0], tm.args[1], tuple(inkeys))
 
-        def ordered_slots(bid):
-            return [(dep_i, tuple(bid[co] if kind == "bid" else co for kind, co in pj)) for dep_i, pj in ordered]
-
-        dep_slots = [ordered_slots(bid) for bid in product(*(range(n) for n in nb))]
-        return shared, dep_names, dep_slots, []
+        # Ship the closed form: Rust evaluates ``ordered`` per output block. No
+        # source has a lifted literal here, so there are no seed templates.
+        return _ProjSpec(shared, dep_names, ordered, [])
 
     def _seed_spec(self):
         """Fast path for a fused subgraph that bakes its own ``block_id`` in as
@@ -483,11 +528,12 @@ class FusedBlockwiseLayer:
         id, exactly like the source-coord projections. With the literals lifted the
         remaining subgraph *is* block-independent and shareable.
 
-        Returns ``(shared, dep_names, dep_slots, seed_slots)`` or ``None``. Tried
-        last, so only shapes the other paths decline (i.e. block-id-bearing ones)
-        pay for it. Only int-structured literals are liftable; anything else (a
-        non-affine coordinate, a dict ``block_info``) falls through to
-        ``_slow_records``."""
+        Returns a :class:`_ProjSpec` (source-coord ``projections`` + per-seed
+        ``seed_templates``, both closed forms Rust evaluates per block) or
+        ``None``. Tried last, so only shapes the other paths decline (i.e.
+        block-id-bearing ones) pay for it. Only int-structured literals are
+        liftable; anything else (a non-affine coordinate, a dict ``block_info``)
+        falls through to ``_slow_records``."""
         e = self.expr
         nb = e.numblocks
         if not nb:
@@ -629,13 +675,10 @@ class FusedBlockwiseLayer:
         full_inkeys = tuple(src_inkeys) + tuple(seed_keys)
         shared = _FusedSubgraph(new_sub, tm.args[1], full_inkeys)
 
-        def ordered_slots(bid):
-            return [(dep_i, tuple(bid[co] if kind == "bid" else co for kind, co in pj)) for dep_i, pj in ordered]
-
-        all_bids = list(product(*(range(n) for n in nb)))
-        dep_slots = [ordered_slots(bid) for bid in all_bids]
-        seed_slots = [[self._apply_template(tmpl, bid) for tmpl in seed_templates] for bid in all_bids]
-        return shared, dep_names, dep_slots, seed_slots
+        # Ship the closed form: Rust evaluates ``ordered`` (source coords) and each
+        # seed template per output block, instead of Python materializing the full
+        # O(blocks) dep_slots + seed_slots lists.
+        return _ProjSpec(shared, dep_names, ordered, seed_templates)
 
     @staticmethod
     def _walk_sites(subgraph, outkey, inkeys_set):

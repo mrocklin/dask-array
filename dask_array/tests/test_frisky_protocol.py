@@ -510,20 +510,143 @@ def test_contractions_use_analytical_derivation():
     def fused(coll):
         return [e for e in coll._lowered_expr.walk() if type(e).__name__ == "FusedBlockwise"][0]
 
-    def per_block_dep_sets(spec):
-        return [sorted({str(s) for s in slots}) for slots in spec[2]]
+    def per_block_dep_sets(layer, spec):
+        # Decode through the Rust layer (the analytical path ships a compact
+        # projection, the exact path a materialized list — both expand in Rust),
+        # then read each output block's dependency set from the records.
+        records = layer._build_rust(spec).to_task_records()
+        return {key: sorted(deps) for key, _func, _args, _kw, deps in records}
 
     for build in (lambda x: x @ x, lambda x: x @ x.T, lambda x: x.T + x):
         layer = FusedBlockwiseLayer(fused(build(a)))
         analytical = layer._analytical_site_spec()
         assert analytical is not None  # the arithmetic (no per-block _task) path
-        assert per_block_dep_sets(analytical) == per_block_dep_sets(layer._site_based_spec())
+        assert per_block_dep_sets(layer, analytical) == per_block_dep_sets(layer, layer._site_based_spec())
 
     # 'a' read at two always-coincident sites -> no all-distinct maximal block ->
     # analytical bails; the exact uniform/site-based path still handles it.
     b = da.from_array(np.arange(64.0).reshape(8, 8) + 100.0, chunks=(4, 4))
     fbc = [e for e in (a * b + a)._lowered_expr.walk() if type(e).__name__ == "FusedBlockwise"]
     assert fbc and FusedBlockwiseLayer(fbc[0])._analytical_site_spec() is None
+
+
+def test_projected_fused_records_match_materialized_byte_for_byte():
+    """The compact projection path (Rust generates each output block's dep coords
+    and seed values by arithmetic) must produce records BYTE-IDENTICAL to
+    materializing those same slots in Python and shipping them through the exact
+    constructor. This pins the closed-form Rust encoder against a mis-encode — a
+    drift in keys/dep-order/arg-encoding would cause cross-process key-agreement
+    hangs, not just wrong bytes."""
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    from itertools import product
+
+    from dask_array._frisky.fused_blockwise import _MatSpec, _ProjSpec, FusedBlockwiseLayer
+
+    a = da.from_array(np.arange(96.0).reshape(8, 12), chunks=(4, 4))
+    b = da.from_array(np.arange(144.0).reshape(12, 12), chunks=(4, 4))
+    v = da.from_array(np.arange(12.0), chunks=(4,))
+    ones = da.ones((12, 12), chunks=(4, 4))
+    builds = {
+        "elemwise": a + 1.0 + 2.0,  # two ops fuse into one FusedBlockwise
+        "broadcast": (a + v) * 2.0,
+        "transpose": a.T + 1.0,
+        "matmul": a @ b,
+        "gram": a @ a.T,
+        "einsum": da.einsum("ij,jk->ik", a, b),
+        "overlap_seed": ones.map_overlap(lambda x: x + 1, depth=1, boundary="none"),
+        "overlap_reflect": ones.map_overlap(lambda x: x + 1, depth=1, boundary="reflect"),
+    }
+    checked = 0
+    for label, coll in builds.items():
+        fbs = [e for e in coll._lowered_expr.walk() if type(e).__name__ == "FusedBlockwise"]
+        projected = 0
+        for fb in fbs:
+            layer = FusedBlockwiseLayer(fb)
+            spec = layer._fast_spec()
+            if not isinstance(spec, _ProjSpec):
+                continue  # only the projected specs are exercised here
+            projected += 1
+            nb = tuple(int(n) for n in fb.numblocks)
+            bids = list(product(*(range(n) for n in nb)))
+            dep_slots = [
+                [(di, tuple(bid[co] if kind == "bid" else co for kind, co in pj)) for di, pj in spec.projections]
+                for bid in bids
+            ]
+            seed_slots = (
+                [[layer._apply_template(t, bid) for t in spec.seed_templates] for bid in bids]
+                if spec.seed_templates
+                else []
+            )
+            mat = _MatSpec(spec.shared, spec.dep_names, dep_slots, seed_slots)
+            assert layer._build_rust(spec).to_records_chunk() == layer._build_rust(mat).to_records_chunk(), label
+            checked += 1
+        assert projected, f"{label} produced no projected FusedBlockwise"
+    assert checked == len(builds)  # each shape reached the projected path exactly once
+
+
+def test_seed_template_collapse_matches_materialized_for_crafted_shapes():
+    """``from_projections`` compiles each seed template once (resolving the
+    tuple/list collapse at build time) and evaluates it per block; the
+    materialized ``new`` path runs ``_apply_template`` then ``seed_to_slot`` per
+    block. They must agree byte-for-byte for EVERY template shape. Real dask
+    graphs only reach the nested ``(block_id, numblocks)`` case, so this drives
+    the crafted shapes (scalars, flat, empty, deeply-nested, mixed leaf +
+    container) directly through both Rust constructors."""
+    if importlib.util.find_spec("dask_array._rust") is None:
+        pytest.skip("requires Rust extension")
+    from itertools import product
+
+    import toolz
+
+    from dask_array._frisky.base import _rust
+    from dask_array._frisky.fused_blockwise import FusedBlockwiseLayer
+
+    numblocks = [2, 3]
+    dep_names = ["src"]
+    func = toolz.identity  # any picklable callable; same object on both layers
+    projections = [(0, [(1, 0), (1, 1)])]  # one site tracking both output dims
+    bids = list(product(*(range(n) for n in numblocks)))
+    dep_slots = [[(0, [b0, b1])] for b0, b1 in bids]
+
+    def C(v):
+        return ("const", v)
+
+    def Bd(o):
+        return ("bid", o)
+
+    def T(*xs):
+        return ("tuple", list(xs))
+
+    def L(*xs):
+        return ("list", list(xs))
+
+    template_sets = [
+        [],  # no seed
+        [C(5)],  # scalar const
+        [Bd(0)],  # scalar bid
+        [T(Bd(0), C(7))],  # flat int tuple
+        [L(Bd(1), C(2))],  # flat list-kind (collapses to a tuple, like seed_to_slot)
+        [T()],  # empty tuple
+        [L()],  # empty list
+        [T(T(Bd(0), Bd(1)), T(C(2), C(3)))],  # (block_id, numblocks)
+        [T(T(T(Bd(0))))],  # deep nesting
+        [T(Bd(0), T(C(1), Bd(1)))],  # mixed leaf + subcontainer -> outer List
+        [T(T(), C(4))],  # container holding an empty subcontainer
+        [C(1), T(Bd(0), Bd(1))],  # multiple seeds
+    ]
+    for templates in template_sets:
+        seed_slots = [[FusedBlockwiseLayer._apply_template(t, bid) for t in templates] for bid in bids]
+        proj = _rust.FusedBlockwiseLayer.from_projections("out", func, numblocks, dep_names, projections, templates)
+        mat = _rust.FusedBlockwiseLayer("out", func, numblocks, dep_names, dep_slots, seed_slots)
+        assert proj.to_records_chunk() == mat.to_records_chunk(), templates
+
+        # Loose-records converter too: normalize (TaskRef has no cross-instance
+        # __eq__) and compare keys, arg reprs, kwargs, and dep strings.
+        def norm(recs):
+            return [(k, repr(a), kw, sorted(d)) for k, _f, a, kw, d in recs]
+
+        assert norm(proj.to_task_records()) == norm(mat.to_task_records()), templates
 
 
 def test_fast_path_block_independence_is_tokenize_free(monkeypatch):
@@ -879,13 +1002,18 @@ def test_map_overlap_lifts_block_id_seed_to_binary_records():
     assert not any(r[0].startswith(f"('{fb._name}',") for r in records)
 
     # The block-independent exact paths decline (the baked block_id differs per
-    # block); the seed path handles it, emitting one (block_id, numblocks) seed.
+    # block); the seed path handles it, lifting the ``(block_id, numblocks)``
+    # literal into a per-block seed. Decode through Rust and check each output
+    # block's seed (the last arg, after the dep refs). ``(block_id, numblocks)``
+    # is nested, so the records grammar renders it as a list of int tuples.
     layer = FusedBlockwiseLayer(fb)
     assert layer._analytical_site_spec() is None
-    _shared, _dep_names, _dep_slots, seed_slots = layer._seed_spec()
-    nb = fb.numblocks
-    for bid, seeds in zip(product(*(range(n) for n in nb)), seed_slots):
-        assert seeds == [(bid, nb)]
+    spec = layer._seed_spec()
+    assert spec is not None
+    nb = tuple(int(n) for n in fb.numblocks)
+    args_by_key = {key: args for key, _func, args, _kw, _deps in layer._build_rust(spec).to_task_records()}
+    for bid in product(*(range(n) for n in nb)):
+        assert args_by_key[str((fb._name, *bid))][-1] == [bid, nb]
 
 
 def test_xarray_rolling_sum_where_literal_uses_binary_records():

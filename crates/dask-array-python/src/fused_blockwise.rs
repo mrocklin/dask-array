@@ -10,15 +10,84 @@
 //! `block_info`) is made block-independent on the Python side by lifting that
 //! literal into a per-block *seed*: an ordinary value (a nested int tuple such as
 //! `(block_id, numblocks)`) that `_execute_subgraph` feeds into a holed subgraph
-//! slot. Those seeds arrive as `seed_slots`, appended to each task's args AFTER
-//! the dependency refs — matching the `inkeys` order Python assigns (sources
-//! first, then seeds). A layer with no lifted literals passes empty seed lists,
-//! so its records are byte-identical to before.
+//! slot. Those seeds are appended to each task's args AFTER the dependency refs —
+//! matching the `inkeys` order Python assigns (sources first, then seeds). A
+//! layer with no lifted literals has no seeds, so its records are byte-identical
+//! to before.
+//!
+//! Two ways to receive the per-block wiring:
+//!
+//!   * [`FusedBlockwiseLayer::new`] takes the fully materialized `dep_slots` /
+//!     `seed_slots` (one list per output block). Python's exact fallback specs
+//!     (`_fast_spec_uniform` / `_site_based_spec`), which read each block's real
+//!     coords, use this — no closed form exists for the shapes they cover.
+//!
+//!   * [`FusedBlockwiseLayer::from_projections`] takes the *compact* form: a
+//!     per-site coordinate PROJECTION (each output-block dim maps to a source-block
+//!     dim or a constant) plus per-seed int TEMPLATES. Rust then generates every
+//!     block's dep coords and seed values by integer arithmetic in `expand`,
+//!     instead of Python materializing an O(blocks) list and shipping it over.
+//!     This is the common case (`_analytical_site_spec` / `_seed_spec`, i.e.
+//!     elemwise/broadcast/transpose/contractions and overlap/rolling/stencils) —
+//!     the arithmetic mirrors Python's `ordered_slots` / `_apply_template`, so the
+//!     records are byte-identical to the materialized path.
 
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
 
 use crate::common::{to_dask_graph, to_task_records, ArgSlot, Compute, Expanded, NeutralTask, Num};
+
+/// One output-block dimension of a source-coordinate projection: either a fixed
+/// block index (`Const`) or "track output block dim `o`" (`Bid`). Mirrors
+/// Python's `("const", c)` / `("bid", o)` projection leaves.
+enum Coord {
+    Const(u32),
+    Bid(usize),
+}
+
+/// A source SITE's projection: which dependency, and how each of its block dims
+/// is derived from the output block id. Evaluated per output block into an
+/// [`ArgSlot::Dep`].
+struct Projection {
+    dep_idx: usize,
+    coords: Vec<Coord>,
+}
+
+/// An int leaf of a seed template: a constant or an output-block-dim reference.
+enum IntExpr {
+    Const(i64),
+    Bid(usize),
+}
+
+/// A compiled lifted-literal seed template. Its *shape* is fixed across blocks
+/// (only the int leaves vary with the block id), so the tuple-vs-list collapsing
+/// that `seed_to_slot` applies to a materialized value is resolved once, here, at
+/// construction — a sequence of all int leaves becomes [`Seed::IntTuple`]
+/// (rendering a real tuple), anything nested becomes [`Seed::List`]. Evaluating a
+/// `Seed` for a block reproduces `seed_to_slot(_apply_template(tmpl, bid))` byte
+/// for byte.
+enum Seed {
+    Scalar(IntExpr),
+    IntTuple(Vec<IntExpr>),
+    List(Vec<Seed>),
+}
+
+/// Where a layer's per-block argument slots come from.
+enum SlotSource {
+    /// Fully materialized per-block lists — one entry per output block. Dep slots
+    /// are `(dep_idx, coord)`; seed slots are owned int-shaped `ArgSlot`s appended
+    /// after the deps. Empty `seed_slots` for the common (no block_id) case.
+    Materialized {
+        dep_slots: Vec<Vec<(usize, Vec<u32>)>>,
+        seed_slots: Vec<Vec<ArgSlot>>,
+    },
+    /// Compact closed form — a projection per source site, and a template per
+    /// lifted seed. Rust generates every block's slots from these.
+    Projected {
+        projections: Vec<Projection>,
+        seeds: Vec<Seed>,
+    },
+}
 
 #[pyclass]
 pub struct FusedBlockwiseLayer {
@@ -26,12 +95,104 @@ pub struct FusedBlockwiseLayer {
     func: Py<PyAny>,
     empty_kwargs: Py<PyAny>,
     dep_names: Vec<String>,
-    dep_slots: Vec<Vec<(usize, Vec<u32>)>>,
-    /// Per-block lifted-literal seed args, appended after the dep refs. Each is a
-    /// nested int structure pre-converted to an owned `ArgSlot` (no Python refs),
-    /// so expansion stays pure Rust. Empty for the common (no block_id) case.
-    seed_slots: Vec<Vec<ArgSlot>>,
+    slots: SlotSource,
     numblocks: Vec<usize>,
+}
+
+fn eval_int(expr: &IntExpr, bid: &[u32]) -> i64 {
+    match expr {
+        IntExpr::Const(v) => *v,
+        IntExpr::Bid(o) => bid[*o] as i64,
+    }
+}
+
+fn eval_seed(seed: &Seed, bid: &[u32]) -> ArgSlot {
+    match seed {
+        Seed::Scalar(e) => ArgSlot::Scalar(Num::Int(eval_int(e, bid))),
+        Seed::IntTuple(es) => ArgSlot::IntTuple(es.iter().map(|e| eval_int(e, bid)).collect()),
+        Seed::List(items) => ArgSlot::List(items.iter().map(|s| eval_seed(s, bid)).collect()),
+    }
+}
+
+/// Reject a seed template that references an output-block dim `>= ndim` (a
+/// mis-inferred template would index out of the block id at expansion time).
+fn check_seed_dims(seed: &Seed, ndim: usize) -> PyResult<()> {
+    let bad = pyo3::exceptions::PyNotImplementedError::new_err("seed template block-id dim out of range");
+    match seed {
+        Seed::Scalar(IntExpr::Bid(o)) if *o >= ndim => return Err(bad),
+        Seed::Scalar(_) => {}
+        Seed::IntTuple(es) => {
+            if es
+                .iter()
+                .any(|e| matches!(e, IntExpr::Bid(o) if *o >= ndim))
+            {
+                return Err(bad);
+            }
+        }
+        Seed::List(items) => {
+            for it in items {
+                check_seed_dims(it, ndim)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// True if `obj` is a leaf template node `("const", v)` / `("bid", o)` — as
+/// opposed to a container node `("tuple"|"list", [children])`. Determines whether
+/// a container collapses to an `IntTuple` (all-leaf children) or a `List`,
+/// matching `seed_to_slot`'s all-int check.
+fn seed_tmpl_is_leaf(obj: &Bound<'_, PyAny>) -> bool {
+    if let Ok(t) = obj.cast::<PyTuple>() {
+        if let Ok(tag) = t.get_item(0).and_then(|x| x.extract::<String>()) {
+            return tag == "const" || tag == "bid";
+        }
+    }
+    false
+}
+
+/// Parse a leaf template node into an [`IntExpr`].
+fn parse_int_expr(obj: &Bound<'_, PyAny>) -> PyResult<IntExpr> {
+    let t = obj.cast::<PyTuple>()?;
+    let tag: String = t.get_item(0)?.extract()?;
+    match tag.as_str() {
+        "const" => Ok(IntExpr::Const(t.get_item(1)?.extract()?)),
+        "bid" => Ok(IntExpr::Bid(t.get_item(1)?.extract()?)),
+        _ => Err(pyo3::exceptions::PyNotImplementedError::new_err(
+            "seed template leaf must be ('const', int) or ('bid', int)",
+        )),
+    }
+}
+
+/// Compile a Python seed template — `("const", v)`, `("bid", o)`, or a container
+/// `("tuple"|"list", [children])` — into a [`Seed`], resolving the tuple/list
+/// collapsing exactly as `seed_to_slot` would after `_apply_template`.
+fn parse_seed(obj: &Bound<'_, PyAny>) -> PyResult<Seed> {
+    let t = obj.cast::<PyTuple>().map_err(|_| {
+        pyo3::exceptions::PyNotImplementedError::new_err("seed template node must be a 2-tuple")
+    })?;
+    let tag: String = t.get_item(0)?.extract()?;
+    match tag.as_str() {
+        "const" => Ok(Seed::Scalar(IntExpr::Const(t.get_item(1)?.extract()?))),
+        "bid" => Ok(Seed::Scalar(IntExpr::Bid(t.get_item(1)?.extract()?))),
+        "tuple" | "list" => {
+            let kids: Vec<Bound<'_, PyAny>> =
+                t.get_item(1)?.try_iter()?.collect::<PyResult<_>>()?;
+            if kids.iter().all(seed_tmpl_is_leaf) {
+                let exprs = kids
+                    .iter()
+                    .map(parse_int_expr)
+                    .collect::<PyResult<Vec<_>>>()?;
+                Ok(Seed::IntTuple(exprs))
+            } else {
+                let seeds = kids.iter().map(parse_seed).collect::<PyResult<Vec<_>>>()?;
+                Ok(Seed::List(seeds))
+            }
+        }
+        _ => Err(pyo3::exceptions::PyNotImplementedError::new_err(
+            "seed template node must be const/bid/tuple/list",
+        )),
+    }
 }
 
 /// Convert a per-block seed value (a nested structure of ints, e.g.
@@ -106,14 +267,14 @@ impl FusedBlockwiseLayer {
         // `seed_slots` is either empty (the common no-block_id case: no seeds for
         // any block) or one list per output block.
         if dep_slots.len() != expected || (!seed_slots.is_empty() && seed_slots.len() != expected) {
-            return Err(pyo3::exceptions::PyValueError::new_err(
+            return Err(pyo3::exceptions::PyNotImplementedError::new_err(
                 "dep/seed slots length does not match output blocks",
             ));
         }
         for slots in &dep_slots {
             for (dep_idx, _) in slots {
                 if *dep_idx >= dep_names.len() {
-                    return Err(pyo3::exceptions::PyValueError::new_err(
+                    return Err(pyo3::exceptions::PyNotImplementedError::new_err(
                         "dep slot index out of range",
                     ));
                 }
@@ -136,8 +297,92 @@ impl FusedBlockwiseLayer {
             func,
             empty_kwargs: PyDict::new(py).unbind().into_any(),
             dep_names,
-            dep_slots,
-            seed_slots,
+            slots: SlotSource::Materialized {
+                dep_slots,
+                seed_slots,
+            },
+            numblocks,
+        })
+    }
+
+    /// Compact constructor: instead of a materialized per-block slot list, take a
+    /// coordinate PROJECTION per source site and an int TEMPLATE per lifted seed,
+    /// and generate every block's slots in Rust (see module docs). Used by
+    /// Python's `_analytical_site_spec` / `_seed_spec` — the common shapes — so
+    /// the O(blocks) per-block materialization never happens in Python.
+    ///
+    /// `projections`: per site `(dep_idx, [(kind, val)])`, kind `0` = constant
+    /// block index `val`, kind `1` = track output block dim `val`. `seed_templates`:
+    /// the Python template objects (`("const", v)` / `("bid", o)` / a container
+    /// `("tuple"|"list", [children])`), compiled once here.
+    #[staticmethod]
+    fn from_projections(
+        py: Python<'_>,
+        name: String,
+        func: Py<PyAny>,
+        numblocks: Vec<usize>,
+        dep_names: Vec<String>,
+        projections: Vec<(usize, Vec<(u8, u32)>)>,
+        seed_templates: Vec<Py<PyAny>>,
+    ) -> PyResult<Self> {
+        // Every validation failure here raises `NotImplementedError` (not
+        // `ValueError`): a malformed spec should DECLINE to the Python
+        // fallback path (`to_task_records` -> `_slow_records`), which the walk
+        // reaches only by catching `NotImplementedError` — never crash the whole
+        // graph collection. These guards can't fire for a spec the Python side
+        // actually produces (indices/dims derive from `range(len(nb))` and the
+        // dep-name map, validated against probes); they are defensive only.
+        let ndim = numblocks.len();
+        let mut projs: Vec<Projection> = Vec::with_capacity(projections.len());
+        for (dep_idx, coords) in projections {
+            if dep_idx >= dep_names.len() {
+                return Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                    "projection dep index out of range",
+                ));
+            }
+            let mut cs: Vec<Coord> = Vec::with_capacity(coords.len());
+            for (kind, val) in coords {
+                match kind {
+                    0 => cs.push(Coord::Const(val)),
+                    1 => {
+                        if (val as usize) >= ndim {
+                            return Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                                "projection block-id dim out of range",
+                            ));
+                        }
+                        cs.push(Coord::Bid(val as usize));
+                    }
+                    _ => {
+                        return Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                            "projection coord kind must be 0 (const) or 1 (bid)",
+                        ));
+                    }
+                }
+            }
+            projs.push(Projection {
+                dep_idx,
+                coords: cs,
+            });
+        }
+
+        let seeds = seed_templates
+            .into_iter()
+            .map(|obj| parse_seed(obj.bind(py)))
+            .collect::<PyResult<Vec<_>>>()?;
+        // A block-id reference in a seed must land inside the output grid.
+        for seed in &seeds {
+            check_seed_dims(seed, ndim)?;
+        }
+
+        Ok(Self {
+            name,
+            func,
+            empty_kwargs: PyDict::new(py).unbind().into_any(),
+            dep_names,
+            slots: SlotSource::Projected {
+                projections: projs,
+                seeds,
+            },
             numblocks,
         })
     }
@@ -169,16 +414,44 @@ impl FusedBlockwiseLayer {
         for task_idx in 0..total {
             // Source dependency refs first, then any lifted-literal seeds — the
             // args order Python assigned when building `inkeys`.
-            let mut slots: Vec<ArgSlot> = self.dep_slots[task_idx]
-                .iter()
-                .map(|(dep_idx, dep_coord)| ArgSlot::Dep {
-                    name_idx: *dep_idx,
-                    coord: dep_coord.clone(),
-                })
-                .collect();
-            if let Some(seeds) = self.seed_slots.get(task_idx) {
-                slots.extend(seeds.iter().cloned());
-            }
+            let slots: Vec<ArgSlot> = match &self.slots {
+                SlotSource::Materialized {
+                    dep_slots,
+                    seed_slots,
+                } => {
+                    let mut s: Vec<ArgSlot> = dep_slots[task_idx]
+                        .iter()
+                        .map(|(dep_idx, dep_coord)| ArgSlot::Dep {
+                            name_idx: *dep_idx,
+                            coord: dep_coord.clone(),
+                        })
+                        .collect();
+                    if let Some(seeds) = seed_slots.get(task_idx) {
+                        s.extend(seeds.iter().cloned());
+                    }
+                    s
+                }
+                SlotSource::Projected { projections, seeds } => {
+                    let mut s: Vec<ArgSlot> = projections
+                        .iter()
+                        .map(|p| ArgSlot::Dep {
+                            name_idx: p.dep_idx,
+                            coord: p
+                                .coords
+                                .iter()
+                                .map(|c| match c {
+                                    Coord::Const(v) => *v,
+                                    Coord::Bid(o) => coord[*o],
+                                })
+                                .collect(),
+                        })
+                        .collect();
+                    for seed in seeds {
+                        s.push(eval_seed(seed, &coord));
+                    }
+                    s
+                }
+            };
             tasks.push(NeutralTask {
                 nbytes: 0,
                 name_idx: 0,
