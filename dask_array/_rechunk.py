@@ -16,12 +16,14 @@ from tlz import accumulate
 from dask import config
 from dask._task_spec import Alias, List, Task, TaskRef
 from dask.base import tokenize
+from dask.hashing import hash_buffer_hex
 from dask.utils import cached_property, parse_bytes
 
 from dask_array._chunk import getitem as chunk_getitem
 from dask_array._expr import ArrayExpr
 from dask_array._core_utils import concatenate3, normalize_chunks
 from dask_array._utils import validate_axis
+from dask_array.io._from_map import _dumps5
 
 
 # ============================================================================
@@ -665,7 +667,24 @@ class Rechunk(ArrayExpr):
 
     @property
     def _name(self):
-        return "rechunk-merge-" + tokenize(*self.operands)
+        # Name by a content hash of a single pickle, skipping the pickle
+        # *round-trip* that dask's ``tokenize`` runs per operand as a
+        # determinism self-check (the dominant cost of naming a
+        # multi-million-task rechunk-heavy graph). Every naming operand here is
+        # trivially deterministic -- chunk ints, scalar flags, a method string
+        # -- and the child expression is referenced by its cached ``_name``
+        # STRING rather than pickled, so we never walk the subtree. Unlike
+        # FromMap's call bundles, this payload has no user function or user
+        # argument objects to validate. Generic over ``Rechunk`` and its
+        # ``TasksRechunk`` subclass via ``self._parameters`` (which drops
+        # ``balance``/``method`` for the subclass). The ``"rc1"`` tag
+        # namespaces the scheme; the whole thing falls back to the stock
+        # ``tokenize`` on any pickling failure.
+        try:
+            non_array = [self.operand(p) for p in self._parameters if p != "array"]
+            return "rechunk-merge-rc1" + hash_buffer_hex(_dumps5((self.array._name, *non_array)))
+        except Exception:
+            return "rechunk-merge-" + tokenize(*self.operands)
 
     @cached_property
     def chunks(self):

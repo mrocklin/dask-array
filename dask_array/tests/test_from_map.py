@@ -29,15 +29,17 @@ from_map / the rewrite exist, so they are RED until implemented.
 from __future__ import annotations
 
 import importlib.util
+from itertools import count
 
 import dask
 import numpy as np
 import pytest
+from dask.tokenize import TokenizationError
 
 import dask_array as da
 from dask_array._test_utils import assert_eq
 from dask_array._frisky.collect import collect_task_records
-from dask_array.io._from_map import FromMap
+from dask_array.io._from_map import FromMap, _apply_call
 
 
 # ---------------------------------------------------------------------------
@@ -748,3 +750,91 @@ def test_binary_from_map_executes_under_frisky(array_scheduler):
     np.testing.assert_array_equal(
         baked.compute(), np.concatenate([np.full(5, len(p) * 10) for p in paths]).astype("int64")
     )
+
+
+# ---------------------------------------------------------------------------
+# fast tokenize: stable coalesced-from_delayed FromMaps are named by a guarded
+# content hash (``fm1`` tag), skipping dask's per-operand pickle round-trip.
+# The token is still the dedup key, so it must agree exactly where the stock
+# tokenize would (same->same, distinct->distinct, stable across processes),
+# unstable pickle payloads must fall back, and a direct user ``da.from_map``
+# must keep the stock round-trip.
+# ---------------------------------------------------------------------------
+
+
+def _fd_concat(vals):
+    """concatenate(from_delayed(...)) -> one coalesced (``_apply_call``) FromMap."""
+    return da.concatenate([da.from_delayed(dask.delayed(_load)(v), (5,), dtype="int64") for v in vals])
+
+
+def test_coalesced_from_map_uses_fast_token():
+    fm = _the_from_map(_fd_concat([1, 2, 3]))
+    assert fm.operand("func") is _apply_call
+    assert fm._name.startswith("from-map-fm1")
+
+
+def test_coalesced_from_map_dedup_same_and_distinct():
+    same = _fd_concat([1, 2, 3]).expr.simplify()._name == _fd_concat([1, 2, 3]).expr.simplify()._name
+    distinct = _fd_concat([1, 2, 3]).expr.simplify()._name != _fd_concat([1, 2, 9]).expr.simplify()._name
+    assert same and distinct
+
+
+def test_direct_from_map_keeps_stock_token_and_dedups():
+    """A user ``da.from_map`` carries an arbitrary ``func`` (not ``_apply_call``),
+    so it keeps dask's round-trip tokenize (no ``fm1`` tag) and still dedups."""
+    a = da.from_map(_load, _obj([1, 2, 3]), chunks=((5, 5, 5),), dtype="int64")
+    b = da.from_map(_load, _obj([1, 2, 3]), chunks=((5, 5, 5),), dtype="int64")
+    assert not a.expr._name.startswith("from-map-fm1")
+    assert a.expr._name == b.expr._name
+
+
+def test_coalesced_from_map_falls_back_for_unstable_pickle():
+    """A normalized delayed call can still carry arbitrary user args. If those
+    args do not pickle deterministically, the fast token must fall back to
+    dask's deterministic tokenizer and fail loudly instead of accepting one
+    process-local pickle as a graph key."""
+    token_values = count()
+
+    class UnstablePickle:
+        def __reduce__(self):
+            return (int, (next(token_values),))
+
+    x = da.concatenate([da.from_delayed(dask.delayed(_load)(UnstablePickle()), (5,), dtype="int64")])
+    with pytest.raises(TokenizationError):
+        x.expr.simplify()
+
+
+def test_fast_token_value_correctness_through_rechunk():
+    """End-to-end value equality for a from_delayed -> concatenate -> rechunk
+    pipeline (both the FromMap and Rechunk fast tokens on the critical path)."""
+    x = _fd_concat([1, 2, 3, 4]).rechunk((4,))
+    expected = np.concatenate([np.full(5, v) for v in [1, 2, 3, 4]]).astype("int64")
+    assert_eq(x, expected)
+
+
+def test_fast_token_preserves_task_count(monkeypatch):
+    """Same graph, faster names: the optimized graph's task count must be
+    identical to the stock-tokenize baseline (dedup neither over- nor
+    under-merges). Baseline reproduced by restoring dask's round-trip tokenize
+    for FromMap and Rechunk, rebuilding fresh so no fast names leak in."""
+    from dask.base import tokenize
+    from dask.tokenize import _tokenize_deterministic
+    from dask_array._rechunk import Rechunk
+
+    def build():
+        pieces = [_fd_concat([i, i + 1, i + 2, i + 3]) + float(i) for i in range(4)]
+        x = da.concatenate(pieces, axis=0)
+        x = (x + 1).rechunk((7,))
+        return x
+
+    fast = len(build().optimize().__dask_graph__())
+
+    def stock_fm(self):
+        if not self._determ_token:
+            self._determ_token = _tokenize_deterministic(type(self), *self.operands)
+        return self._determ_token
+
+    monkeypatch.setattr(FromMap, "__dask_tokenize__", stock_fm)
+    monkeypatch.setattr(Rechunk, "_name", property(lambda self: "rechunk-merge-" + tokenize(*self.operands)))
+    stock = len(build().optimize().__dask_graph__())
+    assert fast == stock

@@ -121,3 +121,45 @@ def test_dask_optimize_roundtrip():
     (optimized,) = dask.optimize(x)
     assert_eq(optimized, np.arange(12))
     assert optimized.chunks == ((4, 4, 4),)
+
+
+def test_fast_token_stable_across_processes():
+    """Fast FromMap/Rechunk tokens are the graph dedup key, so they must be
+    byte-identical across fresh interpreters (a subprocess that computes the
+    same name must agree) -- otherwise cross-process key agreement breaks."""
+    import subprocess
+    import sys
+    import textwrap
+
+    from_map_code = textwrap.dedent(
+        """
+        import numpy as np
+        import dask_array as da
+        from dask import delayed
+        pieces = [
+            da.from_delayed(delayed(np.full)((4,), i, dtype=float), shape=(4,), dtype=float)
+            for i in range(3)
+        ]
+        print(da.concatenate(pieces, axis=0).expr.simplify()._name)
+        """
+    )
+    rechunk_code = textwrap.dedent(
+        """
+        import numpy as np
+        import dask_array as da
+        from dask import delayed
+        def f(i):
+            return np.full((4,), float(i))
+        pieces = [da.from_delayed(delayed(f)(i), shape=(4,), dtype=float) for i in range(3)]
+        x = da.concatenate(pieces, axis=0).rechunk({0: 2})
+        print(x.expr.simplify()._name)
+        """
+    )
+    for code, expected in [(from_map_code, "from-map-fm1"), (rechunk_code, "rechunk-merge-rc1")]:
+        outs = []
+        for _ in range(2):
+            r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+            assert r.returncode == 0, r.stderr
+            outs.append(r.stdout.strip())
+        assert outs[0] == outs[1] != ""
+        assert outs[0].startswith(expected)

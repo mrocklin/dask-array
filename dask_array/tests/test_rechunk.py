@@ -182,3 +182,27 @@ def test_rechunk_split_tasks_copy_small_selections_frisky(monkeypatch):
     assert rechunk_exprs, "expected a TasksRechunk node"
     rechunk_exprs[0]._frisky_layer()
     assert captured["getitem"] is chunk_getitem
+
+
+def test_rechunk_fast_name_tag_and_dedup():
+    """Rechunk is named by a single-pickle content hash (``rc1`` tag) that
+    references its child by ``_name`` string. Identical rechunks share a name;
+    a different target does not; and the ``rechunk-merge-``/``rechunk-split-``
+    prefix renaming (which keys the split/merge layers) still works with the
+    longer token."""
+    x = da.ones((100,), chunks=(10,))
+    a = x.rechunk((20,)).expr
+    b = x.rechunk((20,)).expr
+    c = x.rechunk((25,)).expr
+    assert a._name.startswith("rechunk-merge-rc1")
+    assert a._name == b._name
+    assert a._name != c._name
+    # prefix-based split/merge renaming still splits cleanly on the longer token
+    split = a._name.replace("rechunk-merge-", "rechunk-split-")
+    assert split.startswith("rechunk-split-rc1") and "rechunk-merge-" not in split
+
+
+def test_rechunk_value_correctness_with_fast_name():
+    x = da.arange(24, chunks=4).rechunk((7,))
+    assert x.chunks == ((7, 7, 7, 3),)
+    assert_eq(x, np.arange(24))

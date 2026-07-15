@@ -2,15 +2,34 @@ from __future__ import annotations
 
 import functools
 import logging
+import pickle
 from itertools import product
 
+import cloudpickle
 import numpy as np
 
 from dask._task_spec import Task
+from dask.hashing import hash_buffer_hex
+from dask.tokenize import _tokenize_deterministic
 from dask_array.io._base import IO
 from dask_array._utils import meta_from_array
 
 logger = logging.getLogger(__name__)
+
+
+def _dumps5(obj):
+    """One pickle of ``obj`` (protocol 5), for feeding a content hash.
+
+    Mirrors dask's ``_normalize_pickle``: try the stdlib pickle first, and only
+    fall back to cloudpickle when the payload references ``__main__`` (an
+    interactively/script-defined object stdlib pickle can't reproduce across
+    processes). Unlike ``normalize_token``, this does NOT round-trip
+    (unpickle) the result as a determinism self-check -- callers must guard or
+    restrict its use to operands they can accept as deterministic."""
+    out = pickle.dumps(obj, protocol=5)
+    if b"__main__" in out:
+        out = cloudpickle.dumps(obj, protocol=5)
+    return out
 
 
 def _apply_call(bundle):
@@ -209,6 +228,34 @@ class FromMap(IO):
         if prefix:
             return prefix
         return "from-map-" + self.deterministic_token
+
+    def __dask_tokenize__(self):
+        """Name this FromMap by a content hash of its operands.
+
+        The stock tokenize (``_tokenize_deterministic(type(self),
+        *self.operands)``) pickle-*round-trips* every operand as a determinism
+        self-check -- the dominant cost of naming a multi-million-task graph.
+        Only the coalesced-from_delayed shape (``func is _apply_call``) tries
+        the shortcut: its per-block values are ``(fn, args, kwargs)`` call
+        bundles built by our own normalization. We accept the fast token only
+        when two pickles produce identical bytes and the payload does not refer
+        to ``__main__``; otherwise, fall through to stock tokenization. The
+        ``"fm1"`` tag namespaces the scheme so it can't collide a stock 32-hex
+        token, and a direct ``da.from_map`` (user ``func``, arbitrary per-block
+        objects) keeps the stock round-trip its safety net is meant to police."""
+        if not self._determ_token:
+            if self.operand("func") is _apply_call:
+                try:
+                    payload = ("FromMap", type(self).__qualname__, *self.operands)
+                    first = _dumps5(payload)
+                    second = _dumps5(payload)
+                    if first == second and b"__main__" not in first:
+                        self._determ_token = "fm1" + hash_buffer_hex(first)
+                        return self._determ_token
+                except Exception:
+                    pass  # fall through to the stock round-trip tokenize
+            self._determ_token = _tokenize_deterministic(type(self), *self.operands)
+        return self._determ_token
 
     def _layer(self):
         func = self.operand("func")
