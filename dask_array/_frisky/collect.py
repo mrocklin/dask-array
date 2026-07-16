@@ -34,8 +34,6 @@ import numpy as np
 
 from dask_array._frisky.graph_records import GraphRecordsLayer
 
-_I64_MAX = (1 << 63) - 1
-
 
 def _jsonify(v, depth=0):
     """Render a parameter value as a bounded, JSON-safe form for display. Anything
@@ -153,56 +151,35 @@ def _layer_metadata(e):
         return None
 
 
-def _expected_nbytes_metadata(e):
-    """Return ``(name, chunks, itemsize)`` for Rust-side nbytes stamping.
+def _stamp_expected_nbytes(chunk, e):
+    """Fill each binary-capable layer's still-zero output-grid nbytes stamps from
+    the expression's ``chunks``/``dtype``.
 
     Binary records are still array-agnostic. The collector is the one place that
     has both the emitted layer chunk and the array expression metadata, so it can
     stamp final output tasks for any binary-capable layer with known
     ``chunks``/``dtype``. Helper tasks (rechunk splits, scan carries, overlap halo
     getitems, …) are stamped earlier, at layer expansion time, where their exact
-    extents are in hand — this pass fills only stamps that are still zero. The
-    byte-level task walk runs in Rust; Python only normalizes
-    O(numblocks-per-axis) metadata.
-    """
+    extents are in hand — this pass fills only stamps that are still zero.
+
+    Both the per-axis size normalization (NaN→0, clamp, negative/non-coercible→
+    leave unstamped) and the O(tasks) byte walk run in Rust; Python only hands
+    over the raw ``e.chunks`` sequence. On any hiccup reading the expression's
+    metadata the chunk is returned unchanged (no stamps)."""
     try:
-        name = e._name
         itemsize = int(np.dtype(e.dtype).itemsize)
         if itemsize <= 0:
-            return None
-        chunks = []
-        for dim in e.chunks:
-            sizes = []
-            for size in dim:
-                try:
-                    if math.isnan(size):
-                        sizes.append(0)
-                        continue
-                except TypeError:
-                    pass
-                size = int(size)
-                if size < 0:
-                    return None
-                if size > _I64_MAX:
-                    size = _I64_MAX
-                sizes.append(size)
-            chunks.append(sizes)
+            return chunk
+        name = e._name
+        chunks = e.chunks
     except (AttributeError, TypeError, ValueError, OverflowError):
-        return None
-
-    return name, chunks, itemsize
-
-
-def _stamp_expected_nbytes(chunk, e):
-    meta = _expected_nbytes_metadata(e)
-    if meta is None:
         return chunk
 
     # Via base, not dask_array._rust directly, so the build-freshness check in
     # base.py is guaranteed to have run before we call into the extension.
     from dask_array._frisky.base import _rust
 
-    return _rust.stamp_expected_nbytes(chunk, *meta)
+    return _rust.stamp_expected_nbytes(chunk, name, chunks, itemsize)
 
 
 def _walk_records(roots, seen, records):

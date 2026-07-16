@@ -56,7 +56,7 @@ mod stack;
 /// coordinate on is the binary records grammar (`common::RECORDS_PROTOCOL_VERSION`
 /// ↔ Frisky's `records_proto::CHUNK_GRAMMAR_VERSION`), which only moves when the
 /// chunk byte-grammar changes — not when a layer is added.
-const NATIVE_BUILD_GENERATION: usize = 45;
+const NATIVE_BUILD_GENERATION: usize = 46;
 
 #[pyfunction]
 fn native_build_generation() -> usize {
@@ -68,13 +68,20 @@ fn stamp_expected_nbytes<'py>(
     py: Python<'py>,
     chunk: Bound<'py, PyBytes>,
     output_name: String,
-    chunks: Vec<Vec<i64>>,
+    chunks: Bound<'py, PyAny>,
     itemsize: i64,
 ) -> PyResult<Bound<'py, PyBytes>> {
+    // Normalize `e.chunks` here (was Python's `_expected_nbytes_metadata`); None
+    // means a negative/non-coercible size, so leave the chunk unstamped exactly
+    // as the Python path did on `return None`.
+    let normalized = common::normalize_expected_chunks(&chunks)?;
     let data = chunk.as_bytes().to_vec();
-    let stamped = py.detach(move || {
-        common::stamp_expected_nbytes_chunk(data, &output_name, &chunks, itemsize)
-    })?;
+    let stamped = match normalized {
+        None => data,
+        Some(chunks) => py.detach(move || {
+            common::stamp_expected_nbytes_chunk(data, &output_name, &chunks, itemsize)
+        })?,
+    };
     Ok(PyBytes::new(py, &stamped))
 }
 

@@ -759,6 +759,56 @@ fn expected_nbytes_for(
     )
 }
 
+/// Normalize an expression's `chunks` (a sequence of per-axis size sequences)
+/// into `Vec<Vec<i64>>` for nbytes stamping. This is the former Python
+/// `_expected_nbytes_metadata` size loop, moved off the interpreter: it is
+/// O(sum of per-axis block counts) and previously ran as an `isnan`/`int`/append
+/// loop in Python whose result was then re-walked by pyo3 to extract the same
+/// `Vec<Vec<i64>>`. Doing it once in Rust drops that whole Python pass.
+///
+/// Semantics mirror the old Python exactly, so stamps stay byte-identical:
+///   * a NaN size (unknown extent) becomes 0,
+///   * a size is clamped to `i64::MAX` (`_I64_MAX`),
+///   * a negative or non-coercible size aborts stamping for the *whole* layer
+///     (`Ok(None)`), matching Python's `return None` → the chunk is left
+///     unstamped rather than partially stamped.
+pub fn normalize_expected_chunks(chunks: &Bound<'_, PyAny>) -> PyResult<Option<Vec<Vec<i64>>>> {
+    let mut out: Vec<Vec<i64>> = Vec::new();
+    for dim in chunks.try_iter()? {
+        let dim = dim?;
+        let mut sizes: Vec<i64> = Vec::new();
+        for elem in dim.try_iter()? {
+            let elem = elem?;
+            // Python int / numpy integer: extract straight to i64 (already
+            // <= i64::MAX == _I64_MAX, so no clamp needed on this branch).
+            if let Ok(v) = elem.extract::<i64>() {
+                if v < 0 {
+                    return Ok(None);
+                }
+                sizes.push(v);
+            } else if let Ok(f) = elem.extract::<f64>() {
+                // Python/numpy float, or a Python int too large for i64. Mirrors
+                // Python's `if isnan: 0` / `int(size)` / clamp-to-_I64_MAX chain.
+                if f.is_nan() {
+                    sizes.push(0);
+                } else if f < 0.0 {
+                    return Ok(None);
+                } else if f >= i64::MAX as f64 {
+                    sizes.push(i64::MAX);
+                } else {
+                    sizes.push(f as i64); // truncates toward zero, like int()
+                }
+            } else {
+                // Neither int-like nor float-like — Python's `int(size)` would
+                // have raised, so the old path returned None. Do the same.
+                return Ok(None);
+            }
+        }
+        out.push(sizes);
+    }
+    Ok(Some(out))
+}
+
 /// Patch the `expected_nbytes` field in a binary records LAYER chunk.
 ///
 /// Layers stamp their non-grid helper tasks (splits, carries, halo slices…) at
