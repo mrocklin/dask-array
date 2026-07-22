@@ -351,6 +351,8 @@ def test_rechunk_pushdown_respects_storage_chunks_through_xarray():
     xr = pytest.importorskip("xarray")
     pytest.importorskip("zarr")
 
+    da.xarray.register()  # xarray only produces our arrays once registered
+
     data = np.arange(20 * 30, dtype="f4").reshape(20, 30)
     store: dict = {}
     xr.Dataset({"v": (("y", "x"), data)}).to_zarr(store, mode="w", encoding={"v": {"chunks": (10, 10)}})

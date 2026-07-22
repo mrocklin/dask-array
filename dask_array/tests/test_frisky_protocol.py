@@ -1086,6 +1086,8 @@ def test_xarray_rolling_sum_where_literal_uses_binary_records():
     if not _xarray_sliding_window_uses_chunk_manager():
         pytest.skip("requires xarray sliding_window_view dispatch through the chunk manager array API")
 
+    da.xarray.register()  # rolling dispatches through the chunk manager
+
     x = da.from_array(np.ones((100, 5)), chunks=(20, 5))
     xda = xr.DataArray(x, dims=("time", "asset"))
     y = xda.rolling({"time": 10}, min_periods=1).sum().data
