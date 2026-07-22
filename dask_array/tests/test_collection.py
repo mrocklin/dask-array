@@ -338,6 +338,71 @@ def test_delayed_can_unpack_compute_false_store():
     np.testing.assert_array_equal(result[0], x)
 
 
+class StoreTarget:
+    """A zarr.Array-ish write target carrying per-target state."""
+
+    def __init__(self, name, shape):
+        self.name = name
+        self.data = np.zeros(shape)
+
+    def __setitem__(self, index, value):
+        self.data[index] = value
+
+
+# store(return_stored=True, load_stored=False) is the contract dask/dask#11465
+# added for icechunk: each block of the returned array is the *target* that was
+# written to, not the data that landed in it. icechunk stores that way and then
+# tree-reduces the result, reading a changeset off each target. Getting values
+# back instead would not raise -- it would just collect the wrong objects -- so
+# both halves of that pattern are pinned here.
+@pytest.mark.requires_local_scheduler
+def test_store_load_stored_false_returns_targets_not_values():
+    source = da.from_array(np.arange(8.0), chunks=4)
+    target = StoreTarget("t", (8,))
+
+    stored = da.store(source, target, compute=False, return_stored=True, load_stored=False, lock=False)
+
+    # Computing the array itself is meaningless here (the blocks are targets,
+    # not values), so ask for its output keys directly.
+    from dask.local import get_sync
+
+    blocks = get_sync(stored.__dask_graph__(), list(flatten(stored.__dask_keys__())))
+    assert all(block is target for block in blocks)
+    np.testing.assert_array_equal(target.data, np.arange(8.0))
+
+
+@pytest.mark.requires_local_scheduler
+def test_store_load_stored_false_feeds_followup_reduction():
+    def read_name(block, axis=None, keepdims=None, computing_meta=False):
+        # Our reduction probes the chunk function with a meta array first.
+        if computing_meta:
+            return np.array([object()], dtype=object)
+        return np.array([block.name], dtype=object)
+
+    def collect(names, axis=None, keepdims=None, computing_meta=False):
+        if computing_meta:
+            return np.array([object()], dtype=object)
+        return np.array(sorted(np.concatenate(names).tolist()), dtype=object)
+
+    source = da.from_array(np.arange(12.0), chunks=4)
+    target = StoreTarget("t", (12,))
+
+    stored = da.store(source, target, compute=False, return_stored=True, load_stored=False, lock=False)
+    reduced = da.reduction(
+        stored,
+        chunk=read_name,
+        aggregate=collect,
+        concatenate=False,
+        keepdims=False,
+        dtype=object,
+        meta=np.array([object()], dtype=object),
+    )
+
+    # One name per block of the source, and the writes actually happened.
+    assert reduced.compute().tolist() == ["t", "t", "t"]
+    np.testing.assert_array_equal(target.data, np.arange(12.0))
+
+
 def test_store_region_rechunked_exact_name_slice():
     x = np.ones(30)
     y = da.from_array(x, chunks=(10, 10, 10), name="x")[5:25].rechunk((10, 10))

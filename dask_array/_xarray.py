@@ -1,9 +1,10 @@
 """
 xarray ChunkManager integration for dask-array expressions.
 
-This module registers a ChunkManagerEntrypoint under the entry point name
-"dask" — the same name used by xarray's built-in DaskManager.  We *must*
-replace the built-in rather than coexist alongside it because:
+``_ensure_registered`` installs ``DaskArrayExprManager`` under the name
+"dask" -- the same name as xarray's built-in DaskManager, which it
+displaces.  We *must* replace the built-in rather than coexist alongside
+it because:
 
 1. ``dask_array.Array`` is a dask collection (implements ``__dask_graph__``)
    and a duck array, so xarray's built-in ``DaskManager.is_chunked_array``
@@ -13,51 +14,42 @@ replace the built-in rather than coexist alongside it because:
    ``"Multiple ChunkManagers recognise type ..."``.
 3. Therefore only one "dask"-flavoured manager can be active at a time.
 
-Because both xarray and dask-array register an entry point named "dask",
-the winner of ``importlib.metadata.entry_points()`` iteration is
-non-deterministic (it depends on filesystem enumeration order).  To make
-the result reproducible, ``_ensure_registered`` mutates the cached dict
-returned by ``list_chunkmanagers()`` so that our manager is always the one
-stored under the "dask" key.
+Registration is *opt-in*: it happens only when the user calls
+``dask_array.xarray.register()``, and nothing about installing or importing
+this package triggers it.  We deliberately ship no "xarray.chunkmanagers"
+entry point.  An entry point activates on install, which means adding
+dask-array anywhere in an environment -- even as a transitive dependency
+nobody imports -- would change what ``Dataset.chunk()`` returns for every
+other library in that environment.  Downstream code that reaches past the
+chunk manager for ``dask.array`` internals (icechunk's
+``dask.array.reduction`` over ``store(return_stored=True)`` blocks, for
+one) then breaks in ways whose cause is nowhere near the symptom.  For the
+same reason ``import dask_array`` does not register either: xarray imports
+us behind the user's back -- ``Dataset.__dask_exprs__`` calls
+``import_module("dask_array")`` whenever we are installed -- so pinning on
+import would be an install-time takeover wearing a different hat.
 
-This module is imported lazily -- never by a plain ``import dask_array``
-(which must not pull in xarray or pandas).  It loads through three paths,
-all of which run ``_ensure_registered`` via the module-level call at the
-bottom:
+Registration works by mutating the dict cached by xarray's
+``list_chunkmanagers()`` (an ``lru_cache``), replacing whatever sits in the
+"dask" slot.  That takes effect in any import order and needs no entry
+point of our own.
 
-1. Explicitly, via ``dask_array.xarray.register()``.
-2. By ``import dask_array`` when xarray is *already* in ``sys.modules``
-   (the package __init__ pins eagerly then -- xarray is loaded, so it
-   costs nothing).
-3. By xarray itself: ``list_chunkmanagers`` loads every entry point in the
-   "xarray.chunkmanagers" group on first chunked-array use, and ours points
-   here.  In that mid-discovery case the reentrant ``list_chunkmanagers()``
-   call builds and caches the registry (reentrant ``lru_cache`` calls win
-   the cache slot) and we pin our manager into it, so every lookup after
-   the in-flight one sees ours regardless of enumeration order.
-
-Known window (path 3 only): the in-flight discovery still uses its own
-un-pinned dict, whose "dask" slot goes to whichever entry point enumerates
-*last* -- a per-environment installation detail.  If dask_array was imported
-before xarray and the built-in entry point enumerates last, the single
-chunked op that triggered discovery returns a legacy dask.array-backed
-result.  That object stays usable: the pinned manager also claims legacy
-``dask.array`` collections (``is_chunked_array`` -- both the classic and
-the query-planning flavor) and converts them at its array-accepting entry
-points (``_asexpr`` -- graph-wrapping via ``from_graph``, never compute),
-so everything routed through the manager succeeds: compute/load return
-correct numpy values, and ``.chunk``/persist/store/manager-dispatched
-computation yield dask_array-backed results with the same values, dtype,
-and chunks.  Operations xarray applies to the duck array directly -- plain
-arithmetic, most reductions -- keep producing legacy-backed results until
-one of those converting points; correct throughout, just unoptimized.
-Every later chunked op engages dask_array directly.  One limitation:
+``register()`` before the first chunked operation gives a process where
+every xarray array is expression-backed.  Registering *after* xarray has
+already produced legacy ``dask.array`` objects is still supported: the
+manager claims legacy collections too (``is_chunked_array`` -- both the
+classic and the query-planning flavor) and converts them at its
+array-accepting entry points (``_asexpr`` -- graph-wrapping via
+``from_graph``, never compute).  So compute/load return correct numpy
+values, and ``.chunk``/persist/store/manager-dispatched computation yield
+dask_array-backed results with the same values, dtype, and chunks.
+Operations xarray applies to the duck array directly -- plain arithmetic,
+most reductions -- keep producing legacy-backed results until one of those
+converting points; correct throughout, just unoptimized.  One limitation:
 combining a legacy-backed object with an expression-backed one in a single
-operation still fails -- a TypeError from the operator layer for plain
+operation fails -- a TypeError from the operator layer for plain
 arithmetic, xarray's "Mixing chunked array types" on manager-dispatched
-paths -- so ``.chunk()`` the legacy-backed object first.  Calling
-``dask_array.xarray.register()`` before first use eliminates the window in
-every import order.
+paths -- so ``.chunk()`` the legacy-backed object first.
 """
 
 from __future__ import annotations
@@ -128,12 +120,11 @@ class DaskArrayExprManager(ChunkManagerEntrypoint["Array"]):
         self.array_cls = Array
 
     def is_chunked_array(self, data: Any) -> bool:
-        # Also claim legacy dask.array collections: in the adverse discovery
-        # order (module docstring, "Known window") the first chunked op in a
-        # process produces a legacy-backed xarray object, and once our manager
-        # pins the "dask" registry slot no other manager would recognise it.
-        # Claiming it here -- and converting via _asexpr at the array-accepting
-        # entry points below -- keeps that object fully usable.
+        # Also claim legacy dask.array collections: register() may be called
+        # after xarray has already produced legacy-backed objects, and once our
+        # manager holds the "dask" registry slot no other manager would
+        # recognise them. Claiming them here -- and converting via _asexpr at
+        # the array-accepting entry points below -- keeps them fully usable.
         return isinstance(data, self.array_cls) or _is_legacy_dask_array(data)
 
     def chunks(self, data: Array) -> tuple[tuple[int, ...], ...]:
@@ -435,13 +426,13 @@ class DaskArrayExprManager(ChunkManagerEntrypoint["Array"]):
 
 
 def _ensure_registered() -> None:
-    """Ensure DaskArrayExprManager is the "dask" chunk manager in xarray.
+    """Make DaskArrayExprManager the "dask" chunk manager in xarray.
 
-    Both xarray and this package register an entry point named "dask" under
-    the ``xarray.chunkmanagers`` group.  ``list_chunkmanagers`` builds a dict
-    from those entry points, so the *last* one enumerated wins.  Because
-    ``importlib.metadata.entry_points`` iteration order is non-deterministic,
-    we fix the race here by replacing the cached value after the fact.
+    ``list_chunkmanagers`` builds its dict from "xarray.chunkmanagers" entry
+    points and caches it (``lru_cache``); we ship no entry point, so we take
+    the "dask" slot by replacing the cached value.  Reached only through
+    ``dask_array.xarray.register()`` -- importing this module registers
+    nothing, see the module docstring.
     """
     try:
         from dask_array._backends import register_collection_types
@@ -453,8 +444,3 @@ def _ensure_registered() -> None:
     managers = list_chunkmanagers()
     if not isinstance(managers.get("dask"), DaskArrayExprManager):
         managers["dask"] = DaskArrayExprManager()
-
-
-# Any import of this module (explicit register() or xarray's entry-point
-# discovery) pins our manager; see the module docstring.
-_ensure_registered()

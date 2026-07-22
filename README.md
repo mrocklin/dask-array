@@ -84,3 +84,8 @@ register()
 ```
 
 After this all xarray calculations will benefit from query optimization.
+
+Call `register()` before you create any chunked arrays. It is the only thing
+that turns this on: installing or importing dask-array leaves xarray alone, so
+that adding this package to an environment cannot change how other libraries
+that use xarray and dask behave.

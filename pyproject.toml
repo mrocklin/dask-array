@@ -44,10 +44,10 @@ test = [
     "xarray",
 ]
 
-# Registers as "dask" to replace xarray's built-in DaskManager.
+# No "xarray.chunkmanagers" entry point on purpose: installing this package must
+# not change how anyone else's xarray behaves. Replacing xarray's built-in
+# "dask" chunk manager is opt-in through dask_array.xarray.register().
 # See dask_array/_xarray.py for rationale.
-[project.entry-points."xarray.chunkmanagers"]
-dask = "dask_array._xarray:DaskArrayExprManager"
 
 # Pure-Python by default: `pip install -e .` (hatchling) needs no Rust toolchain
 # and installs the package alone. The Python/dask path is fully functional without

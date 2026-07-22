@@ -8,7 +8,12 @@ __all__ = ("isactive", "register")
 
 
 def register() -> None:
-    """Register dask-array as xarray's active "dask" chunk manager."""
+    """Register dask-array as xarray's active "dask" chunk manager.
+
+    Opt-in: nothing else activates it.  Installing or importing dask-array
+    leaves xarray on its built-in dask manager, so that adding this package
+    to an environment cannot change how other libraries behave.
+    """
     from dask_array._xarray import _ensure_registered
 
     _ensure_registered()
@@ -16,10 +21,9 @@ def register() -> None:
 
 def isactive() -> bool:
     """Return whether dask-array is xarray's active "dask" chunk manager."""
-    # Our manager can only be registered by importing dask_array._xarray
-    # (explicit register() or xarray's entry-point discovery), so if that
-    # module was never loaded the answer is no.  Importing it here would
-    # register as a side effect -- keep this a passive probe.
+    # register() is the only path in, and it imports dask_array._xarray, so if
+    # that module was never loaded the answer is no.  Importing it here would
+    # be pointless work -- keep this a passive probe.
     if "dask_array._xarray" not in sys.modules:
         return False
 

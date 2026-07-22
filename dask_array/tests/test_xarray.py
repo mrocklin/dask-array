@@ -1,8 +1,9 @@
 """Tests for xarray ChunkManager integration.
 
-This module tests the DaskArrayExprManager which registers as the "dask"
-chunk manager, replacing xarray's built-in DaskManager. This allows it to
-handle dask_array.Array types.
+This module tests the DaskArrayExprManager, which takes over the "dask" chunk
+manager slot from xarray's built-in DaskManager so that xarray produces
+dask_array.Array types. The takeover happens only on an explicit
+dask_array.xarray.register(), so most tests here call it first.
 """
 
 import numpy as np
@@ -59,6 +60,73 @@ def test_public_xarray_register_and_isactive(monkeypatch):
 
     assert da.xarray.isactive()
     assert isinstance(managers["dask"], DaskArrayExprManager)
+
+
+def test_no_chunkmanager_entry_point():
+    """We ship no "xarray.chunkmanagers" entry point.
+
+    An entry point would activate on install, so anyone with dask-array in
+    their environment -- including as a transitive dependency they never
+    import -- would silently get expression-backed arrays out of xarray.
+    """
+    import importlib.metadata
+
+    ours = [
+        ep for ep in importlib.metadata.entry_points(group="xarray.chunkmanagers") if ep.value.startswith("dask_array")
+    ]
+    assert ours == []
+
+
+# Registration is process-global, and other tests in this module call
+# register(), so the "we did not register" assertions need a fresh interpreter.
+def _run_isolated(body):
+    import subprocess
+    import sys
+
+    proc = subprocess.run([sys.executable, "-c", body], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_install_alone_leaves_xarray_on_builtin_manager():
+    _run_isolated(
+        "import numpy as np, xarray as xr\n"
+        "import importlib.util\n"
+        "assert importlib.util.find_spec('dask_array') is not None, 'test is vacuous'\n"
+        "ds = xr.Dataset({'a': ('x', np.arange(10.0))}).chunk({'x': 5})\n"
+        "assert type(ds['a'].data).__module__.startswith('dask.array'), type(ds['a'].data)\n"
+    )
+
+
+def test_importing_dask_array_does_not_register():
+    """Importing us must not take over xarray, even with xarray already loaded.
+
+    xarray imports dask_array on its own -- Dataset.__dask_exprs__ calls
+    import_module("dask_array") whenever it is installed -- so registering on
+    import would be an install-time takeover in disguise: it fires the first
+    time anybody calls is_dask_collection() on a Dataset.
+    """
+    _run_isolated(
+        "import numpy as np, xarray as xr\n"
+        "import dask, dask_array\n"
+        "ds = xr.Dataset({'a': ('x', np.arange(10.0))}).chunk({'x': 5})\n"
+        "assert not dask_array.xarray.isactive()\n"
+        "assert type(ds['a'].data).__module__.startswith('dask.array'), type(ds['a'].data)\n"
+        # the import xarray performs behind our back must stay inert too
+        "dask.is_dask_collection(ds)\n"
+        "assert not dask_array.xarray.isactive()\n"
+    )
+
+
+def test_register_takes_effect_when_imported_before_xarray():
+    _run_isolated(
+        "import numpy as np\n"
+        "import dask_array\n"
+        "import xarray as xr\n"
+        "dask_array.xarray.register()\n"
+        "assert dask_array.xarray.isactive()\n"
+        "ds = xr.Dataset({'a': ('x', np.arange(10.0))}).chunk({'x': 5})\n"
+        "assert isinstance(ds['a'].data, dask_array.Array), type(ds['a'].data)\n"
+    )
 
 
 @requires_xarray_sliding_window_chunk_manager
@@ -208,10 +276,9 @@ def test_manager_is_chunked_array():
 def test_manager_is_chunked_array_legacy_dask():
     """The manager claims legacy dask.array.Array (and converts it on use).
 
-    In the adverse entry-point discovery order the first chunked xarray op in
-    a process yields a legacy-backed object; since our manager then owns the
-    "dask" registry slot, it must recognise that object or it becomes
-    permanently unusable through xarray.
+    register() may be called after xarray has already produced legacy-backed
+    objects; since our manager then owns the "dask" registry slot, it must
+    recognise those objects or they become permanently unusable through xarray.
     """
     import dask.array as legacy_da
 
@@ -223,10 +290,8 @@ def test_manager_is_chunked_array_legacy_dask():
 def test_manager_is_chunked_array_does_not_import_legacy_dask():
     """The legacy check is a passive sys.modules probe, never an import.
 
-    The subprocess forces entry-point discovery to see only our entry point,
-    so nothing else (the built-in DaskManager's __init__ imports dask.array
-    when instantiated) loads legacy dask.array and the not-imported
-    assertions cannot go vacuous.
+    Run in a subprocess so nothing that ran earlier in this session has
+    already imported dask.array and made the assertions vacuous.
     """
     import subprocess
     import sys
@@ -234,12 +299,6 @@ def test_manager_is_chunked_array_does_not_import_legacy_dask():
     code = (
         "import sys\n"
         "import numpy as np\n"
-        "import importlib.metadata\n"
-        "import xarray.namedarray.parallelcompat as pc\n"
-        "_eps = [ep for ep in importlib.metadata.entry_points(group='xarray.chunkmanagers')"
-        " if ep.value.startswith('dask_array')]\n"
-        "assert _eps\n"
-        "pc.entry_points = lambda group: _eps\n"
         "import dask_array as da\n"
         "from dask_array._xarray import DaskArrayExprManager\n"
         "manager = DaskArrayExprManager()\n"
@@ -439,6 +498,7 @@ def test_manager_discoverable():
     """Test that the manager is discoverable via xarray as 'dask'."""
     from xarray.namedarray.parallelcompat import list_chunkmanagers
 
+    da.xarray.register()
     managers = list_chunkmanagers()
     assert "dask" in managers
     # Our manager should be the one registered (replaces built-in)
@@ -449,6 +509,7 @@ def test_get_chunked_array_type_selects_manager_once():
     """Test xarray sees dask_array.Array through one chunk manager."""
     from xarray.namedarray.parallelcompat import get_chunked_array_type
 
+    da.xarray.register()
     arr = da.ones((10, 10), chunks=(5, 5))
 
     assert isinstance(get_chunked_array_type(arr), DaskArrayExprManager)
@@ -461,6 +522,7 @@ def test_get_chunked_array_type_survives_legacy_dask_import():
 
     code = (
         "import dask_array as da\n"
+        "da.xarray.register()\n"
         "import dask.array\n"
         "from dask_array._xarray import DaskArrayExprManager\n"
         "from xarray.namedarray.parallelcompat import get_chunked_array_type, list_chunkmanagers\n"
